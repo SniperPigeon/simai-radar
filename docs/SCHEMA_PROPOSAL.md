@@ -20,7 +20,7 @@ output/
     cover.jpg          # 可选，扩展名随原图格式
 ```
 
-目录名不附加 hash 或自动后缀，不作为解析核心的歌曲 ID。DX/SD 来自明确的 cabinet/cabinate 元数据或调用方指定；不从曲名、文件夹或 Touch 数量猜测。文件名非法字符替换为下划线，原始 title 不改。缺少必要的导出 metadata 时由外围报错；不会影响只解析文本的 API。
+目录名不附加 hash 或自动后缀，不作为解析核心的歌曲 ID。DX/SD 优先使用明确的 cabinet/cabinate 元数据或调用方指定；缺失时可由语法解析后的独立检测器按约定物件规则补全，不从曲名或文件夹猜测。语法 parser 本身不检测类型。文件名非法字符替换为下划线，原始 title 不改。缺少必要的导出 metadata 时由外围报错；不会影响只解析文本的 API。
 
 ## events.csv：22 列
 
@@ -74,7 +74,7 @@ output/
 
 单段也是长度 1 的数组。数组顺序代表连接顺序；V 保留途经点，其他形状不伪造途经点。位置编码与主表一致，C1/C2 源别名统一为 C，原写法仍在 raw_token 中。
 
-固定 MajdataPlay 的连接段时间会按 prefab bar 数分配，包含源文本逐段给时长的情况。未实现该几何算法时，保留整个 Slide 时间，段时间为 null、time_resolution=needs_geometry，并诊断为不完整；不按段数平均分配。K 等不支持形状明确报诊断。
+固定 MajdataPlay 的连接段时间会按 prefab bar 数分配，包含源文本逐段给时长的情况。解析器保留整个 Slide 时间，连接段时间为 null、time_resolution=needs_geometry；该可选派生数据未计算不影响 complete，不按段数平均分配。K 等不支持形状明确报诊断。
 
 ## metadata、诊断和 manifest
 

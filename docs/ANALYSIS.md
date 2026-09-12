@@ -42,7 +42,7 @@ duration_s = max(chart_end_time_s, last_event_end_s 或 0)
 
 输出为一个数值。仅统计 kind=hold，排除 TouchHold；同位置同时声明不去重，长 Hold 只计一次。时长保留开头休止、结尾空槽及超出谱面结束标记的持续物件尾部，不叠加音频 offset。
 
-正常完整且时长为正的无 Hold 谱面得到 FeatureResult(0, success=True)；零时长返回 FeatureResult(None, success=False)。解析不完整或模型校验失败时，各维结果均标记失败，主分析器分别记录 PARSE_INCOMPLETE 或 INVALID_INPUT。
+正常完整且时长为正的无 Hold 谱面得到 FeatureResult(0, success=True)；零时长返回 FeatureResult(None, success=False)。解析不完整或模型校验失败时，不执行子分析器和映射器，各维结果均标记失败，主分析器分别记录 PARSE_INCOMPLETE 或 INVALID_INPUT。连接 Slide 未计算逐段几何时间不构成解析不完整；其整条时间与路径仍保留。
 
 ## 统一 CLI 与模式
 
@@ -64,13 +64,30 @@ python scripts/mairadar.py --mode full --input data/raw --output outputs/full --
 
 需要 Python 3.11+。`--choose` 延迟加载 tkinter 打开输入目录选择器；没有 tkinter 或 GUI 时使用 `--input`。取消选择返回非零。`--difficulty` 和 `--chart-type` 仅供 full 使用。analysis 不接受 --output，另外两种模式必须提供 --output。
 
-full 对目录递归发现 maidata.txt、majdata.txt 和 .simai；解析一次后直接把内存事件交给分析器，不导出或重新读取中间 bundle。单个文件内的不同难度分别输出报告行。未知类型只由显式 metadata 或 --chart-type 提供。
+full 对目录递归发现 maidata.txt、majdata.txt 和 .simai；解析一次后直接把内存事件交给分析器，不导出或重新读取中间 bundle。单个文件内的不同难度分别输出报告行。类型优先使用 --chart-type、显式 metadata，缺失时由解析后的独立 DX 检测器补全。
 
 只保留统一 CLI；纯解析和事件 bundle 导出通过 parse_file / write_bundle 库 API 调用。
 
 analysis 和 analysis_score 将根目录的每个直接子文件夹作为现有 CSV bundle 读取，不递归，也不自动发现 maidata。直接子文件忽略。损坏、缺少文件或不完整的 bundle 均保留结果行；其他目录继续处理。空输入、批量部分失败、映射失败和导出失败均返回非零。
 
 analysis 的终端 JSON 每张谱面一行，包含 metadata、`analysis.features` 下各维的 data/success 和诊断；既可直接检查，也可由外部调用者消费。摘要和错误提示不混入 JSON 行。
+
+## 解析后的 DX 检测
+
+`mairadar.chart_type.detect_chart_type(ParseResult)` 只读取已解析事件，不重新扫描文本。类型优先级为调用方 --chart-type、显式 metadata、检测结果；语法 parser 和 parse_file 不负责推断类型。
+
+按当前约定，命中以下任一项即为 DX：Touch、TouchHold、组合星星（同一 Slide 路径包含多个连接段）、任意 EX（包含 EX BREAK）、BREAK Hold、BREAK Slide 路径、BREAK 星星头或强制星形 BREAK。普通 BREAK Tap、普通 Hold、普通单段 Slide 不触发 DX；@ 标记的 Tap 头按 Tap 处理。
+
+完整谱面未命中时按 SD 补全。这是基于当前物件规则的缺省分类，不代表识别官方发行版本；有显式类型时不会覆盖。incomplete 返回 None，不做分类，也不进入后续特征计算和映射。检测结果只写入外围 chart metadata，不修改事件或源文件。
+
+CLI 三种模式共用 bundle 到分析结果的适配步骤，因此都可以补全缺失类型。新增检测是单独模块，不增加外部依赖。直接调用示例：
+
+```python
+from mairadar.chart_type import detect_chart_type
+from mairadar.parser import parse_chart
+
+chart_type = detect_chart_type(parse_chart("(120)A1,E"))  # "dx"
+```
 
 ## 总表导出
 
@@ -83,9 +100,9 @@ outputs/analysis/
     曲名-5-dx.png
 ```
 
-CSV 使用 UTF-8 BOM，固定列为 title、artist、designer、difficulty_index、level、chart_type、cover_path、status、diagnostics，后面追加配置中的 `<feature>_raw`。失败值留空，diagnostics 为 JSON，包含源子目录、解析和主分析器诊断、各维成功与否。metadata 缺失时留空，不猜测歌曲属性或类型。
+CSV 使用 UTF-8 BOM，固定列为 title、artist、designer、difficulty_index、level、chart_type、cover_path、status、diagnostics，后面追加配置中的 `<feature>_raw`。失败值留空，diagnostics 为 JSON，包含源子目录、解析和主分析器诊断、各维成功与否。普通 metadata 缺失时留空；DX/SD 缺失时按下述独立检测规则补全。
 
-曲绘按原样复制，cover_path 相对 CSV 所在目录。曲绘缺失不影响原始指标；复制失败或文件名冲突时，相关行保留指标、曲绘引用留空、状态标记失败或部分成功。文件名采用现有的标题、难度编号和显式 DX/SD 约定，不追加 hash，也不去重报告行。
+曲绘按原样复制，cover_path 相对 CSV 所在目录。曲绘缺失不影响原始指标；同名曲绘字节完全相同时复用已导出文件及其相对路径，保留全部谱面行；复制失败或同名曲绘内容不同时，相关行保留指标、曲绘引用留空、状态标记失败或部分成功。文件名采用现有的标题、难度编号和已确定的 DX/SD 约定，不追加 hash，也不去重报告行。
 
 批处理与导出可以分别使用：
 

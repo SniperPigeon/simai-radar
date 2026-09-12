@@ -87,7 +87,7 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(report.failed_records, 2)
             self.assertEqual((batch.exit_code, report.exit_code), (1, 1))
 
-    def test_colliding_covers_do_not_overwrite_or_deduplicate_rows(self):
+    def test_identical_colliding_covers_are_reused_without_deduplicating_rows(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = bundle(root)
@@ -97,11 +97,27 @@ class BatchTests(unittest.TestCase):
             _, rows = read_rows(report.csv_path)
             self.assertEqual(len(rows), 2)
             self.assertEqual(len(list((root / "report" / "covers").iterdir())), 1)
-            self.assertEqual([row["status"] for row in rows], ["ok", "partial"])
+            self.assertEqual([row["status"] for row in rows], ["ok", "ok"])
             self.assertEqual(rows[1]["hold_raw"], "2.0")
-            self.assertEqual(rows[1]["cover_path"], "")
-            self.assertEqual(report.exit_code, 1)
+            self.assertEqual(rows[1]["cover_path"], rows[0]["cover_path"])
+            self.assertEqual(report.exit_code, 0)
             self.assertEqual(batch.exit_code, 0)  # Export errors do not mutate core results.
+
+    def test_different_colliding_covers_remain_an_error(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = bundle(root)
+            shutil.copytree(source, root / "input" / "duplicate")
+            batch = analyze_directory(root / "input")
+            alternate = root / "alternate.png"
+            alternate.write_bytes(b"different cover content")
+            batch.records[1].cover_path = alternate
+            report = CsvExporter().export(batch.records, root / "report", feature_names=batch.feature_names)
+            _, rows = read_rows(report.csv_path)
+            self.assertEqual([row["status"] for row in rows], ["ok", "partial"])
+            self.assertEqual(rows[1]["cover_path"], "")
+            self.assertEqual((root / "report" / rows[0]["cover_path"]).read_bytes(), (root / "art.png").read_bytes())
+            self.assertEqual(report.exit_code, 1)
 
     def test_failed_cover_copy_keeps_raw_value_and_continues_next_record(self):
         with tempfile.TemporaryDirectory() as temp:

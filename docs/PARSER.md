@@ -17,6 +17,8 @@ for event in result.events:
 
 若需要传输 JSON，可用 `dataclasses.asdict(result)` 得到普通 dict/list；slide_path_json 在内存中已是数组。此 API 是 Python 调用入口，尚未包装成 Unity/.NET 可直接加载的 ABI 或服务。
 
+重复 h、x 等布尔修饰符不会重复生成物件；物件位置、时长和剩余语法仍严格检查，raw_token 保留原文。仅末尾独立小写 e 兼容为结束符 E，并记录 info；其他未知 token 仍导致 incomplete，不静默丢物件后继续评分。
+
 处理完整 maidata 文本时使用 `parse_text(text, difficulties=[5, 6])`，返回 list[ChartBundle]，其中 chart 保存文本 metadata。parse_chart 则直接接收单个 inote 的正文。
 
 ## 文件适配与导出

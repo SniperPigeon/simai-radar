@@ -169,6 +169,36 @@ class TimelineTests(unittest.TestCase):
 
 
 class NoteTests(unittest.TestCase):
+    def test_repeated_boolean_modifiers_preserve_note_semantics_and_source(self):
+        for repeated, canonical in (("2hh[12:1]", "2h[12:1]"),
+                                    ("3xhh[2:1]", "3xh[2:1]"),
+                                    ("Chxhhxx[4:1]", "Chx[4:1]")):
+            with self.subTest(token=repeated):
+                text = f"(120){repeated},E"
+                result = parse_chart(text)
+                expected = parse_chart(f"(120){canonical},E")
+                self.assertTrue(result.complete, result.diagnostics)
+                actual_notes = [e for e in result.events if e.kind != "timing"]
+                expected_notes = [e for e in expected.events if e.kind != "timing"]
+                self.assertEqual(len(actual_notes), 1)
+                actual, target = actual_notes[0], expected_notes[0]
+                self.assertEqual((actual.kind, actual.position, actual.is_ex, actual.end_time_s),
+                                 (target.kind, target.position, target.is_ex, target.end_time_s))
+                self.assertEqual(actual.raw_token, repeated)
+                self.assertEqual(text[actual.source_start:actual.source_end], repeated)
+        for token in ("2hhjunk[12:1]", "2hh[0:1]", "3xhh[2:1]junk"):
+            self.assertFalse(parse_chart(f"(120){token},E").complete)
+
+    def test_only_standalone_terminal_lowercase_e_is_an_end_alias(self):
+        result = parse_chart("(120){4}Cf/E1,e")
+        expected = parse_chart("(120){4}Cf/E1,E")
+        self.assertTrue(result.complete)
+        self.assertEqual(result.events, expected.events)
+        self.assertEqual(result.chart_end_time_s, expected.chart_end_time_s)
+        self.assertEqual([(d.code, d.severity) for d in result.diagnostics], [("LOWERCASE_TERMINATOR", "info")])
+        for text in ("(120)e,1,E", "(120)1e,E", "(120)1/e"):
+            self.assertFalse(parse_chart(text).complete)
+
     def test_hold_forms_and_zero_duration(self):
         cases = {"1h": 0, "1h[4:1]": 0.5, "1h[#1.25]": 1.25,
                  "1h[240#4:2]": 0.5, "Ch": 0, "Chf[4:2]": 1,

@@ -19,7 +19,7 @@
 | 反引号伪同时押 | supported；每组增加 `1.875/BPM` 秒，不改变下一个逗号槽时间；空组明确报错，区别于上游 RemoveEmptyEntries |
 | Tap `1`、`b/x/m` | supported；重复同位置声明不去重 |
 | `$`、`$$` | supported；force_star/fake_rotate 放入 flags，不改变事件类型 |
-| Hold/TouchHold `h` | supported；短形式时长为 0，与固定参考一致，不补微小非零时长 |
+| Hold/TouchHold `h` | supported；重复 h 按同一个布尔标志处理，保留原 token，不增加物件；短形式时长为 0，与固定参考一致，不补微小非零时长 |
 | Hold `[division:count]`、`[#seconds]`、`[bpm#division:count]` | supported；比例为整数 division/count，division>0、count>=0；无效表达式报错，不回退成 0 |
 | Touch A/B/C/D/E，`f`、BREAK/EX/mine | supported；位置统一为 A1/B1/C 等。C1/C2 源别名输出 C，raw_token 保留原写法；不接受任意 C 后缀 |
 | Slide `- ^ v < > V p q pp qq s z w` | supported；保留形状、V 途经点与端点，检查固定播放器的端点约束；不导出物理长度或完整运动轨迹 |
@@ -31,12 +31,12 @@
 | `c` | supported 为 flags.using_sv=false（参考默认启用 SV，c 关闭），不误写为 true |
 | Slide `[division:count]`、`[bpm#division:count]`、`[bpm#seconds]` | supported；custom BPM 同时确定等待时间。`[#seconds]` 仅适用于 Hold，不是该参考的合法 Slide 表达式 |
 | Slide `[wait##division:count]`、`[wait##seconds]`、`[wait##bpm#division:count]` | supported；wait 是相对声明时刻的秒等待量，不是全谱绝对时间，允许 0；数字不带字面 s 单位 |
-| 连接 Slide：末尾总时长或每段时长 | partial；路径子数组、整条等待/时长已解析。多组时长求和，首个显式等待/custom-BPM 决定等待；混合指定方式明确报错 |
-| 连接 Slide 逐段几何时间 | not implemented；固定 NoteLoader 按 prefab bar 数分配时间（包含逐段给时长的写法）。全部连接段暂标 needs_geometry、时间为 null；SLIDE_GEOMETRY_PENDING，complete=false。不能平均分配 |
+| 连接 Slide：末尾总时长或每段时长 | supported；路径子数组、整条等待/时长已解析。多组时长求和，首个显式等待/custom-BPM 决定等待；混合指定方式明确报错 |
+| 连接 Slide 逐段几何时间 | not implemented；固定 NoteLoader 按 prefab bar 数分配时间（包含逐段给时长的写法）。连接段保留 needs_geometry、时间为 null；不属于解析完成条件，不产生 SLIDE_GEOMETRY_PENDING，不因此设置 complete=false。不能平均分配 |
 | Wifi 作为连接段 | rejected；固定播放器不允许 |
 | `<HS*...>` / `<SV*...>` | unsupported；UNSUPPORTED_SPEED，明确标记不完整；不假装已保存其播放效果 |
 | `K` 自定义 Slide | unsupported；保留定位诊断，不编造路径或输出一个看似完整的 Slide |
-| `E` / EOF | supported；E 必须单独作为槽中的结束标记，E 后有内容则报错；EOF 记录 info。末尾无逗号时保留最后物件，但不插入额外槽时长，是与固定上游扫描器的显式差异 |
+| `E` / EOF | supported；仅末尾独立小写 e 作为显式兼容写法接受并记录 LOWERCASE_TERMINATOR info；E 必须单独作为槽中的结束标记，E 后有内容则报错；EOF 记录 info。末尾无逗号时保留最后物件，但不插入额外槽时长，是与固定上游扫描器的显式差异 |
 | 未知 token / 非法持续时间 | error；跳过整个来源 token（`*` 组原子处理），保留可确定的其他物件，complete=false |
 | 未知或非法时间指令、缺失 BPM | error；停止该谱面后续时间扫描，chart_end_time_s 留空，不能确定的拍字段留空 |
 

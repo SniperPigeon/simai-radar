@@ -18,7 +18,11 @@ model.py 定义 Event、Diagnostic、ParseResult、Chart、ChartBundle；validat
 
 io.py 读取文件、保存 CSV、解码 JSON 单元格，并可原样复制曲绘为包内附件。曲绘只通过 manifest 和外围 read_cover_path 暴露，不加入 Event、ParseResult 或解析必需参数。source_name 只在 metadata 中用于展示。导出目录 `<title>-<difficulty_index>-dx/sd` 不含 hash，不维护歌曲注册表、输入缓存或去重索引。CSV hash 只校验文件完整性；不属于解析 API。目录替换是外围文件写入事务，不能扩展成歌曲管理逻辑。
 
-后续 analysis/scoring 读取事件对象或已导出结果；正常分析不得再次扫描 Simai 来计数。baseline、难度权重和映射算法不进入 parser。当前尚未实现这些模块。
+analysis 读取 ParseResult 的事件与时间字段，按显式配置调用独立维度分析器。当前仅实现 HOLD 频率示例；不重新扫描 Simai 来计数。每个维度使用独立实例和事件快照，失败后继续其他维度。baseline、难度权重和映射算法不进入 parser；scoring 提供 ScoreTransformer 接口与按 feature 分发的 FeatureScoreTransformer；每个 feature 独立配置映射器实例及其参数。
+
+batch 复用 read_bundle，将根目录的每个直接子文件夹作为一张谱面；原始文件适配则解析一次，在内存中逐张分析并保留失败记录。chart_type 在解析完成后独立检测 DX 特征，仅补全缺失的类型，不修改 parser 或事件；reporting 在外围组合 metadata、分析结果、可选评分结果与曲绘引用；exporters.CsvExporter 接收这些记录，输出总表和 covers 文件夹。
+
+pipeline 按 full、analysis、analysis_score 组合各层，允许注入分析器、评分变换器和导出器；full 不依赖中间 CSV，analysis 不映射或导出。cli 是唯一参数与文件夹选择入口，纯解析及事件 bundle 导出保留为库 API。映射模式已默认启用 dummy Pn，将 0/P50/P100 原始阈值映射到 0/50/200，阈值不从本批次计算；官方校准尚未进行。核心普通导入不加载这些外围组件，具体接口见 [分析调用说明](ANALYSIS.md)。
 
 秒时间从第一槽开始，音频 offset 独立；分拍不是拍号，BPM 变化不重置拍相位。物件跨窗口仍是一个事件，窗口只构造视图。Slide 声明时间与滑动区间分别保留，无头路径也不例外。
 
