@@ -147,7 +147,8 @@ def parse_note(token: Token, at: Fraction, bpm: Fraction, source: str) -> list[d
     if not is_slide:
         if len(branches) > 1:
             raise SyntaxProblem("INVALID_SLIDE", "Same-head branches require a Slide")
-        match = re.fullmatch(r"([1-8]|[ABDE][1-8]|C[12]?)(h)?(?:\[([^\[\]]*)\])?", first.text)
+        # Hold is a boolean flag in the pinned parser; repeated h does not add notes.
+        match = re.fullmatch(r"([1-8]|[ABDE][1-8]|C[12]?)(h+)?(?:\[([^\[\]]*)\])?", first.text)
         if not match:
             raise SyntaxProblem("INVALID_NOTE", f"Unknown or malformed note: {token.text!r}")
         position, held, duration = match.groups()

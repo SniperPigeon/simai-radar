@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .analysis import AnalysisIssue, ChartAnalyzer
+from .chart_type import detect_chart_type
 from .io import find_cover, parse_file, read_bundle, read_cover_path
 from .model import ChartBundle, ParseResult
 from .reporting import AnalysisRecord
@@ -20,10 +21,13 @@ class BatchResult:
 
 
 def _analyze_bundle(bundle: ChartBundle, analyzer: ChartAnalyzer):
-    return analyzer.analyze(ParseResult(
+    parsed = ParseResult(
         bundle.events, bundle.diagnostics, bundle.complete,
         bundle.chart.chart_end_time_s, bundle.chart.last_event_end_s,
-    ))
+    )
+    if bundle.chart.chart_type is None:
+        bundle.chart.chart_type = detect_chart_type(parsed)
+    return analyzer.analyze(parsed)
 
 
 def analyze_directory(

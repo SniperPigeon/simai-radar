@@ -166,7 +166,11 @@ class ChartParser:
             has_comma = boundary < len(token.text)
             try:
                 notes = self.directives(slot)
-                if notes.text == "E":
+                lowercase_end = notes.text == "e" and not has_comma and boundary == len(token.text)
+                if lowercase_end:
+                    self.diagnose("LOWERCASE_TERMINATOR", "Terminal e accepted as E",
+                                  notes.start, notes.end, severity="info", incomplete=False)
+                if notes.text == "E" or lowercase_end:
                     terminated = True
                     if has_comma or boundary != len(token.text):
                         start = token.offsets[boundary] if has_comma else notes.start
