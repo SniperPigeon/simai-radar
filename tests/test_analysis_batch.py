@@ -1,0 +1,189 @@
+"""Synthetic bundle-to-report integration, portable covers, and failure reporting."""
+
+import contextlib
+import csv
+import io
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from mairadar.analysis import ChartAnalyzer
+from mairadar.analysis.features import HoldFrequencyAnalyzer
+from mairadar.cli import main
+from mairadar.batch import analyze_directory
+from mairadar.exporters import CsvExporter
+from mairadar.io import write_bundle
+from mairadar.parser import parse_text
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def bundle(root, title="曲名", *, text="(120){4}1h[4:1],E", cover=True, offset=0):
+    parsed = parse_text(
+        f"&title={title}\n&artist=曲师\n&des_5=谱师\n&cabinet=DX\n"
+        f"&lv_5=13\n&first={offset}\n&inote_5={text}"
+    )[0]
+    artwork = root / "art.png"
+    if cover:
+        artwork.write_bytes(b"synthetic opaque image attachment")
+    return write_bundle(parsed, root / "input", cover_path=artwork if cover else None)
+
+
+def read_rows(path):
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        reader = csv.DictReader(stream)
+        return reader.fieldnames, list(reader)
+
+
+class BatchTests(unittest.TestCase):
+    def test_metadata_raw_columns_cover_relative_path_and_offset(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = bundle(root, title='曲名,"quoted"', offset=10)
+            before = (source / "events.csv").read_bytes()
+            analyzer = ChartAnalyzer({"second": HoldFrequencyAnalyzer, "first": HoldFrequencyAnalyzer})
+            batch = analyze_directory(root / "input", analyzer=analyzer)
+            report = CsvExporter().export(batch.records, root / "report", feature_names=batch.feature_names)
+            columns, rows = read_rows(report.csv_path)
+            self.assertEqual(columns[-2:], ["second_raw", "first_raw"])
+            self.assertFalse(any(name.endswith("_score") for name in columns))
+            self.assertEqual(rows[0]["title"], '曲名,"quoted"')
+            self.assertEqual(rows[0]["artist"], "曲师")
+            self.assertEqual(rows[0]["designer"], "谱师")
+            self.assertEqual(rows[0]["difficulty_index"], "5")
+            self.assertEqual(rows[0]["chart_type"], "dx")
+            self.assertEqual(float(rows[0]["first_raw"]), 2)
+            self.assertEqual(
+                json.loads(rows[0]["diagnostics"])["features"], {"second": True, "first": True},
+            )
+            cover = report.csv_path.parent / rows[0]["cover_path"]
+            self.assertEqual(cover.read_bytes(), (root / "art.png").read_bytes())
+            self.assertEqual((source / "events.csv").read_bytes(), before)
+            self.assertEqual((batch.exit_code, report.exit_code), (0, 0))
+            shutil.move(root / "report", root / "moved")
+            self.assertTrue((root / "moved" / rows[0]["cover_path"]).is_file())
+
+    def test_partial_parse_and_bad_child_remain_rows_other_bundles_continue(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bundle(root, "A", cover=False)
+            bundle(root, "B", text="(120){4}1h[4:1],invalid,E", cover=False)
+            (root / "input" / "broken" / "nested").mkdir(parents=True)
+            (root / "input" / "ignored.txt").write_text("not a child directory")
+            batch = analyze_directory(root / "input")
+            report = CsvExporter().export(batch.records, root / "report", feature_names=batch.feature_names)
+            _, rows = read_rows(report.csv_path)
+            self.assertEqual(len(rows), 3)
+            self.assertEqual([row["status"] for row in rows], ["ok", "error", "error"])
+            self.assertEqual([row["hold_raw"] for row in rows], ["2.0", "", ""])
+            self.assertTrue(all(row["cover_path"] == "" for row in rows))
+            self.assertEqual(json.loads(rows[1]["diagnostics"])["features"], {"hold": False})
+            self.assertEqual(json.loads(rows[-1]["diagnostics"])["source"], "broken")
+            self.assertEqual(report.failed_records, 2)
+            self.assertEqual((batch.exit_code, report.exit_code), (1, 1))
+
+    def test_colliding_covers_do_not_overwrite_or_deduplicate_rows(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = bundle(root)
+            shutil.copytree(source, root / "input" / "duplicate")
+            batch = analyze_directory(root / "input")
+            report = CsvExporter().export(batch.records, root / "report", feature_names=batch.feature_names)
+            _, rows = read_rows(report.csv_path)
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(len(list((root / "report" / "covers").iterdir())), 1)
+            self.assertEqual([row["status"] for row in rows], ["ok", "partial"])
+            self.assertEqual(rows[1]["hold_raw"], "2.0")
+            self.assertEqual(rows[1]["cover_path"], "")
+            self.assertEqual(report.exit_code, 1)
+            self.assertEqual(batch.exit_code, 0)  # Export errors do not mutate core results.
+
+    def test_failed_cover_copy_keeps_raw_value_and_continues_next_record(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bundle(root, "A")
+            bundle(root, "B")
+            batch = analyze_directory(root / "input")
+            copyfile = shutil.copyfile
+
+            def fail_first(source, target):
+                if target.name.startswith("A-"):
+                    target.write_bytes(b"partial copy")
+                    raise OSError("simulated copy failure")
+                return copyfile(source, target)
+
+            with patch("mairadar.exporters.csv.shutil.copyfile", side_effect=fail_first):
+                report = CsvExporter().export(batch.records, root / "report", feature_names=batch.feature_names)
+            _, rows = read_rows(report.csv_path)
+            self.assertEqual([row["status"] for row in rows], ["partial", "ok"])
+            self.assertEqual(rows[0]["hold_raw"], "2.0")
+            self.assertEqual(rows[0]["cover_path"], "")
+            self.assertEqual(len(list((root / "report" / "covers").iterdir())), 1)
+
+    def test_existing_files_are_preserved_and_failed_publish_cleans_staging(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bundle(root)
+            batch = analyze_directory(root / "input")
+            target = root / "report"
+            target.mkdir()
+            marker = target / "personal.txt"
+            marker.write_text("keep")
+            with self.assertRaises(FileExistsError):
+                CsvExporter().export(batch.records, target, feature_names=batch.feature_names)
+            self.assertEqual(marker.read_text(), "keep")
+            marker.unlink()
+            with patch("mairadar.exporters.csv.os.rename", side_effect=OSError("publish failed")):
+                with self.assertRaises(OSError):
+                    CsvExporter().export(batch.records, target, feature_names=batch.feature_names)
+            self.assertTrue(target.is_dir())
+            self.assertEqual(list(target.iterdir()), [])
+            self.assertEqual(list(root.glob(".report-*")), [])
+
+    def test_cli_runs_without_install_and_returns_nonzero_on_partial_batch(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bundle(root, cover=False)
+            command = [sys.executable, str(ROOT / "scripts/analyze_charts.py"),
+                       "--input", str(root / "input")]
+            process = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(process.returncode, 0, process.stderr)
+            self.assertEqual(json.loads(process.stdout)["analysis"]["features"]["hold"],
+                             {"data": 2.0, "success": True})
+            self.assertFalse((root / "report").exists())
+            (root / "input" / "bad").mkdir()
+            process = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(process.returncode, 1, process.stderr)
+            self.assertEqual(len(process.stdout.splitlines()), 2)
+
+    def test_cli_chooser_selection_cancellation_and_unavailable_gui(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bundle(root, cover=False)
+            args = ["--mode", "analysis", "--choose"]
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                with patch("mairadar.cli.choose_directory", return_value=root / "input"):
+                    self.assertEqual(main(args), 0)
+                with patch("mairadar.cli.choose_directory", return_value=None):
+                    self.assertEqual(main(args), 1)
+                with patch("mairadar.cli.choose_directory", side_effect=ImportError("no tkinter")):
+                    self.assertEqual(main(args), 1)
+
+    def test_empty_input_and_nested_output_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "input").mkdir()
+            self.assertEqual(analyze_directory(root / "input").exit_code, 1)
+            with contextlib.redirect_stderr(io.StringIO()):
+                for output in (root / "report", root / "input" / "report"):
+                    self.assertEqual(main(["--mode", "analysis", "-i", str(root / "input"), "-o", str(output)]), 1)
+                    self.assertFalse(output.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()
