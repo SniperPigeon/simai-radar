@@ -5,8 +5,7 @@ from pathlib import Path
 import sys
 
 from mairadar import __version__
-from mairadar.io import write_bundle
-from .core import parse_file
+from mairadar.io import parse_file, write_bundle
 
 
 def _difficulty(value: str) -> int:
@@ -22,9 +21,10 @@ def _difficulty(value: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Parse Simai into one CSV bundle per difficulty chart.")
     parser.add_argument("--input", "-i", type=Path, required=True, help="maidata/majdata or raw Simai file, or directory")
-    parser.add_argument("--output", "-o", type=Path, required=True, help="output root; each chart gets a child directory")
+    parser.add_argument("--output", "-o", type=Path, required=True, help="output root; children are title-difficulty_index-dx/sd")
     parser.add_argument("--difficulty", "-d", type=_difficulty, nargs="+", help="inote indexes, e.g. 5 6; default: all present")
-    parser.add_argument("--overwrite", action="store_true", help="replace matching generated chart bundles")
+    parser.add_argument("--chart-type", choices=("dx", "sd"), help="export type override when cabinet metadata is absent")
+    parser.add_argument("--overwrite", action="store_true", help="replace existing generated output folders")
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(argv)
     source = args.input.resolve()
@@ -53,6 +53,8 @@ def main(argv: list[str] | None = None) -> int:
             failures += 1
             continue
         for bundle in bundles:
+            if args.chart_type is not None:
+                bundle.chart.chart_type = args.chart_type
             try:
                 target = write_bundle(bundle, args.output, overwrite=args.overwrite)
             except (OSError, ValueError) as exc:

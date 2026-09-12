@@ -3,8 +3,6 @@
 from bisect import bisect_right
 from dataclasses import dataclass
 from fractions import Fraction
-import hashlib
-import json
 import math
 import re
 
@@ -13,11 +11,6 @@ class SyntaxProblem(ValueError):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
-
-
-def identity(prefix: str, *parts: object) -> str:
-    payload = json.dumps(parts, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    return prefix + hashlib.sha256(payload).hexdigest()[:32]
 
 
 def number(text: str, *, zero: bool = False) -> Fraction:

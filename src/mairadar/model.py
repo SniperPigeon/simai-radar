@@ -1,17 +1,16 @@
-"""The events-0.1 interchange model; no analysis or scoring policies."""
+"""The events-0.2 interchange model; no analysis or scoring policies."""
 
 from dataclasses import dataclass, field
 from typing import Any
 
-SCHEMA_VERSION = "events-0.1"
+SCHEMA_VERSION = "events-0.2"
 MAJSIMAI_PIN = "fdb2a3e39d8997a0abbf8b4679062d854473cc77"
 MAJDATAPLAY_PIN = "c3423a4bba536e53921e8fdedab2b9d91121b393"
 
 
 @dataclass
 class Event:
-    chart_id: str
-    event_id: str
+    event_id: int
     kind: str
     is_slide_head: bool | None = None
     timing_type: str | None = None
@@ -22,7 +21,7 @@ class Event:
     end_beat: str | None = None
     bpm: float | None = None
     position: str | None = None
-    head_event_id: str | None = None
+    head_event_id: int | None = None
     slide_path_json: list[dict[str, Any]] | None = None
     is_break: bool | None = None
     is_ex: bool | None = None
@@ -37,9 +36,8 @@ class Event:
 
 @dataclass
 class Chart:
-    chart_id: str
-    source_name: str
-    source_sha256: str
+    source_name: str | None = None
+    chart_type: str | None = None
     difficulty_index: int | None = None
     difficulty_label: str | None = None
     level_text: str | None = None
@@ -55,7 +53,6 @@ class Chart:
 
 @dataclass
 class Diagnostic:
-    chart_id: str
     severity: str
     code: str
     message: str
@@ -65,6 +62,17 @@ class Diagnostic:
     source_column: int
     raw_text: str
     recovery_json: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ParseResult:
+    """One chart's text semantics, with no song identity or filesystem metadata."""
+
+    events: list[Event] = field(default_factory=list)
+    diagnostics: list[Diagnostic] = field(default_factory=list)
+    complete: bool = True
+    chart_end_time_s: float | None = None
+    last_event_end_s: float | None = None
 
 
 @dataclass

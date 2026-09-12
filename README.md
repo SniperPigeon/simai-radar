@@ -1,43 +1,49 @@
 # simai-radar
 
-Python Simai 谱面解析与特征分析项目。先把文本解析成可审计的事件时间轴，再由独立脚本计算 raw 特征与分数映射。
+Python Simai 文本解析库。返回统一事件时间轴，供播放器集成和独立分析使用；不负责歌曲管理、跨谱面身份或去重。
 
-**当前阶段：目录骨架和事件模型 prototype。Slide 内联路径与连接段子数组已确认，其余事件字段尚待定稿；解析器、分析器和实际映射均未实现。**
+```python
+from mairadar.parser import parse_chart
 
-换工作区后先读 [HANDOFF.md](HANDOFF.md)，再读 [事件字段草案](docs/SCHEMA_PROPOSAL.md) 和 [语法范围](docs/SYNTAX_SUPPORT.md)。handoff 是 2026-09-12 的一次性上下文快照，不是持续追加的日志。
-
-```text
-src/simai_radar/
-  model/       事件、时间轴、诊断的数据模型（待实现）
-  parser/      metadata、时序、物件语法与方言兼容（待实现）
-  io/          CSV bundle 读写及可选 DataFrame 适配（待实现）
-  analysis/    小节、窗口、分布、六维 raw 指标（待实现）
-  scoring/     标准化、标定、raw → score 映射（待实现）
-scripts/       各阶段独立命令入口；当前只有 map_scores.py 占位
-res/
-  examples/schema_v0.1_draft/  单谱子目录中的人工 CSV，非解析器输出
-  config/                    映射配置草案
-  reference/                 上游 commit 与链接，不包含第三方源码
-tests/         按模块预留测试目录；fixtures/ 保存自造回归谱面
-data/
-  raw/         本地输入
-  parsed/      事件时间轴导出，拟按每张难度谱面一个子目录
-  features/    原始分析指标
-  scores/      映射后的分数
-outputs/       报告和图形
-docs/          架构、字段、语法、映射说明
+result = parse_chart("(120){4}1,1?-5[4:1],E")
+# result.events / result.diagnostics / result.complete
 ```
 
-小型示例和配置放 `res/` 并提交；真实曲库及生成产物放 `data/`、`outputs/`，默认不提交。包不绑定 Unity；核心解析和 CSV 读写计划使用 Python 标准库，DataFrame 是同一模型的便捷视图，而不是唯一存储格式。
+Python 3.11+，仅标准库。核心接收单张谱面的 inote 正文，返回一个 ParseResult，不需要 metadata 或输入/输出路径。完整 maidata 文本可用 parse_text 解析为多个附带 metadata 的 ChartBundle。
 
-开发环境约定为 Python 3.11+。创建骨架时可用解释器为 `/opt/anaconda3/bin/python3`（3.13.9）；`/usr/bin/python3` 为 3.9.6，低于本项目约定。后续工作区应自行确认解释器，不把此绝对路径写入运行时代码。
-
-可运行的占位命令：
+文件处理与导出是外围适配：
 
 ```bash
-python scripts/map_scores.py --help
+python scripts/parse_chart.py --input data/raw --output data/parsed
+python scripts/parse_chart.py --input path/to/maidata.txt --output data/parsed --difficulty 6 --overwrite
 ```
 
-该脚本目前只展示规划中的参数，实际执行会明确返回非零状态。不要把它当成已完成的评分器。当前没有解析命令、已安装依赖、锁文件、自动生成数据或通过的解析测试。
+输出目录为 `<title>-<difficulty_index>-dx/sd`，例如 `Link-6-sd`，包含 events.csv、charts.csv、diagnostics.csv、manifest.json。DX/SD 来自 cabinet/cabinate 元数据；缺失时可用 --chart-type 指定。文件目录名不使用 hash；events 不含 chart_id，event_id 和 head_event_id 为单次结果内的整数编号。
 
-主要参考：MajdataPlay 实际锁定的 MajSimai + MajdataPlay 自身扩展；版本见 [res/reference/upstreams.json](res/reference/upstreams.json)。当前 Git 仓库已有 MIT LICENSE，本次只新增本项目自己的文档、样例与骨架，未引入上游源码。
+```text
+src/mairadar/
+  model.py       事件、解析结果和可选 metadata
+  parser/        纯文本时间与物件语义
+  validation.py  纯模型校验
+  io.py          文件读取与 CSV 导出/读取
+  cli.py         可选的参数与批量文件处理
+scripts/
+  parse_chart.py 本地 CLI 入口
+  map_scores.py  后续评分映射占位
+res/             小型人工 golden、配置和固定引用
+tests/           合成语义及外围接口测试
+data/            外部输入与分析产物
+outputs/         预览和验证报告
+```
+
+BPM 是 timing 事件；Slide 形状内联，有头/无头均保留声明时间；连接 Slide 段数组不复制成多个路径事件。未知语法明确诊断，不猜节奏。连接段的几何时间与部分播放器扩展仍未实现；任何 partial 或读写失败，CLI 均返回非零。实际边界见 [语法支持](docs/SYNTAX_SUPPORT.md)。
+
+[调用说明](docs/PARSER.md) · [events-0.2 格式](docs/SCHEMA_PROPOSAL.md) · [架构](docs/ARCHITECTURE.md)
+
+```bash
+PYTHONPATH=src python -m unittest discover -s tests -v
+```
+
+未安装包时可使用 PYTHONPATH=src；CLI 脚本无需安装。当前机器可用 /opt/anaconda3/bin/python3，系统 Python 3.9 不满足要求。
+
+固定上游引用见 [upstreams.json](res/reference/upstreams.json)。已做源码静态核对、合成测试和真实输入抽查，尚未运行 .NET/Unity 差分验证。真实谱面、音频和生成产物不纳入提交；HANDOFF.md 保留为一次性历史快照。

@@ -2,23 +2,23 @@
 
 from bisect import bisect_right
 from fractions import Fraction
-import hashlib
 import math
-from pathlib import Path, PurePosixPath
 import re
 
-from mairadar.model import Chart, ChartBundle, Diagnostic, Event, SCHEMA_VERSION
+from mairadar.model import Chart, ChartBundle, Diagnostic, Event, ParseResult
 from .notes import parse_note
-from .source import Source, SyntaxProblem, Token, identity, number, seconds, split_top
+from .source import Source, SyntaxProblem, Token, number, seconds, split_top
 
 FIELD = re.compile(r"^[ \t]*&([^=\s]+)=[ \t]*", re.MULTILINE)
 LABELS = {1: "Easy", 2: "Basic", 3: "Advanced", 4: "Expert", 5: "Master", 6: "Re:Master", 7: "Utage"}
 
 
 class ChartParser:
-    def __init__(self, source: Source, chart: Chart):
+    def __init__(self, source: Source):
         self.source = source
-        self.bundle = ChartBundle(chart)
+        self.result = ParseResult()
+        self._next_id = 1
+        self._local_ids: dict[tuple[int, int, str], int] = {}
         self.tempo: list[tuple[Fraction, Fraction, Fraction]] = []
         self.pending: list[tuple[Event, Fraction, Fraction]] = []
         self.time = Fraction(0)
@@ -29,12 +29,12 @@ class ChartParser:
 
     def diagnose(self, code: str, message: str, start: int, end: int, *,
                  severity: str = "error", incomplete: bool = True, action: str = "none") -> None:
-        self.bundle.diagnostics.append(Diagnostic(
-            chart_id=self.bundle.chart.chart_id, severity=severity, code=code, message=message,
+        self.result.diagnostics.append(Diagnostic(
+            severity=severity, code=code, message=message,
             raw_text=self.source.text[start:end], recovery_json={"action": action},
             **self.source.location(start, end)))
         if incomplete:
-            self.bundle.complete = False
+            self.result.complete = False
 
     def event(self, token: Token, spec: dict) -> tuple[Event, Fraction, Fraction]:
         spec = dict(spec)
@@ -42,11 +42,15 @@ class ChartParser:
         declare = spec.pop("_declare", None)
         suffix = spec.pop("_suffix")
         head_suffix = spec.pop("_head_suffix", None)
-        chart_id = self.bundle.chart.chart_id
+        # Temporary local IDs are remapped after final time ordering. Invalid
+        # tokens may reserve IDs internally, but never leave gaps in the result.
+        key = (token.start, token.end, suffix)
+        local_id = self._next_id
+        self._next_id += 1
+        self._local_ids[key] = local_id
         if head_suffix:
-            spec["head_event_id"] = identity("e-", chart_id, token.start, token.end, head_suffix)
-        event = Event(chart_id=chart_id,
-                      event_id=identity("e-", chart_id, token.start, token.end, suffix),
+            spec["head_event_id"] = self._local_ids[(token.start, token.end, head_suffix)]
+        event = Event(event_id=local_id,
                       start_time_s=seconds(start), end_time_s=seconds(end),
                       slide_declare_time_s=seconds(declare) if declare is not None else None,
                       raw_token=self.source.text[token.start:token.end],
@@ -149,11 +153,11 @@ class ChartParser:
                         self.diagnose("SLIDE_GEOMETRY_PENDING", "Connected Slide segment times require player geometry; whole-path times are available",
                                       atom.start, atom.end, severity="warning", action="retain_path_with_null_segment_times")
 
-    def parse(self, begin: int, end: int) -> ChartBundle:
+    def parse(self, begin: int, end: int) -> ParseResult:
         token = self.masked_token(begin, end)
         if not token.text:
             self.diagnose("EMPTY_CHART", "Chart is empty", begin, end)
-            return self.bundle
+            return self.result
         # No supported duration or timing directive contains a comma. Treat each
         # comma as a source boundary even when a note itself has malformed brackets.
         boundaries = [i for i, char in enumerate(token.text) if char == ","]
@@ -189,12 +193,12 @@ class ChartParser:
                 break
             cursor = boundary + 1
         if self.time_valid:
-            self.bundle.chart.chart_end_time_s = seconds(self.time)
+            self.result.chart_end_time_s = seconds(self.time)
             if not terminated:
                 self.diagnose("EOF_TERMINATOR", "EOF accepted as the chart end; no comma or time interval was inserted",
                               end, end, severity="info", incomplete=False)
         self.finish()
-        return self.bundle
+        return self.result
 
     def finish(self) -> None:
         times = [point[0] for point in self.tempo]
@@ -210,26 +214,32 @@ class ChartParser:
 
         # Stable sort retains derivation order within a token (head, then branches).
         self.pending.sort(key=lambda item: (item[1], item[0].source_start))
+        id_map = {event.event_id: index for index, (event, _, _) in enumerate(self.pending, 1)}
         for event, start, end in self.pending:
+            event.event_id = id_map[event.event_id]
+            if event.head_event_id is not None:
+                event.head_event_id = id_map[event.head_event_id]
             event.start_beat = beat_at(start)
             event.end_beat = beat_at(end)
-            self.bundle.events.append(event)
-        ends = [event.end_time_s for event in self.bundle.events if event.kind != "timing"]
-        self.bundle.chart.last_event_end_s = max(ends, default=None)
+            self.result.events.append(event)
+        ends = [event.end_time_s for event in self.result.events if event.kind != "timing"]
+        self.result.last_event_end_s = max(ends, default=None)
 
 
-def parse_text(text: str, *, source_name: str = "chart.simai", difficulties: list[int] | None = None,
-               source_sha256: str | None = None) -> list[ChartBundle]:
-    """Parse raw Simai or a maidata envelope. Diagnostics accompany partial results.
-
-    source_name is a portable path relative to the caller's input root. Fractions
-    remain exact during parsing; exported seconds are finite float64 values.
-    """
-    digest = source_sha256 or hashlib.sha256(text.encode("utf-8")).hexdigest()
+def parse_chart(text: str) -> ParseResult:
+    """Parse one raw inote body. No paths, song IDs, metadata or file I/O needed."""
     text = text.removeprefix("\ufeff")
-    source_name = str(PurePosixPath(source_name.replace("\\", "/")))
-    if PurePosixPath(source_name).is_absolute() or ".." in PurePosixPath(source_name).parts:
-        raise ValueError("source_name must be relative to the input root")
+    parser = ChartParser(Source(text))
+    return parser.parse(0, len(text))
+
+
+def parse_text(text: str, *, difficulties: list[int] | None = None) -> list[ChartBundle]:
+    """Parse raw text or a maidata envelope in memory; attach only its metadata.
+
+    For a player's raw inote text, parse_chart returns a single ParseResult.
+    This convenience adapter handles multi-difficulty envelope text as well.
+    """
+    text = text.removeprefix("\ufeff")
     if difficulties is not None and any(type(index) is not int or index < 1 for index in difficulties):
         raise ValueError("difficulty indexes must be positive integers")
     source = Source(text)
@@ -242,7 +252,7 @@ def parse_text(text: str, *, source_name: str = "chart.simai", difficulties: lis
         if key in fields:
             duplicate_spans.append((key, match.start(), end))
         value = text[begin:end]
-        if re.fullmatch(r"(?:title|artist|des(?:_[0-9]+)?|first(?:_[0-9]+)?|lv_[0-9]+)", key):
+        if re.fullmatch(r"(?:title|artist|cabinet|cabinate|des(?:_[0-9]+)?|first(?:_[0-9]+)?|lv_[0-9]+)", key):
             lines = value.splitlines(keepends=True)
             fields[key] = lines[0].strip() if lines else ""
             cursor = begin + len(lines[0]) if lines else begin
@@ -267,14 +277,14 @@ def parse_text(text: str, *, source_name: str = "chart.simai", difficulties: lis
     bundles = []
     for index in selected:
         key = f"inote_{index}" if index is not None else ""
-        chart_id = identity("chart-", SCHEMA_VERSION, source_name, digest, index)
-        chart = Chart(chart_id=chart_id, source_name=source_name, source_sha256=digest,
+        cabinet = fields.get("cabinet", fields.get("cabinate", "")).strip().lower()
+        chart = Chart(chart_type=cabinet if cabinet in {"dx", "sd"} else None,
                       difficulty_index=index, difficulty_label=LABELS.get(index),
                       level_text=fields.get(f"lv_{index}") or None,
                       title=fields.get("title") or None, artist=fields.get("artist") or None,
                       designer=fields.get(f"des_{index}") or fields.get("des") or None,
                       metadata_json={k: v for k, v in fields.items() if not re.fullmatch(r"inote_[0-9]+", k)})
-        parser = ChartParser(source, chart)
+        parser = ChartParser(source)
         for metadata_key, start, end in metadata_tails:
             parser.diagnose("UNEXPECTED_METADATA_TEXT", f"Unexpected continuation of scalar &{metadata_key}",
                             start, end, action="retain_in_diagnostic")
@@ -296,16 +306,11 @@ def parse_text(text: str, *, source_name: str = "chart.simai", difficulties: lis
                 parser.diagnose("INVALID_OFFSET", "Audio offset must be a finite number", *spans[offset_key])
         if matches and key not in fields:
             parser.diagnose("MISSING_CHART", f"No &{key or 'inote_N'} field matches the request", 0, 0)
-            bundles.append(parser.bundle)
+            result = parser.result
         else:
             begin, end = spans[key] if matches else (0, len(text))
-            bundles.append(parser.parse(begin, end))
+            result = parser.parse(begin, end)
+        chart.chart_end_time_s = result.chart_end_time_s
+        chart.last_event_end_s = result.last_event_end_s
+        bundles.append(ChartBundle(chart, result.events, result.diagnostics, result.complete))
     return bundles
-
-
-def parse_file(path: str | Path, *, source_name: str | None = None,
-               difficulties: list[int] | None = None) -> list[ChartBundle]:
-    path = Path(path)
-    data = path.read_bytes()
-    return parse_text(data.decode("utf-8-sig"), source_name=source_name or path.name,
-                      source_sha256=hashlib.sha256(data).hexdigest(), difficulties=difficulties)

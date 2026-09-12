@@ -1,5 +1,5 @@
-"""Public parser API: parse_text and parse_file return chart bundles."""
+"""In-memory text parsing: raw chart bodies or maidata envelopes."""
 
-from .core import parse_file, parse_text
+from .core import parse_chart, parse_text
 
-__all__ = ["parse_file", "parse_text"]
+__all__ = ["parse_chart", "parse_text"]
