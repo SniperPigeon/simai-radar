@@ -32,7 +32,9 @@ class DimensionPresentation:
     color: str | None = None
 
 
-DEFAULT_PRESENTATION = {
+# Edit this mapping to configure labels and colors for known analysis feature keys.
+# Unlisted keys are exported unchanged so a newly added feature remains visible.
+DIMENSION_PRESENTATION = {
     "hold": DimensionPresentation("Hold 频率", "Hold"),
 }
 
@@ -55,8 +57,9 @@ class VisualizerExporter:
         self,
         dimension_presentation: Mapping[str, DimensionPresentation] | None = None,
     ) -> None:
-        configured = DEFAULT_PRESENTATION if dimension_presentation is None else dimension_presentation
-        self._presentation = dict(configured)
+        self._presentation = dict(DIMENSION_PRESENTATION)
+        if dimension_presentation is not None:
+            self._presentation.update(dimension_presentation)
 
     def export(
         self,
@@ -126,8 +129,7 @@ class VisualizerExporter:
         dimensions = []
         for index, name in enumerate(names):
             configured = self._presentation.get(name)
-            fallback = name.replace("_", " ").strip() or name
-            label = configured.label if configured is not None else fallback
+            label = configured.label if configured is not None else name
             short_label = configured.short_label if configured is not None else None
             color = configured.color if configured is not None else None
             dimensions.append({

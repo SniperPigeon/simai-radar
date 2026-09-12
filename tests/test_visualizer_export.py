@@ -120,9 +120,18 @@ class VisualizerExporterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             records = [
-                scored_record("official/dx/maidata.txt", chart_type="dx", difficulty=5),
-                scored_record("official/dx/maidata.txt", chart_type="dx", difficulty=6),
-                scored_record("official/sd/maidata.txt", chart_type="sd", difficulty=5),
+                scored_record(
+                    "official/dx/maidata.txt", chart_type="dx", difficulty=5,
+                    features=("alpha", "beta", "gamma_raw"),
+                ),
+                scored_record(
+                    "official/dx/maidata.txt", chart_type="dx", difficulty=6,
+                    features=("alpha", "beta", "gamma_raw"),
+                ),
+                scored_record(
+                    "official/sd/maidata.txt", chart_type="sd", difficulty=5,
+                    features=("alpha", "beta", "gamma_raw"),
+                ),
             ]
             presentation = {
                 "alpha": DimensionPresentation("甲", "甲", "#111111"),
@@ -131,7 +140,7 @@ class VisualizerExporterTests(unittest.TestCase):
             report = VisualizerExporter(presentation).export(
                 records,
                 root / "site",
-                feature_names=("alpha", "beta", "gamma"),
+                feature_names=("alpha", "beta", "gamma_raw"),
                 include_scores=True,
             )
             payload = json.loads(report.data_path.read_text())
@@ -146,12 +155,12 @@ class VisualizerExporterTests(unittest.TestCase):
             self.assertTrue(all(re.fullmatch(r"(?:song|chart)-\d+", value)
                                 for value in ["song-1", "song-2", *ids]))
             self.assertEqual([item["key"] for item in payload["dimensions"]], [
-                "alpha", "beta", "gamma",
+                "alpha", "beta", "gamma_raw",
             ])
             self.assertEqual(payload["dimensions"][0], {
                 "key": "alpha", "label": "甲", "shortLabel": "甲", "color": "#111111",
             })
-            self.assertEqual(payload["dimensions"][2]["label"], "gamma")
+            self.assertEqual(payload["dimensions"][2]["label"], "gamma_raw")
 
     def test_missing_scores_remain_null_and_failed_record_is_visible_in_stats(self):
         with tempfile.TemporaryDirectory() as temp:
