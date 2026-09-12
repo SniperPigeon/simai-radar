@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 from mairadar import __version__
-from mairadar.io import parse_file, write_bundle
+from mairadar.io import find_cover, parse_file, write_bundle
 
 
 def _difficulty(value: str) -> int:
@@ -25,6 +25,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--difficulty", "-d", type=_difficulty, nargs="+", help="inote indexes, e.g. 5 6; default: all present")
     parser.add_argument("--chart-type", choices=("dx", "sd"), help="export type override when cabinet metadata is absent")
     parser.add_argument("--overwrite", action="store_true", help="replace existing generated output folders")
+    covers = parser.add_mutually_exclusive_group()
+    covers.add_argument("--cover", type=Path, help="explicit cover image for single-file input; default: discover sibling bg.*")
+    covers.add_argument("--no-cover", action="store_true", help="export without a cover image")
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(argv)
     source = args.input.resolve()
@@ -33,6 +36,8 @@ def main(argv: list[str] | None = None) -> int:
     if source.is_file():
         root, files = source.parent, [source]
     elif source.is_dir():
+        if args.cover is not None:
+            parser.error("--cover is for single-file input; directory mode discovers each file's sibling bg.*")
         root = source
         output = args.output.resolve()
         if source == output:
@@ -56,7 +61,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.chart_type is not None:
                 bundle.chart.chart_type = args.chart_type
             try:
-                target = write_bundle(bundle, args.output, overwrite=args.overwrite)
+                cover = None if args.no_cover else (args.cover if args.cover is not None else find_cover(file.parent))
+                target = write_bundle(bundle, args.output, overwrite=args.overwrite, cover_path=cover)
             except (OSError, ValueError) as exc:
                 print(f"{file} [difficulty {bundle.chart.difficulty_index}]: {exc}", file=sys.stderr)
                 failures += 1
