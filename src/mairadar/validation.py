@@ -88,8 +88,9 @@ def validate_result(result: ParseResult) -> None:
                 raise ValueError("Invalid via position")
             start, end = segment["start_time_s"], segment["end_time_s"]
             if start is None or end is None:
-                if start is not None or end is not None or segment["time_resolution"] != "needs_geometry" or result.complete:
-                    raise ValueError("Unresolved segment must mark bundle incomplete")
+                if (start is not None or end is not None or segment["time_resolution"] != "needs_geometry"
+                        or (len(path) == 1 and result.complete)):
+                    raise ValueError("Unresolved times must belong to a connected Slide segment")
             else:
                 if segment["time_resolution"] != "explicit_duration":
                     raise ValueError("Unexpected segment time resolution")

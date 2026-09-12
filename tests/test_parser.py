@@ -268,14 +268,14 @@ class NoteTests(unittest.TestCase):
                            ("1-3[4:1]-5[240#4:2]", 1.25)]:
             with self.subTest(token=token):
                 b = chart(f"(120){token},E")
-                self.assertFalse(b.complete)
+                self.assertTrue(b.complete)
                 event = next(e for e in b.events if e.kind == "slide")
                 self.assertEqual(event.end_time_s, end)
                 self.assertEqual(len(event.slide_path_json), 2)
                 for segment in event.slide_path_json:
                     self.assertIsNone(segment["start_time_s"])
                     self.assertEqual(segment["time_resolution"], "needs_geometry")
-                self.assertIn("SLIDE_GEOMETRY_PENDING", [d.code for d in b.diagnostics])
+                self.assertNotIn("SLIDE_GEOMETRY_PENDING", [d.code for d in b.diagnostics])
 
     def test_invalid_geometry_duration_and_suffixes_are_diagnosed(self):
         tokens = ["0", "9", "C3", "A9", "1junk", "1[4:1]", "1h[]", "1h[0:1]", "1h[#-1]",

@@ -81,7 +81,7 @@ def _shape_is_valid(shape: str, start: str, via: str | None, end: str) -> None:
         raise SyntaxProblem("INVALID_SLIDE_GEOMETRY", f"Invalid endpoints for {start}{shape}{via or ''}{end}")
 
 
-def _path(clean: Token, bpm: Fraction, declare: Fraction, source: str) -> tuple[list, Fraction, Fraction, bool]:
+def _path(clean: Token, bpm: Fraction, declare: Fraction, source: str) -> tuple[list, Fraction, Fraction]:
     if not clean.text or clean.text[0] not in "12345678":
         raise SyntaxProblem("INVALID_POSITION", "Slide must begin at a button from 1 to 8")
     start = clean.text[0]
@@ -128,17 +128,15 @@ def _path(clean: Token, bpm: Fraction, declare: Fraction, source: str) -> tuple[
         raise SyntaxProblem("INVALID_SLIDE_GEOMETRY", "Wifi cannot be part of a connected Slide")
     start_time = declare + (60 / bpm if wait_override is None else wait_override)
     end_time = start_time + sum((length for length in lengths if length is not None), Fraction(0))
-    # The pinned NoteLoader apportions even explicit chain lengths by prefab bar
-    # counts. Until that geometry is implemented, never invent per-segment times.
-    needs_geometry = len(segments) > 1
-    if not needs_geometry:
+    # Whole-path timing is the parsing contract. Derived segment timings are optional.
+    if len(segments) == 1:
         segments[0].update(start_time_s=seconds(start_time), end_time_s=seconds(end_time),
                            time_resolution="explicit_duration")
-    return segments, start_time, end_time, needs_geometry
+    return segments, start_time, end_time
 
 
-def parse_note(token: Token, at: Fraction, bpm: Fraction, source: str) -> tuple[list[dict], bool]:
-    """Parse one simultaneous member atomically; return specs and geometry status."""
+def parse_note(token: Token, at: Fraction, bpm: Fraction, source: str) -> list[dict]:
+    """Parse one simultaneous member atomically into event specs."""
     if "K" in token.text:
         raise SyntaxProblem("UNSUPPORTED_SLIDE", "K custom Slide geometry is not supported")
     branches = split_top(token, "*")
@@ -170,7 +168,7 @@ def parse_note(token: Token, at: Fraction, bpm: Fraction, source: str) -> tuple[
         return [dict(kind=kind, position=position, is_slide_head=False,
                      is_break=first_flags["is_break"], is_ex=first_flags["is_ex"],
                      is_mine=first_flags["is_mine"], flags_json=extra,
-                     _suffix="note", _start=at, _end=end)], False
+                     _suffix="note", _start=at, _end=end)]
 
     output = []
     no_head = "no_head_marker" in first_flags["extra"]
@@ -185,7 +183,6 @@ def parse_note(token: Token, at: Fraction, bpm: Fraction, source: str) -> tuple[
                            is_break=first_flags["is_break"], is_ex=first_flags["is_ex"],
                            is_mine=first_flags["is_mine"], flags_json=head_extra,
                            _suffix="head", _start=at, _end=at))
-    incomplete_geometry = False
     for i, branch in enumerate(branches):
         # Later * branches inherit only the initial button, not the first path's flags.
         if i:
@@ -193,8 +190,7 @@ def parse_note(token: Token, at: Fraction, bpm: Fraction, source: str) -> tuple[
         clean, flags = _flags(branch)
         if flags["extra"].get("hanabi"):
             raise SyntaxProblem("INVALID_MODIFIER", "Hanabi is only supported on Touch notes")
-        segments, start, end, needs_geometry = _path(clean, bpm, at, source)
-        incomplete_geometry |= needs_geometry
+        segments, start, end = _path(clean, bpm, at, source)
         extra = {key: value for key, value in flags["extra"].items()
                  if key in ("no_head_marker", "using_sv")}
         if no_head:
@@ -211,4 +207,4 @@ def parse_note(token: Token, at: Fraction, bpm: Fraction, source: str) -> tuple[
                            slide_path_json=segments, _suffix=f"slide:{i}",
                            _head_suffix=None if no_head else "head", _declare=at,
                            _start=start, _end=end))
-    return output, incomplete_geometry
+    return output

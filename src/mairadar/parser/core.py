@@ -143,15 +143,12 @@ class ChartParser:
                 atoms = [member.slice(0, 1), member.slice(1)] if re.fullmatch(r"[1-8]{2}", member.text) else [member]
                 for atom in atoms:
                     try:
-                        specs, geometry_pending = parse_note(atom, at, self.bpm, self.source.text)
+                        specs = parse_note(atom, at, self.bpm, self.source.text)
                         events = [self.event(atom, spec) for spec in specs]
                     except SyntaxProblem as exc:
                         self.diagnose(exc.code, str(exc), atom.start, atom.end, action="omit_invalid_token")
                         continue
                     self.pending.extend(events)
-                    if geometry_pending:
-                        self.diagnose("SLIDE_GEOMETRY_PENDING", "Connected Slide segment times require player geometry; whole-path times are available",
-                                      atom.start, atom.end, severity="warning", action="retain_path_with_null_segment_times")
 
     def parse(self, begin: int, end: int) -> ParseResult:
         token = self.masked_token(begin, end)

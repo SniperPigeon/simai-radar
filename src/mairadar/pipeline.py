@@ -17,7 +17,7 @@ MODES = ("full", "analysis", "analysis_score")
 
 def _map_batch(batch: BatchResult, transformer: ScoreTransformer) -> None:
     for record in batch.records:
-        if record.analysis is None:
+        if record.analysis is None or not any(item.success for item in record.analysis.features.values()):
             continue
         try:
             scores = transformer.transform(deepcopy(record.analysis))

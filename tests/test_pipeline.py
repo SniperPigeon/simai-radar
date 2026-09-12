@@ -53,6 +53,28 @@ def read_csv(report):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_complete_chain_proceeds_but_incomplete_parse_never_reaches_analysis_or_mapping(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "chart.simai"
+            source.write_text("(120){4}1h[4:1]/2-4-6[4:1],E")
+            mapper = Mock(wraps=TestMapper())
+            batch, report = run_pipeline("full", source, output=root / "complete", transformer=mapper)
+            self.assertEqual(batch.exit_code, 0)
+            self.assertEqual(batch.records[0].analysis.features["hold"].data, 1)
+            mapper.transform.assert_called_once()
+            self.assertEqual(read_csv(report)[0]["status"], "ok")
+
+            source.write_text("(120){4}1h[4:1]/2-4-6[4:1],invalid,E")
+            mapper.reset_mock()
+            with patch("mairadar.analysis.features.HoldFrequencyAnalyzer.analyze") as feature:
+                batch, report = run_pipeline("full", source, output=root / "incomplete", transformer=mapper)
+                feature.assert_not_called()
+            mapper.transform.assert_not_called()
+            self.assertEqual(batch.exit_code, 1)
+            row = read_csv(report)[0]
+            self.assertEqual((row["hold_raw"], row["hold_score"]), ("", ""))
+
     def test_custom_analyzer_mapper_and_exporter_compose_without_output_files(self):
         class FixedAnalyzer:
             feature_names = ("custom",)
