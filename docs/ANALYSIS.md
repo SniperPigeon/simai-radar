@@ -42,7 +42,7 @@ duration_s = max(chart_end_time_s, last_event_end_s 或 0)
 
 输出为一个数值。仅统计 kind=hold，排除 TouchHold；同位置同时声明不去重，长 Hold 只计一次。时长保留开头休止、结尾空槽及超出谱面结束标记的持续物件尾部，不叠加音频 offset。
 
-正常完整且时长为正的无 Hold 谱面得到 FeatureResult(0, success=True)；零时长返回 FeatureResult(None, success=False)。解析不完整或模型校验失败时，不执行子分析器和映射器，各维结果均标记失败，主分析器分别记录 PARSE_INCOMPLETE 或 INVALID_INPUT。连接 Slide 未计算逐段几何时间不构成解析不完整；其整条时间与路径仍保留。
+正常完整且时长为正的无 Hold 谱面得到 FeatureResult(0, success=True)；零时长返回 FeatureResult(None, success=False)。解析不完整或模型校验失败时，不执行子分析器和映射器，各维结果均标记失败，主分析器分别记录 PARSE_INCOMPLETE 或 INVALID_INPUT。连接 Slide 的各段时间由 parser 按固定 MajdataPlay bar 数分配，分析器可直接读取，不重新扫描原始 Simai。
 
 ## 统一 CLI 与模式
 

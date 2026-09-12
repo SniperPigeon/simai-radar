@@ -1,6 +1,6 @@
 # Simai 语法范围与实现状态
 
-首版 parser 0.2.1 / schema events-0.2 已实现。下表的 supported 表示通过本项目合成输入、错误诊断和时间/事件 golden 验证；**不等于已经通过 Unity 或 .NET 运行时差分测试**。
+parser 0.3.0 / schema events-0.3 已实现。下表的 supported 表示通过本项目合成输入、错误诊断和时间/事件 golden 验证；**不等于已经通过 Unity 或 .NET 运行时差分测试**。
 
 语义依据是 MajdataPlay commit `c3423a4bba536e53921e8fdedab2b9d91121b393` 锁定的 MajSimai `fdb2a3e39d8997a0abbf8b4679062d854473cc77`。缓存源码的 blob SHA-1 已与固定 commit 的 Git tree 核对；未将源码复制进本仓库。引用及 blob 信息见 `res/reference/upstreams.json`。
 
@@ -22,7 +22,7 @@
 | Hold/TouchHold `h` | supported；重复 h 按同一个布尔标志处理，保留原 token，不增加物件；短形式时长为 0，与固定参考一致，不补微小非零时长 |
 | Hold `[division:count]`、`[#seconds]`、`[bpm#division:count]` | supported；比例为整数 division/count，division>0、count>=0；无效表达式报错，不回退成 0 |
 | Touch A/B/C/D/E，`f`、BREAK/EX/mine | supported；位置统一为 A1/B1/C 等。C1/C2 源别名输出 C，raw_token 保留原写法；不接受任意 C 后缀 |
-| Slide `- ^ v < > V p q pp qq s z w` | supported；保留形状、V 途经点与端点，检查固定播放器的端点约束；不导出物理长度或完整运动轨迹 |
+| Slide `- ^ v < > V p q pp qq s z w` | supported；保留形状、V 途经点与端点，检查固定播放器的端点约束；导出 prefab bar_count 长度单位，不冒充物理距离或完整运动轨迹 |
 | 同头多 Slide `*` | supported；一个显式头 Tap，每条路径一行，共享 head_event_id；分支时间和修饰符独立 |
 | `?` / `!` 无头 Slide | supported；不生成头，但保留 slide_declare_time_s；两种标记保存到 flags.no_head_marker；按固定参考，两者都保留等待时间 |
 | `@` Tap-head Slide | supported；头为 Tap，is_slide_head=true，flags.tap_head=true |
@@ -32,7 +32,7 @@
 | Slide `[division:count]`、`[bpm#division:count]`、`[bpm#seconds]` | supported；custom BPM 同时确定等待时间。`[#seconds]` 仅适用于 Hold，不是该参考的合法 Slide 表达式 |
 | Slide `[wait##division:count]`、`[wait##seconds]`、`[wait##bpm#division:count]` | supported；wait 是相对声明时刻的秒等待量，不是全谱绝对时间，允许 0；数字不带字面 s 单位 |
 | 连接 Slide：末尾总时长或每段时长 | supported；路径子数组、整条等待/时长已解析。多组时长求和，首个显式等待/custom-BPM 决定等待；混合指定方式明确报错 |
-| 连接 Slide 逐段几何时间 | not implemented；固定 NoteLoader 按 prefab bar 数分配时间（包含逐段给时长的写法）。连接段保留 needs_geometry、时间为 null；不属于解析完成条件，不产生 SLIDE_GEOMETRY_PENDING，不因此设置 complete=false。不能平均分配 |
+| 连接 Slide 逐段时间 | supported；固定 NoteLoader 按 prefab bar 数分配时间（包含逐段给时长的写法），每段导出 bar_count 和连续 start/end；不按段数平均分配 |
 | Wifi 作为连接段 | rejected；固定播放器不允许 |
 | `<HS*...>` / `<SV*...>` | unsupported；UNSUPPORTED_SPEED，明确标记不完整；不假装已保存其播放效果 |
 | `K` 自定义 Slide | unsupported；保留定位诊断，不编造路径或输出一个看似完整的 Slide |

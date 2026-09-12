@@ -1,6 +1,6 @@
-# 事件格式 events-0.2
+# 事件格式 events-0.3
 
-状态：已获用户确认。解析器接收文本，输出单次解析范围内的物件、时间与诊断，不生成歌曲身份、不管理歌曲、不做去重。0.2 移除 chart_id 和身份哈希，event_id 改为递增整数；不兼容旧版 CSV 表头。
+状态：已获用户确认。解析器接收文本，输出单次解析范围内的物件、时间与诊断，不生成歌曲身份、不管理歌曲、不做去重。0.3 为 Slide 路径段增加 MajdataPlay `bar_count`、补全连接段时间并移除 `time_resolution`；不兼容旧版 bundle。
 
 ## 核心结果与导出边界
 
@@ -65,16 +65,16 @@ output/
   "start_position": "1",
   "via_position": null,
   "end_position": "5",
+  "bar_count": 20,
   "start_time_s": 1.5,
   "end_time_s": 2.0,
-  "raw_segment": "-5[4:1]",
-  "time_resolution": "explicit_duration"
+  "raw_segment": "-5[4:1]"
 }
 ```
 
-单段也是长度 1 的数组。数组顺序代表连接顺序；V 保留途经点，其他形状不伪造途经点。位置编码与主表一致，C1/C2 源别名统一为 C，原写法仍在 raw_token 中。
+单段也是长度 1 的数组。数组顺序代表连接顺序；V 保留途经点，其他形状不伪造途经点。`bar_count` 是固定 MajdataPlay prefab 的 `Transform.childCount`/`SlideLength` 长度单位，不等同于箭头 sprite 数或手部物理位移。位置编码与主表一致，C1/C2 源别名统一为 C，原写法仍在 raw_token 中。
 
-固定 MajdataPlay 的连接段时间会按 prefab bar 数分配，包含源文本逐段给时长的情况。解析器保留整个 Slide 时间，连接段时间为 null、time_resolution=needs_geometry；该可选派生数据未计算不影响 complete，不按段数平均分配。K 等不支持形状明确报诊断。
+固定 MajdataPlay 的连接段时间按 prefab bar 数分配，包含源文本逐段给时长的情况。解析器先取得整条 Slide 的持续时间，再按 `segment.bar_count / total_bar_count` 分配；各段首尾连续且覆盖整条 Slide。镜像只改变方向，不改变 bar 数。K 等不支持形状明确报诊断，不生成伪造路径。
 
 ## metadata、诊断和 manifest
 
@@ -98,4 +98,4 @@ output/
 
 未知物件跳过整个来源 token 并记录诊断；无法确定后续时间则停止该谱面扫描。无法确定的时间/拍不猜值，complete=false。EOF 显式支持但不插入额外逗号或时长。
 
-人工 golden 位于 `res/examples/schema_v0.2/Schema Prototype-5-sd/`，不是解析器生成文件。源输入对应 7 行结果（1 BPM + 6 物件），共享头为 event_id=4，两个路径的 head_event_id 都为 4。实现及调用见 PARSER.md，实际语法支持见 SYNTAX_SUPPORT.md。
+人工 golden 位于 `res/examples/schema_v0.3/Schema Prototype-5-sd/`，不是解析器生成文件。源输入对应 7 行结果（1 BPM + 6 物件），共享头为 event_id=4，两个路径的 head_event_id 都为 4。实现及调用见 PARSER.md，实际语法支持见 SYNTAX_SUPPORT.md。
