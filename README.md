@@ -1,49 +1,359 @@
 # simai-radar
 
-Python Simai 文本解析库。返回统一事件时间轴，供播放器集成和独立分析使用；不负责歌曲管理、跨谱面身份或去重。
+simai-radar 是一个面向 maimai 谱面雷达图评分研究的数据分析 codebase。项目将**谱面解析与特征分析**、**原始特征到标准化分数的映射**、**数据导出**拆成彼此独立的层，既方便离线批量实验，也为未来接入 MajdataPlay、提供实时雷达图分析保留了纯内存调用路径。
+
+当前版本已经打通完整管线，但还没有定义最终雷达维度，也没有完成官方数据校准。仓库内置的 `hold` 特征和 dummy Pn 映射只用于演示、测试接口与验证数据流，不应被当作正式评分标准。
+
+## 管线如何构成
+
+```text
+原始 inote / maidata
+        │
+        ▼
+parser：Simai 文本 → 统一事件时间轴 + 解析诊断
+        │
+        ▼
+analysis：事件时间轴 → 各维独立的原始特征值
+        │
+        ▼
+scoring：原始特征值 → 标准化雷达分数
+        │
+        ▼
+exporter：谱面 metadata + 原始值 + 标准分 → charts.csv / 曲绘
+```
+
+各层只依赖上一层的结构化结果：
+
+- `mairadar.parser` 只处理文本语义、时间和诊断，不读取文件，也不负责歌曲管理。
+- `mairadar.analysis` 只读取解析后的事件，不重新扫描原始 Simai。
+- `mairadar.scoring` 只映射原始特征，不参与特征计算，也不会按当前批次偷偷重拟合阈值。
+- `mairadar.exporters` 只消费组合好的分析记录，不发现文件、不运行解析器或分析器。
+- `mairadar.pipeline` 负责按使用场景组装以上各层，并允许调用方替换分析器、映射器和导出器。
+
+面向 MajdataPlay 的实时接入可以走纯内存路径：播放器提供 inote 文本及歌曲 metadata，依次调用 parser、analyzer 和 mapper，再把结果交给 UI。文件发现、CSV bundle 和曲绘复制都不是实时分析的必需依赖。
+
+## 快速开始
+
+需要 Python 3.11 或更高版本。核心运行时仅使用标准库。
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+```
+
+用仓库内的合成谱面跑通“解析 → 分析 → 映射 → 导出”：
+
+```bash
+mairadar \
+  --mode full \
+  --input "res/examples/schema_v0.2/Schema Prototype-5-sd/maidata.txt" \
+  --output outputs/demo
+```
+
+结果位于 `outputs/demo/charts.csv`。输出目录必须是不存在的新目录或空目录；已有报告不会被覆盖。
+
+如果不想安装包，也可以直接使用仓库脚本：
+
+```bash
+python scripts/mairadar.py --mode full --input data/raw --output outputs/full
+```
+
+### 三种运行模式
+
+| 模式 | 输入 | 执行内容 | 输出 |
+| --- | --- | --- | --- |
+| `full` | 单个原始 Simai 文件，或原始谱面目录 | 解析 → 特征分析 → 映射 → 导出 | 汇总 `charts.csv` 与曲绘 |
+| `analysis` | 事件 bundle 根目录 | 特征分析 | 每张谱面一行 JSON；不写文件 |
+| `analysis_score` | 事件 bundle 根目录 | 特征分析 → 映射 → 导出 | 汇总 `charts.csv` 与曲绘 |
+
+```bash
+# 只分析已经保存的事件 bundle
+mairadar --mode analysis --input data/parsed
+
+# 分析并映射为标准分
+mairadar --mode analysis_score --input data/parsed --output outputs/scored
+
+# 只处理 maidata 中的 5、6 号难度，并显式指定谱面类型
+mairadar --mode full --input data/raw --output outputs/full --difficulty 5 6 --chart-type dx
+```
+
+`full` 会递归发现 `maidata.txt`、`majdata.txt` 和 `.simai`，只解析一次并在内存中继续分析，不会先生成中间 bundle。`--difficulty` 与 `--chart-type` 仅用于 `full`；DX/SD 只读取明确 metadata 或参数，不会根据曲名或物件种类猜测。
+
+批处理中一张谱面失败不会阻止其余谱面继续处理。只要存在解析不完整、分析/映射失败、bundle 损坏或导出失败，进程就会返回非零状态，并把细节保留在诊断中。
+
+## 解析器 API
+
+### 解析单张 inote
 
 ```python
 from mairadar.parser import parse_chart
 
-result = parse_chart("(120){4}1,1?-5[4:1],E")
-# result.events / result.diagnostics / result.complete
+parsed = parse_chart("(120){4}1,1?-5[4:1],E")
+
+print(parsed.events)
+print(parsed.diagnostics)
+print(parsed.complete)
 ```
 
-Python 3.11+，仅标准库。核心接收单张谱面的 inote 正文，返回一个 ParseResult，不需要 metadata 或输入/输出路径。完整 maidata 文本可用 parse_text 解析为多个附带 metadata 的 ChartBundle。
+`parse_chart(text)` 返回 `ParseResult`，包含：
 
-文件处理与导出是外围适配：
+- `events`：按动作开始时间稳定排序的事件列表；
+- `diagnostics`：带原文位置和恢复策略的解析诊断；
+- `complete`：解析结果是否完整；
+- `chart_end_time_s`：文本时间轴结束位置；
+- `last_event_end_s`：最后一个非 timing 事件的结束位置。
 
-```bash
-python scripts/parse_chart.py --input data/raw --output data/parsed
-python scripts/parse_chart.py --input path/to/maidata.txt --output data/parsed --difficulty 6 --overwrite
+这个入口不需要曲名、难度、DX/SD、路径或文件 hash。
+
+### 解析完整 maidata
+
+```python
+from pathlib import Path
+from mairadar.parser import parse_text
+
+text = Path("data/raw/song/maidata.txt").read_text(encoding="utf-8-sig")
+bundles = parse_text(text, difficulties=[5, 6])
 ```
 
-输出目录为 `<title>-<difficulty_index>-dx/sd`，例如 `Link-6-sd`，包含 events.csv、charts.csv、diagnostics.csv、manifest.json，并可附带 cover.jpg/png 等曲绘。CLI 默认发现相邻 bg.*；可用 --cover 指定、--no-cover 关闭。DX/SD 来自 cabinet/cabinate 元数据；缺失时可用 --chart-type 指定。文件目录名不使用 hash；events 不含 chart_id，event_id 和 head_event_id 为单次结果内的整数编号。
+`parse_text` 返回 `list[ChartBundle]`，每个难度由一个 `Chart` metadata 对象、事件列表、诊断和完整性状态组成。若希望由库负责 UTF-8 BOM 文件读取，可使用：
+
+```python
+from mairadar.io import parse_file
+
+bundles = parse_file("data/raw/song/maidata.txt", difficulties=[5, 6])
+```
+
+## 事件格式
+
+当前交换格式版本为 `events-0.2`。`Event` 定义在 `src/mairadar/model.py`，写入 bundle 后对应 `events.csv` 的 22 列。
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `event_id` | `int` | 单次解析结果内从 1 连续编号；包含 BPM 事件 |
+| `kind` | `str` | `tap`、`hold`、`touch`、`touch_hold`、`slide` 或 `timing` |
+| `is_slide_head` | `bool?` | 该 Tap 是否为 Slide 头；timing 留空 |
+| `timing_type` | `str?` | timing 子类型；当前为 `bpm` |
+| `slide_declare_time_s` | `float?` | Slide 的声明时间；有头和无头 Slide 都保留 |
+| `start_time_s` | `float` | 动作开始时间；Slide 为实际开始滑动的时间 |
+| `end_time_s` | `float` | 动作结束时间；瞬时事件与开始时间相同 |
+| `start_beat` | `str?` | 全局四分音符拍轴上的开始位置，以约分后的有理数字符串保存 |
+| `end_beat` | `str?` | 全局四分音符拍轴上的结束位置 |
+| `bpm` | `float?` | BPM timing 事件声明的新值 |
+| `position` | `str?` | 外圈 `1`–`8`，或 `A1`、`B1`、`C` 等 Touch 位置 |
+| `head_event_id` | `int?` | Slide 所引用的头事件 ID；无头 Slide 留空 |
+| `slide_path_json` | `list[dict]?` | Slide 的有序路径段；连接 Slide 仍只占一行 |
+| `is_break` | `bool?` | 该事件自身是否为 BREAK |
+| `is_ex` | `bool?` | 该事件自身是否为 EX |
+| `is_mine` | `bool?` | 该事件自身是否为 mine |
+| `flags_json` | `dict?` | 额外修饰符，如无头标记、`tap_head`、`using_sv` |
+| `raw_token` | `str` | 产生该事件的原始 token |
+| `source_start` | `int` | 原文中的 0-based Unicode code point 起点 |
+| `source_end` | `int` | 原文中的半开终点 |
+| `source_line` | `int` | 1-based 原文行号 |
+| `source_column` | `int` | 1-based Unicode code point 列号 |
+
+Slide 路径段内联在 `slide_path_json` 中：
+
+```json
+{
+  "shape": "-",
+  "start_position": "1",
+  "via_position": null,
+  "end_position": "5",
+  "start_time_s": 1.5,
+  "end_time_s": 2.0,
+  "raw_segment": "-5[4:1]",
+  "time_resolution": "explicit_duration"
+}
+```
+
+普通 Slide 会生成一个头 Tap 和一个路径事件；同头多路径只生成一个头，各路径分别成为事件并共享 `head_event_id`。无头 Slide 不生成虚拟头，但仍保存声明时间。事件排序完成后才重新连续编号，并同步更新头引用；ID 只在本次结果中有效。
+
+同一时间、同一位置的重复声明不会去重。所有秒时间都以谱面第一槽为原点，保留开头休止但不包含音频 offset；`Chart.offset_s` 由调用方在边界处应用一次。未知语法会产生明确诊断，不会静默吞掉物件或猜测无法确定的节奏。
+
+完整的字段约束、Slide 细节和当前语法边界见 [事件格式说明](docs/SCHEMA_PROPOSAL.md) 与 [语法支持状态](docs/SYNTAX_SUPPORT.md)。
+
+## 保存和读取事件 bundle
+
+事件 bundle 是解析层与离线分析层之间的可校验交换格式，不是歌曲数据库。每张谱面占一个子目录：
+
+```text
+data/parsed/
+  <title>-<difficulty_index>-<dx|sd>/
+    manifest.json
+    charts.csv
+    events.csv
+    diagnostics.csv
+    cover.png          # 可选；保留原图格式
+```
+
+```python
+from mairadar.io import parse_file, read_bundle, write_bundle
+
+for bundle in parse_file("data/raw/song/maidata.txt", difficulties=[5, 6]):
+    directory = write_bundle(
+        bundle,
+        "data/parsed",
+        cover_path="data/raw/song/bg.png",  # 可省略
+    )
+
+restored = read_bundle(directory)
+```
+
+`charts.csv` 保存一行谱面 metadata，包括标题、作者、谱师、难度编号、等级、DX/SD、offset 和时间边界；未知 maidata metadata 保留在 `metadata_json`。`diagnostics.csv` 保存解析级别、代码、消息、原文范围和恢复策略。
+
+`manifest.json` 记录 schema/parser 版本、固定上游 commit、表名、行数、完整性状态、可选曲绘路径以及各文件 SHA-256。`read_bundle` 会先校验布局、checksum 和模型约束。checksum 只用于文件完整性，不是歌曲身份；项目不会创建全局 ID、身份 hash、曲库注册表或去重索引。
+
+目录名使用调用方提供的标题、难度编号和明确的 DX/SD 类型。非法文件名字符会替换为下划线，但原 metadata 不变；不会自动追加 hash 后缀。默认拒绝覆盖已有 bundle；即使显式使用 `overwrite=True`，也只会替换布局匹配且不含额外用户文件的旧 bundle。
+
+事件 bundle 与最终分析报告不是同一种产物。评分模式导出的报告结构是：
+
+```text
+outputs/scored/
+  charts.csv
+  covers/
+    <title>-<difficulty_index>-<dx|sd>.png
+```
+
+报告表先保存固定 metadata 与状态列，再按分析配置顺序追加 `<feature>_raw` 和 `<feature>_score`。`diagnostics` 列为 JSON，汇总输入、parser、analysis 和 scoring 各层诊断；`cover_path` 始终使用相对路径。
+
+## 添加自定义特征分析器
+
+一个特征分析器是支持无参数构造、并实现 `analyze(context) -> FeatureResult` 的类。分析器只读 `AnalysisContext` 中的事件快照，不需要接触文件或原始 Simai。
+
+```python
+from mairadar.analysis import AnalysisContext, ChartAnalyzer, FeatureResult
+
+
+class NoteDensityAnalyzer:
+    def analyze(self, context: AnalysisContext) -> FeatureResult:
+        duration = context.duration_s
+        if duration <= 0:
+            return FeatureResult(None, success=False)
+
+        count = sum(event.kind != "timing" for event in context.events)
+        return FeatureResult(count / duration)
+
+
+analyzer = ChartAnalyzer({"note_density": NoteDensityAnalyzer})
+```
+
+`AnalysisContext` 提供：
+
+- `events`：不可变事件元组；调度器会为每个维度提供独立快照；
+- `chart_end_time_s` 与 `last_event_end_s`；
+- `duration_s`：两者的有效最大值。
+
+成功结果必须是有限数值 `FeatureResult(value)`；无法计算时返回 `FeatureResult(None, success=False)`。某个维度抛出异常只会将该维标为失败，其余维度仍会继续。当前结果契约是一维一个标量；单位和中间统计量应由特征实现或实验代码自行管理。
+
+要让默认 CLI 长期启用一个特征，在 `src/mairadar/analysis/config.py` 中导入类并加入 `FEATURES`。字典键也是导出的列名前缀，必须以字母开头，且只能包含字母、数字和下划线；字典顺序决定输出顺序。
+
+```python
+FEATURES = {
+    "hold": HoldFrequencyAnalyzer,
+    "note_density": NoteDensityAnalyzer,
+}
+```
+
+如果特征只属于某次实验，无需修改全局配置，直接构造 `ChartAnalyzer(features=...)` 并注入 pipeline 即可。
+
+## 添加自定义分数映射器
+
+每个特征映射器只需实现 `map(data: float) -> float`。默认的 `FeatureScoreTransformer` 按特征名分发映射器，并把结果组合成带 `mapping_version` 的 `ScoreResult`。
+
+```python
+from mairadar.scoring import FeatureScoreTransformer
+
+
+class CappedLinearMapper:
+    def __init__(self, scale: float):
+        self.scale = scale
+
+    def map(self, data: float) -> float:
+        return min(200.0, max(0.0, data * self.scale))
+
+
+transformer = FeatureScoreTransformer(
+    {"note_density": CappedLinearMapper(scale=25.0)},
+    mapping_version="note-density-v1",
+)
+```
+
+映射输出必须是有限数值。原始特征失败时不会调用 mapper；缺少 mapper、mapper 抛出异常或返回非有限值时，只影响对应维度，原始值和其他维度仍会保留。
+
+默认 CLI 从 `src/mairadar/scoring/config.py` 读取 `FEATURE_MAPPERS` 和 `TRANSFORMER`。新增默认特征时，应同时为它配置映射器；`TRANSFORMER` 必须是可以无参数构造的 class 或 factory。阈值或算法变化时也应更新 `mapping_version`，例如：
+
+```python
+FEATURE_MAPPERS = {
+    "hold": DummyPnMapper(p50=1.0, p100=2.0),
+    "note_density": CappedLinearMapper(scale=25.0),
+}
+
+
+class RadarTransformer(FeatureScoreTransformer):
+    def __init__(self):
+        super().__init__(FEATURE_MAPPERS, mapping_version="radar-v1")
+
+
+TRANSFORMER = RadarTransformer
+```
+
+仓库提供的 `DummyPnMapper` 使用预先给定的 `p50`、`p100` 做两段线性映射：`0 → 0`、`P50 → 50`、`P100 → 200`，范围外截断；这些锚点不会从当前数据批次计算。
+
+也可以完全替换整体 `ScoreTransformer.transform(AnalysisResult) -> ScoreResult`，或只在调用时注入实验配置：
+
+```python
+from mairadar.pipeline import run_pipeline
+
+batch, report = run_pipeline(
+    "full",
+    "data/raw",
+    output="outputs/experiment-v1",
+    analyzer=analyzer,
+    transformer=transformer,
+)
+
+exit_code = max(batch.exit_code, report.exit_code)
+```
+
+分析器、映射器和导出器都可以独立替换，因此新的特征定义、baseline/标准化实验和输出格式不需要进入 parser。
+
+## 项目结构
 
 ```text
 src/mairadar/
-  model.py       事件、解析结果和可选 metadata
-  parser/        纯文本时间与物件语义
-  validation.py  纯模型校验
-  io.py          文件读取与 CSV 导出/读取
-  cli.py         可选的参数与批量文件处理
-scripts/
-  parse_chart.py 本地 CLI 入口
-  map_scores.py  后续评分映射占位
-res/             小型人工 golden、配置和固定引用
-tests/           合成语义及外围接口测试
-data/            外部输入与分析产物
-outputs/         预览和验证报告
+  parser/          Simai 文本、时间与物件语义
+  analysis/        特征接口、调度器与特征实现
+  scoring/         原始特征到标准分的映射
+  exporters/       汇总表与曲绘导出
+  model.py         事件、谱面 metadata 与解析结果
+  io.py            原始文件适配及事件 bundle 读写
+  batch.py         原始文件或 bundle 的批处理
+  pipeline.py      full / analysis / analysis_score 组合
+  cli.py           命令行入口
+res/               小型合成样例和固定参考
+tests/             parser、analysis、scoring、I/O 与 pipeline 测试
+data/              本地真实输入和中间产物，不提交曲库或媒体
+outputs/           本地报告与验证产物
 ```
 
-BPM 是 timing 事件；Slide 形状内联，有头/无头均保留声明时间；连接 Slide 段数组不复制成多个路径事件。未知语法明确诊断，不猜节奏。连接段的几何时间与部分播放器扩展仍未实现；任何 partial 或读写失败，CLI 均返回非零。实际边界见 [语法支持](docs/SYNTAX_SUPPORT.md)。
-
-[调用说明](docs/PARSER.md) · [events-0.2 格式](docs/SCHEMA_PROPOSAL.md) · [架构](docs/ARCHITECTURE.md)
+## 开发与验证
 
 ```bash
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-未安装包时可使用 PYTHONPATH=src；CLI 脚本无需安装。当前机器可用 /opt/anaconda3/bin/python3，系统 Python 3.9 不满足要求。
+语义以 MajdataPlay 固定 submodule pin 的 MajSimai 源码和播放器行为为主，具体 commit 记录在 [`res/reference/upstreams.json`](res/reference/upstreams.json)。当前验证包括合成测试、CSV 往返、模型完整性检查和有限真实谱面抽样；`complete=true` 或 bundle checksum 通过不代表已经与游戏运行时完成独立差分验证。
 
-固定上游引用见 [upstreams.json](res/reference/upstreams.json)。已做源码静态核对、合成测试和真实输入抽查，尚未运行 .NET/Unity 差分验证。真实谱面、音频和生成产物不纳入提交；HANDOFF.md 保留为一次性历史快照。
+更多设计与边界：
+
+- [Parser 调用说明](docs/PARSER.md)
+- [事件格式 events-0.2](docs/SCHEMA_PROPOSAL.md)
+- [分析、映射与导出](docs/ANALYSIS.md)
+- [架构说明](docs/ARCHITECTURE.md)
+- [Simai 语法支持状态](docs/SYNTAX_SUPPORT.md)
+
+## License
+
+见 [LICENSE](LICENSE)。
