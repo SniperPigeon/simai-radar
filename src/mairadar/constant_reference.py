@@ -61,14 +61,12 @@ MAJDATAPLAY_STANDARD_SLIDE_BAR_COUNTS: Final[Mapping[str, int]] = MappingProxyTy
         "pq8": 37,
         "s": 31,
         "wifi": 12,
-        "L2": 33,
+        "L2": 33, #为1V75等大V星星使用，两个折点不同的情况会镜像来套用值
         "L3": 35,
         "L4": 33,
         "L5": 29,
     }
 )
-
-
 
 # The pinned NoteLoader maps both ``v1`` and the extended-slide prefab to slot 41,
 # whose serialized Game.unity entry is ExtendSlide.  The value above deliberately

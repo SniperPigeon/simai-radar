@@ -1,5 +1,5 @@
 {
-  "schema_version": "events-0.2",
+  "schema_version": "events-0.3",
   "status": "approved_schema_hand_authored_example",
   "provenance": "hand_authored_prototype_not_parser_output",
   "parser_version": null,

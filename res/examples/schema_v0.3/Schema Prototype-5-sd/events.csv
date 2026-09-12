@@ -1,0 +1,8 @@
+event_id,kind,is_slide_head,timing_type,slide_declare_time_s,start_time_s,end_time_s,start_beat,end_beat,bpm,position,head_event_id,slide_path_json,is_break,is_ex,is_mine,flags_json,raw_token,source_start,source_end,source_line,source_column
+1,timing,,bpm,,0,0,0,0,120,,,,,,,,(120),75,80,6,1
+2,tap,0,,,0,0,0,0,,1,,,0,0,0,{},1,83,84,6,9
+3,hold,0,,,0.5,1,1,2,,5,,,0,0,0,{},5h[4:1],85,92,6,11
+4,tap,1,,,1,1,2,2,,1,,,0,0,0,{},1-5[4:1]*-7[4:1],93,109,6,19
+5,slide,0,,1,1.5,2,3,4,,1,4,"[{""shape"":""-"",""start_position"":""1"",""via_position"":null,""end_position"":""5"",""bar_count"":20,""start_time_s"":1.5,""end_time_s"":2.0,""raw_segment"":""-5[4:1]""}]",0,0,0,{},1-5[4:1]*-7[4:1],93,109,6,19
+6,slide,0,,1,1.5,2,3,4,,1,4,"[{""shape"":""-"",""start_position"":""1"",""via_position"":null,""end_position"":""7"",""bar_count"":14,""start_time_s"":1.5,""end_time_s"":2.0,""raw_segment"":""-7[4:1]""}]",0,0,0,{},1-5[4:1]*-7[4:1],93,109,6,19
+7,touch,0,,,1.5,1.5,3,3,,A1,,,0,0,0,{},A1,110,112,6,36

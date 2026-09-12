@@ -1,0 +1,2 @@
+source_name,chart_type,difficulty_index,difficulty_label,level_text,title,artist,designer,offset_s,chart_end_time_s,last_event_end_s,audio_duration_s,metadata_json
+maidata.txt,sd,5,Master,13,Schema Prototype,simai-radar,,0.25,2,2,,{}
