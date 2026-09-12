@@ -50,41 +50,31 @@ write_bundle(bundle, "data/parsed")
 
 曲绘是可选导出附件。write_bundle 的 cover_path 不传或为 None 时不附带曲绘；传入 JPG/JPEG/PNG/WebP 文件时，原样复制为 cover.jpg/cover.jpeg/cover.png/cover.webp，不解码、压缩或修改原图。manifest.assets.cover 保存相对文件名，file_sha256 包含曲绘的完整性校验。read_bundle 会校验附件；read_cover_path 返回校验后的曲绘路径。无 assets 字段的旧 events-0.2 bundle 仍可读取。
 
-覆盖导出只包含本次指定的附件：API 在 overwrite=True 时不传 cover_path，会去掉旧包中登记的曲绘；CLI 默认重新发现源目录曲绘，--no-cover 则明确不附带。附件与 CSV 一起先写入临时目录，复制或替换失败不会留下新旧文件混合的包。未在 manifest 登记的用户额外文件仍阻止覆盖。
+覆盖导出只包含本次指定的附件：API 在 overwrite=True 时不传 cover_path，会去掉旧包中登记的曲绘。附件与 CSV 一起先写入临时目录，复制或替换失败不会留下新旧文件混合的包。未在 manifest 登记的用户额外文件仍阻止覆盖。
 
 模型校验独立位于 mairadar.validation：validate_result 用于纯文本结果，validate_bundle 用于附带 metadata 的结果；无需先导出文件。CSV write/read 会调用校验。
 
-## CLI
+## 统一 CLI
 
 ```bash
-python scripts/parse_chart.py --input data/raw --output data/parsed
-python scripts/parse_chart.py --input path/to/maidata.txt --output data/parsed --difficulty 6
-python scripts/parse_chart.py --input Example.simai --output data/parsed --difficulty 5 --chart-type dx
+python scripts/mairadar.py --mode full --input data/raw --output outputs/full
+python scripts/mairadar.py --mode full --input path/to/maidata.txt --output outputs/full --difficulty 6
+python scripts/mairadar.py --mode full --input Example.simai --output outputs/full --difficulty 5 --chart-type dx
 ```
 
-| 参数 | 作用 |
-| --- | --- |
-| --input / -i | 必填，单个文本文件或目录 |
-| --output / -o | 必填，结果根目录 |
-| --difficulty / -d | 可选，一个或多个 inote 编号，默认全部存在的难度 |
-| --chart-type | 可选，dx/sd，明确设置导出类型；未指定则读取 cabinet，兼容源 cabinate 别名 |
-| --overwrite | 可选，替换既有的本格式导出目录 |
-| --cover | 可选，显式曲绘路径，仅用于单文件输入 |
-| --no-cover | 可选，不附带曲绘；与 --cover 互斥 |
+full 模式在内存中依次完成解析、特征分析、映射和总表导出，不生成中间事件 bundle。只需要解析事件或导出 bundle 时，使用上文的 parse_chart、parse_file、write_bundle API。
 
-输出目录为 `<title>-<difficulty_index>-dx/sd`，例如 `Link-6-sd`。不生成 hash 名、不自动附加序号、不维护目录到歌曲的注册表或去重库。缺少难度或类型的纯正文仍能正常解析，但导出需调用方提供 metadata。不得从歌曲名或物件种类猜 DX/SD。
+--difficulty 指定一个或多个 inote 编号，--chart-type 显式设置 dx/sd；这两个参数仅用于 full 模式。full 递归读取 maidata.txt、majdata.txt 和 .simai，按 bg.png、bg.jpg、bg.jpeg、bg.webp 的顺序寻找每个谱面文件同目录曲绘。输出目录必须是新目录或空目录。
 
-目录名中的文件系统非法字符替换为下划线，原 title 保留在 charts.csv。普通已存在目录需要 --overwrite；该选项只是文件写入策略，不比较输入内容或判断是不是同一歌曲。仅允许替换本格式且不含额外文件的导出目录；使用临时目录写齐后替换，失败回滚。
+其余模式为 analysis（已有 bundle → 特征分析，终端输出 JSON）和 analysis_score（已有 bundle → 特征分析、映射和导出）。参数和输出格式见 [分析说明](ANALYSIS.md)。
 
-CLI 递归读取 maidata.txt、majdata.txt 和 .simai；默认按 bg.png、bg.jpg、bg.jpeg、bg.webp 的顺序寻找每个谱面文件同目录的曲绘并附带，找不到时正常导出无曲绘包。--cover 可覆盖单文件的选择；目录模式分别发现各自的曲绘，不能用一个 --cover 误配整批。音频、视频和 ZIP 不打包。批量输出重复命名如何处理由调用方的输入与覆盖选项决定，库不负责曲库管理。
+- 退出码 0：所有请求成功。
+- 退出码 1：部分解析、分析、映射、读写失败，或输入输出条件无效。
+- 退出码 2：命令行参数不合法。
 
-- 退出码 0：所有请求完整解析并导出。
-- 退出码 1：部分解析或读写/导出 metadata 错误。
-- 退出码 2：参数错误、输入不存在或没有匹配文件。
+物件错误保留源定位，时间错误停止该谱面后续扫描；不完整结果不会生成有效特征或分数。连接 Slide 逐段几何时间及扩展语法限制见 SYNTAX_SUPPORT.md。EOF info 不导致 partial。所有解析时间不含音频 offset。
 
-物件错误会记录源定位，时间错误停止该谱面后续扫描；可确定结果的 manifest.complete=false。连接 Slide 逐段几何时间、K 和播放器速度/拍号扩展的限制见 SYNTAX_SUPPORT.md。EOF info 不导致 partial。所有解析时间不含音频 offset。
-
-本地未安装包时，可用 `PYTHONPATH=src` 导入；脚本入口会自行设置 src 路径。安装后命令是 mairadar-parse；也支持 `PYTHONPATH=src python -m mairadar.parser`。当前机器可用 /opt/anaconda3/bin/python3，系统 /usr/bin/python3 为 3.9。
+本地未安装包时，可用 PYTHONPATH=src 导入；脚本入口会自行设置源码路径。安装后命令是 mairadar；也支持 `PYTHONPATH=src python -m mairadar`。当前机器可用 /opt/anaconda3/bin/python3，系统 /usr/bin/python3 为 3.9。
 
 ## 测试与版本
 
