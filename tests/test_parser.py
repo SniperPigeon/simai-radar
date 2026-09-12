@@ -40,7 +40,7 @@ def exportable(text, *, title="Test", difficulty=5, chart_type="sd"):
 
 class TimelineTests(unittest.TestCase):
     def test_manual_prototype_semantics(self):
-        p = ROOT / "res/examples/schema_v0.2/Schema Prototype-5-sd"
+        p = ROOT / "res/examples/schema_v0.3/Schema Prototype-5-sd"
         bundle = parse_file(p / "maidata.txt")[0]
         self.assertTrue(bundle.complete)
         validate_bundle(bundle)
@@ -284,27 +284,65 @@ class NoteTests(unittest.TestCase):
         self.assertTrue(notes(b)[0].is_slide_head)
 
     def test_all_basic_shapes(self):
-        tokens = ["1-5", "1^3", "1v3", "1<1", "1>5", "1p4", "1q4", "1pp4", "1qq4", "1s5", "1z5", "1w5", "1V75"]
-        for token in tokens:
+        cases = {
+            "1-5": (None, 20), "1^3": (None, 16), "1v3": (None, 20),
+            "1<1": (None, 64), "1>5": (None, 32), "1p4": (None, 25),
+            "1q4": (None, 43), "1pp4": (None, 50), "1qq4": (None, 49),
+            "1s5": (None, 31), "1z5": (None, 31), "1w5": (None, 12),
+            "1V75": ("7", 29), "1v1": (None, 21),
+        }
+        for token, (via, bar_count) in cases.items():
             with self.subTest(token=token):
                 b = chart(f"(120){token}[4:1],E")
                 self.assertTrue(b.complete, b.diagnostics)
                 path = next(e for e in b.events if e.kind == "slide").slide_path_json
                 self.assertEqual(len(path), 1)
-                self.assertEqual(path[0]["via_position"], "7" if "V" in token else None)
+                self.assertEqual(path[0]["via_position"], via)
+                self.assertEqual(path[0]["bar_count"], bar_count)
+                self.assertNotIn("time_resolution", path[0])
 
-    def test_chain_keeps_total_and_never_invents_segment_times(self):
-        for token, end in [("1-3-5[4:3]", 2), ("1-3[4:1]-5[4:2]", 2),
-                           ("1-3[4:1]-5[240#4:2]", 1.25)]:
+    def test_left_right_circle_bar_counts_follow_player_view(self):
+        cases = {"1>2": 8, "1<2": 56, "5<6": 8, "5>6": 56}
+        for token, bar_count in cases.items():
+            with self.subTest(token=token):
+                b = chart(f"(120){token}[4:1],E")
+                path = next(e for e in b.events if e.kind == "slide").slide_path_json
+                self.assertEqual(path[0]["bar_count"], bar_count)
+
+    def test_capital_v_uses_l_prefab_and_mirrored_bar_counts(self):
+        cases = {
+            "1V72": 33, "1V73": 35, "1V74": 33, "1V75": 29,
+            "1V35": 29, "1V36": 33, "1V37": 35, "1V38": 33,
+        }
+        for token, bar_count in cases.items():
+            with self.subTest(token=token):
+                b = chart(f"(120){token}[4:1],E")
+                path = next(e for e in b.events if e.kind == "slide").slide_path_json
+                self.assertEqual(path[0]["bar_count"], bar_count)
+
+    def test_chain_distributes_total_time_by_player_bar_counts(self):
+        cases = [
+            ("1-3-5[4:3]", 2, [0.5, 1.25, 2]),
+            ("1-3[4:1]-5[4:2]", 2, [0.5, 1.25, 2]),
+            ("1-3[4:1]-5[240#4:2]", 1.25, [0.25, 0.75, 1.25]),
+            ("1-5>1[4:3]", 2, [0.5, 14 / 13, 2]),
+            ("1-5[4:1]>1[4:2]", 2, [0.5, 14 / 13, 2]),
+        ]
+        for token, end, boundaries in cases:
             with self.subTest(token=token):
                 b = chart(f"(120){token},E")
                 self.assertTrue(b.complete)
                 event = next(e for e in b.events if e.kind == "slide")
                 self.assertEqual(event.end_time_s, end)
                 self.assertEqual(len(event.slide_path_json), 2)
-                for segment in event.slide_path_json:
-                    self.assertIsNone(segment["start_time_s"])
-                    self.assertEqual(segment["time_resolution"], "needs_geometry")
+                actual_boundaries = [event.slide_path_json[0]["start_time_s"]]
+                actual_boundaries.extend(s["end_time_s"] for s in event.slide_path_json)
+                for actual, expected in zip(actual_boundaries, boundaries, strict=True):
+                    self.assertAlmostEqual(actual, expected)
+                self.assertEqual(
+                    [s["bar_count"] for s in event.slide_path_json],
+                    [14, 14] if token.startswith("1-3") else [20, 32],
+                )
                 self.assertNotIn("SLIDE_GEOMETRY_PENDING", [d.code for d in b.diagnostics])
 
     def test_invalid_geometry_duration_and_suffixes_are_diagnosed(self):

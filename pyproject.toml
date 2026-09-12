@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "simai-radar"
-version = "0.2.1"
+version = "0.3.0"
 description = "Simai event timeline parsing and independent chart analysis"
 readme = "README.md"
 requires-python = ">=3.11"

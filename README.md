@@ -47,7 +47,7 @@ python -m pip install -e .
 ```bash
 mairadar \
   --mode full \
-  --input "res/examples/schema_v0.2/Schema Prototype-5-sd/maidata.txt" \
+  --input "res/examples/schema_v0.3/Schema Prototype-5-sd/maidata.txt" \
   --output outputs/demo
 ```
 
@@ -133,7 +133,7 @@ bundles = parse_file("data/raw/song/maidata.txt", difficulties=[5, 6])
 
 ## 事件格式
 
-当前交换格式版本为 `events-0.2`。`Event` 定义在 `src/mairadar/model.py`，写入 bundle 后对应 `events.csv` 的 22 列。
+当前交换格式版本为 `events-0.3`。`Event` 定义在 `src/mairadar/model.py`，写入 bundle 后对应 `events.csv` 的 22 列。
 
 | 字段 | 类型 | 含义 |
 | --- | --- | --- |
@@ -168,14 +168,16 @@ Slide 路径段内联在 `slide_path_json` 中：
   "start_position": "1",
   "via_position": null,
   "end_position": "5",
+  "bar_count": 20,
   "start_time_s": 1.5,
   "end_time_s": 2.0,
-  "raw_segment": "-5[4:1]",
-  "time_resolution": "explicit_duration"
+  "raw_segment": "-5[4:1]"
 }
 ```
 
 普通 Slide 会生成一个头 Tap 和一个路径事件；同头多路径只生成一个头，各路径分别成为事件并共享 `head_event_id`。无头 Slide 不生成虚拟头，但仍保存声明时间。事件排序完成后才重新连续编号，并同步更新头引用；ID 只在本次结果中有效。
+
+`bar_count` 是固定 MajdataPlay prefab 的长度单位，不是物理距离。连接 Slide 的总持续时间按各段 `bar_count` 比例分配；所有当前支持的标准形状都会得到连续、覆盖整条路径的逐段时间。
 
 同一时间、同一位置的重复声明不会去重。所有秒时间都以谱面第一槽为原点，保留开头休止但不包含音频 offset；`Chart.offset_s` 由调用方在边界处应用一次。未知语法会产生明确诊断，不会静默吞掉物件或猜测无法确定的节奏。
 
@@ -396,7 +398,7 @@ PYTHONPATH=src python -m unittest discover -s tests -v
 更多设计与边界：
 
 - [Parser 调用说明](docs/PARSER.md)
-- [事件格式 events-0.2](docs/SCHEMA_PROPOSAL.md)
+- [事件格式 events-0.3](docs/SCHEMA_PROPOSAL.md)
 - [分析、映射与导出](docs/ANALYSIS.md)
 - [架构说明](docs/ARCHITECTURE.md)
 - [Simai 语法支持状态](docs/SYNTAX_SUPPORT.md)

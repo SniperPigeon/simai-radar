@@ -1,11 +1,12 @@
-"""The events-0.2 interchange model; no analysis or scoring policies."""
+"""The events-0.3 interchange model; no analysis or scoring policies."""
 
 from dataclasses import dataclass, field
 from typing import Any
 
-SCHEMA_VERSION = "events-0.2"
-MAJSIMAI_PIN = "fdb2a3e39d8997a0abbf8b4679062d854473cc77"
-MAJDATAPLAY_PIN = "c3423a4bba536e53921e8fdedab2b9d91121b393"
+from .constant_reference import MAJDATAPLAY_PIN as MAJDATAPLAY_PIN
+from .constant_reference import MAJSIMAI_PIN as MAJSIMAI_PIN
+
+SCHEMA_VERSION = "events-0.3"
 
 
 @dataclass

@@ -3,6 +3,8 @@
 from fractions import Fraction
 import re
 
+from mairadar.constant_reference import MAJDATAPLAY_STANDARD_SLIDE_BAR_COUNTS
+
 from .durations import hold_duration, slide_duration
 from .source import SyntaxProblem, Token, seconds, split_top
 
@@ -81,12 +83,61 @@ def _shape_is_valid(shape: str, start: str, via: str | None, end: str) -> None:
         raise SyntaxProblem("INVALID_SLIDE_GEOMETRY", f"Invalid endpoints for {start}{shape}{via or ''}{end}")
 
 
+def _mirror_relative(position: int) -> int:
+    """Mirror a 1-based position after normalizing a Slide's start to A1."""
+    return 1 if position == 1 else 10 - position
+
+
+def _slide_bar_count(shape: str, start: str, via: str | None, end: str) -> int:
+    """Resolve a standard Simai segment to the pinned player's prefab bar count."""
+    start_position = int(start)
+    relative_end = (int(end) - start_position) % 8 + 1
+    if shape == "-":
+        prefab = f"line{relative_end}"
+    elif shape == ">":
+        target = relative_end if start_position in {7, 8, 1, 2} else _mirror_relative(relative_end)
+        prefab = f"circle{target}"
+    elif shape == "<":
+        target = relative_end if start_position in {3, 4, 5, 6} else _mirror_relative(relative_end)
+        prefab = f"circle{target}"
+    elif shape == "^":
+        target = relative_end if relative_end < 5 else _mirror_relative(relative_end)
+        prefab = f"circle{target}"
+    elif shape == "v":
+        prefab = f"v{relative_end}"
+    elif shape == "p":
+        prefab = f"pq{relative_end}"
+    elif shape == "q":
+        prefab = f"pq{_mirror_relative(relative_end)}"
+    elif shape == "pp":
+        prefab = f"ppqq{relative_end}"
+    elif shape == "qq":
+        prefab = f"ppqq{_mirror_relative(relative_end)}"
+    elif shape in {"s", "z"}:
+        prefab = "s"
+    elif shape == "w":
+        prefab = "wifi"
+    elif shape == "V":
+        turn = (int(via) - start_position) % 8
+        target = relative_end if turn == 6 else _mirror_relative(relative_end)
+        prefab = f"L{target}"
+    else:  # pragma: no cover - the tokenizer and endpoint validator guard this path.
+        raise SyntaxProblem("UNSUPPORTED_SLIDE_GEOMETRY", f"Unsupported Slide shape: {shape}")
+    try:
+        return MAJDATAPLAY_STANDARD_SLIDE_BAR_COUNTS[prefab]
+    except KeyError as exc:  # Keep a missing reference entry visible instead of guessing a length.
+        raise SyntaxProblem(
+            "UNSUPPORTED_SLIDE_GEOMETRY",
+            f"No pinned bar-count reference for {start}{shape}{via or ''}{end} ({prefab})",
+        ) from exc
+
+
 def _path(clean: Token, bpm: Fraction, declare: Fraction, source: str) -> tuple[list, Fraction, Fraction]:
     if not clean.text or clean.text[0] not in "12345678":
         raise SyntaxProblem("INVALID_POSITION", "Slide must begin at a button from 1 to 8")
     start = clean.text[0]
     cursor = 1
-    segments, lengths = [], []
+    segments, declared_durations = [], []
     wait_override = None
     while cursor < len(clean.text):
         begin = cursor
@@ -112,26 +163,37 @@ def _path(clean: Token, bpm: Fraction, declare: Fraction, source: str) -> tuple[
             if wait_override is None and wait is not None:
                 wait_override = wait
             cursor = close + 1
-        lengths.append(length)
+        declared_durations.append(length)
         segments.append(dict(shape=shape, start_position=start, via_position=via,
-                             end_position=end, start_time_s=None, end_time_s=None,
-                             raw_segment=source[clean.offsets[begin]:clean.offsets[cursor - 1] + 1],
-                             time_resolution="needs_geometry"))
+                             end_position=end, bar_count=_slide_bar_count(shape, start, via, end),
+                             start_time_s=None, end_time_s=None,
+                             raw_segment=source[clean.offsets[begin]:clean.offsets[cursor - 1] + 1]))
         start = end
     if not segments:
         raise SyntaxProblem("INVALID_SLIDE", "Slide has no path")
-    all_explicit = all(length is not None for length in lengths)
-    total_only = lengths[-1] is not None and all(length is None for length in lengths[:-1])
+    all_explicit = all(length is not None for length in declared_durations)
+    total_only = declared_durations[-1] is not None and all(
+        length is None for length in declared_durations[:-1]
+    )
     if not (all_explicit or total_only):
         raise SyntaxProblem("INVALID_SLIDE_DURATION", "Specify every segment duration, or one total duration on the last segment")
     if len(segments) > 1 and any(segment["shape"] == "w" for segment in segments):
         raise SyntaxProblem("INVALID_SLIDE_GEOMETRY", "Wifi cannot be part of a connected Slide")
     start_time = declare + (60 / bpm if wait_override is None else wait_override)
-    end_time = start_time + sum((length for length in lengths if length is not None), Fraction(0))
-    # Whole-path timing is the parsing contract. Derived segment timings are optional.
-    if len(segments) == 1:
-        segments[0].update(start_time_s=seconds(start_time), end_time_s=seconds(end_time),
-                           time_resolution="explicit_duration")
+    total_duration = sum(
+        (length for length in declared_durations if length is not None), Fraction(0)
+    )
+    end_time = start_time + total_duration
+    total_bar_count = sum(segment["bar_count"] for segment in segments)
+    segment_start = start_time
+    for index, segment in enumerate(segments):
+        segment_end = (
+            end_time
+            if index == len(segments) - 1
+            else segment_start + total_duration * segment["bar_count"] / total_bar_count
+        )
+        segment.update(start_time_s=seconds(segment_start), end_time_s=seconds(segment_end))
+        segment_start = segment_end
     return segments, start_time, end_time
 
 

@@ -72,7 +72,7 @@ def validate_result(result: ParseResult) -> None:
         previous = event.position
         previous_time = event.start_time_s
         for segment in path:
-            if set(segment) != {"shape", "start_position", "via_position", "end_position", "start_time_s", "end_time_s", "raw_segment", "time_resolution"}:
+            if set(segment) != {"shape", "start_position", "via_position", "end_position", "bar_count", "start_time_s", "end_time_s", "raw_segment"}:
                 raise ValueError("Unexpected Slide segment fields")
             if segment["start_position"] != previous:
                 raise ValueError("Disconnected Slide segments")
@@ -86,19 +86,16 @@ def validate_result(result: ParseResult) -> None:
                 raise ValueError("Only V requires an explicit via position")
             if via is not None and (not isinstance(via, str) or not re.fullmatch(r"[1-8]", via)):
                 raise ValueError("Invalid via position")
+            if type(segment["bar_count"]) is not int or segment["bar_count"] <= 0:
+                raise ValueError("Invalid segment bar count")
             start, end = segment["start_time_s"], segment["end_time_s"]
-            if start is None or end is None:
-                if (start is not None or end is not None or segment["time_resolution"] != "needs_geometry"
-                        or (len(path) == 1 and result.complete)):
-                    raise ValueError("Unresolved times must belong to a connected Slide segment")
-            else:
-                if segment["time_resolution"] != "explicit_duration":
-                    raise ValueError("Unexpected segment time resolution")
-                if not finite(start) or not finite(end) or not event.start_time_s <= start <= end <= event.end_time_s or start != previous_time:
-                    raise ValueError("Invalid segment interval")
-                previous_time = end
+            if (not finite(start) or not finite(end)
+                    or not event.start_time_s <= start <= end <= event.end_time_s
+                    or start != previous_time):
+                raise ValueError("Invalid segment interval")
+            previous_time = end
             previous = segment["end_position"]
-        if all(s["end_time_s"] is not None for s in path) and previous_time != event.end_time_s:
+        if previous_time != event.end_time_s:
             raise ValueError("Segments do not cover Slide duration")
     for diagnostic in result.diagnostics:
         if diagnostic.severity not in {"error", "warning", "info"}:
