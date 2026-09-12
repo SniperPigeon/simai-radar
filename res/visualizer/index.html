@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7f7f5" />
+    <title>MAI RADAR · 谱面评分</title>
+    <link rel="stylesheet" href="styles.css?v=20260911-1" />
+  </head>
+  <body data-view="library">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="MAI RADAR 首页">
+        <span class="brand-mark" aria-hidden="true">雷</span>
+        <span>
+          <strong>MAI RADAR</strong>
+          <small>谱面评分</small>
+        </span>
+      </a>
+
+      <nav class="view-tabs" aria-label="主视图">
+        <button class="view-tab is-active" data-view-target="library" type="button">曲库</button>
+        <button class="view-tab" data-view-target="ranking" type="button">单维排行</button>
+        <button class="view-tab" data-view-target="distribution" type="button">原始分布</button>
+      </nav>
+
+      <div class="top-stats" aria-live="polite">
+        <span><strong id="songCount">--</strong> 首歌曲</span>
+        <span><strong id="chartCount">--</strong> 张谱面</span>
+      </div>
+    </header>
+
+    <div id="appStatus" class="app-status" role="status">正在载入谱面数据...</div>
+
+    <div id="appShell" class="app-shell" hidden>
+      <aside class="library-sidebar" aria-label="歌曲列表">
+        <div class="library-controls">
+          <label class="search-field">
+            <span>搜索</span>
+            <input
+              id="searchInput"
+              type="search"
+              autocomplete="off"
+              placeholder="曲名、作曲家或等级，如 13+"
+            />
+          </label>
+
+          <div class="filter-row">
+            <label>
+              <span>谱面类型</span>
+              <select id="kindFilter">
+                <option value="all">全部</option>
+                <option value="DX">DX谱</option>
+                <option value="ST">标谱</option>
+              </select>
+            </label>
+            <label>
+              <span>难度</span>
+              <select id="difficultyFilter">
+                <option value="all">全部</option>
+              </select>
+            </label>
+          </div>
+
+          <p class="result-count"><strong id="resultCount">0</strong> 首符合条件</p>
+        </div>
+
+        <div id="songList" class="song-list"></div>
+      </aside>
+
+      <main id="detailView" class="detail-main">
+        <section class="song-overview" aria-labelledby="songTitle">
+          <div id="detailCover" class="detail-cover"></div>
+          <div class="song-identity">
+            <p id="songVersion" class="song-version"></p>
+            <h1 id="songTitle"></h1>
+            <p id="songArtist" class="song-artist"></p>
+            <div id="songFacts" class="song-facts"></div>
+          </div>
+        </section>
+
+        <section class="chart-section" aria-labelledby="chartSectionTitle">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">CHART</p>
+              <h2 id="chartSectionTitle">谱面版本</h2>
+            </div>
+            <p id="chartCountLabel" class="section-note"></p>
+          </div>
+          <div id="chartSwitcher" class="chart-switcher"></div>
+          <dl id="chartMetadata" class="chart-metadata"></dl>
+        </section>
+
+        <section class="radar-section" aria-labelledby="radarTitle">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">SCORE DIMENSIONS</p>
+              <h2 id="radarTitle">维度图</h2>
+            </div>
+            <p class="scale-label">100 为主框 · 最高 200</p>
+          </div>
+
+          <div class="radar-layout">
+            <div id="radarChart" class="radar-chart" aria-label="谱面雷达图"></div>
+            <div id="scoreBreakdown" class="score-breakdown"></div>
+          </div>
+        </section>
+      </main>
+
+      <main id="rankingView" class="ranking-main" hidden>
+        <section class="ranking-header">
+          <div>
+            <p class="section-kicker">LEADERBOARD</p>
+            <h1>单维谱面排行</h1>
+            <p id="rankingSummary" class="ranking-summary"></p>
+          </div>
+          <div class="ranking-filters">
+            <label>
+              <span>谱面类型</span>
+              <select id="rankingKindFilter">
+                <option value="all">全部</option>
+                <option value="DX">DX谱</option>
+                <option value="ST">标谱</option>
+              </select>
+            </label>
+            <label>
+              <span>难度</span>
+              <select id="rankingDifficultyFilter">
+                <option value="all">全部</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <div id="dimensionTabs" class="dimension-tabs" role="tablist" aria-label="评分排行维度"></div>
+
+        <div class="ranking-column-head" aria-hidden="true">
+          <span>排名</span>
+          <span>歌曲 / 谱面</span>
+          <span>谱师</span>
+          <span>难度</span>
+          <span>评分</span>
+        </div>
+        <div id="rankingList" class="ranking-list"></div>
+        <button id="loadMoreRanking" class="load-more ranking-load-more" type="button" hidden>
+          显示更多排名
+        </button>
+      </main>
+
+      <main id="distributionView" class="distribution-main" hidden>
+        <section class="distribution-header">
+          <div>
+            <p class="section-kicker">RAW SCORE DISTRIBUTION</p>
+            <h1>原始值分布</h1>
+            <p id="distributionSummary" class="distribution-summary"></p>
+          </div>
+          <div class="distribution-filters">
+            <label>
+              <span>谱面类型</span>
+              <select id="distributionKindFilter">
+                <option value="all">全部</option>
+                <option value="DX">DX谱</option>
+                <option value="ST">标谱</option>
+              </select>
+            </label>
+            <label>
+              <span>难度</span>
+              <select id="distributionDifficultyFilter">
+                <option value="all">全部</option>
+              </select>
+            </label>
+            <label>
+              <span>等级</span>
+              <select id="distributionLevelFilter">
+                <option value="all">全部</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section class="distribution-dimensions" aria-label="原始值维度">
+          <div id="distributionDimensionTabs" class="dimension-tabs" role="tablist"></div>
+        </section>
+
+        <section id="distributionStats" class="distribution-stats" aria-live="polite"></section>
+
+        <section class="distribution-workbench">
+          <aside class="threshold-panel" aria-label="百分位分割点">
+            <div class="threshold-heading">
+              <div>
+                <p class="section-kicker">BREAKPOINTS</p>
+                <h2>百分位分割点</h2>
+              </div>
+              <button id="resetDistributionThresholds" class="reset-curve-button" type="button">恢复 P30/67/85/99</button>
+            </div>
+            <div id="thresholdControls" class="threshold-controls"></div>
+            <div class="threshold-table-wrap">
+              <table class="threshold-table">
+                <thead>
+                  <tr><th>分割点</th><th>原始阈值</th><th>样本位置</th></tr>
+                </thead>
+                <tbody id="thresholdRows"></tbody>
+              </table>
+            </div>
+          </aside>
+
+          <div class="distribution-output">
+            <div class="distribution-chart-heading">
+              <div>
+                <p class="section-kicker">PERCENTILE CURVE</p>
+                <h2 id="distributionChartTitle">原始值分布</h2>
+              </div>
+              <div class="distribution-legend" aria-label="图例">
+                <span><i class="legend-line"></i>排序曲线</span>
+                <span><i class="legend-bar"></i>样本分布</span>
+              </div>
+            </div>
+            <div id="distributionChart" class="distribution-chart" aria-label="原始值百分位曲线与分布直方图"></div>
+            <div class="range-share" id="rangeShare"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="app.js?v=20260911-1" defer></script>
+  </body>
+</html>

@@ -218,6 +218,45 @@ outputs/scored/
 
 报告表先保存固定 metadata 与状态列，再按分析配置顺序追加 `<feature>_raw` 和 `<feature>_score`。`diagnostics` 列为 JSON，汇总输入、parser、analysis 和 scoring 各层诊断；`cover_path` 始终使用相对路径。
 
+### 导出静态 visualizer
+
+评分模式可以改用仓库内置的 MAI RADAR 静态模板，直接生成可浏览的独立目录：
+
+```bash
+mairadar \
+  --mode full \
+  --input data/raw \
+  --output outputs/visualizer \
+  --format visualizer
+```
+
+产物包含 `index.html`、`app.js`、`styles.css`、`data/songs.json` 和
+`assets/covers/`。页面通过 `fetch` 读取 JSON，因此需在输出目录启动本地 HTTP
+服务器，而不是直接双击 HTML：
+
+```bash
+cd outputs/visualizer
+python3 -m http.server 4173 --bind 127.0.0.1
+```
+
+visualizer exporter 与 CSV exporter 并列，只消费已经完成的 `AnalysisRecord`；它不读取
+原始 Simai、不运行 parser/analyzer，也不参与分数映射。模板固定保存在
+`res/visualizer/`，CLI 不接受外部模板参数。维度由当前分析配置顺序生成，未知维度使用
+可读的字段名和循环配色；需要自定义显示名时，可在代码调用中传入展示配置：
+
+```python
+from mairadar.exporters import DimensionPresentation, VisualizerExporter
+
+exporter = VisualizerExporter({
+    "note_density": DimensionPresentation("整体物量", "物量", "#ef476f"),
+})
+```
+
+每次 JSON 内的歌曲和谱面使用 `song-1`、`chart-1` 形式的递增 ID，只在该次导出中
+有效，不构成歌曲注册表或稳定身份。分组优先使用调用方保留的来源路径，并将 DX/SD
+分开；不会用标题去重。难度筛选由实际数据动态生成。少于三个成功评分维度时页面仍可
+显示分数明细、排行和 raw 分布，但不会绘制退化的雷达多边形。
+
 ## 添加自定义特征分析器
 
 一个特征分析器是支持无参数构造、并实现 `analyze(context) -> FeatureResult` 的类。分析器只读 `AnalysisContext` 中的事件快照，不需要接触文件或原始 Simai。
@@ -326,7 +365,7 @@ src/mairadar/
   parser/          Simai 文本、时间与物件语义
   analysis/        特征接口、调度器与特征实现
   scoring/         原始特征到标准分的映射
-  exporters/       汇总表与曲绘导出
+  exporters/       CSV 与静态 visualizer 导出
   model.py         事件、谱面 metadata 与解析结果
   io.py            原始文件适配及事件 bundle 读写
   batch.py         原始文件或 bundle 的批处理
