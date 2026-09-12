@@ -1,0 +1,52 @@
+{
+  "verified_on": "2026-09-12",
+  "user_confirmed_references": [
+    "MajdataPlay",
+    "MajSimai"
+  ],
+  "upstreams": [
+    {
+      "name": "MajdataPlay",
+      "repository": "https://github.com/TeamMajdata/MajdataPlay",
+      "ref": "dev",
+      "commit": "c3423a4bba536e53921e8fdedab2b9d91121b393",
+      "relevant_paths": [
+        "Assets/Scripts/Utils/ChartAnalyzer.cs",
+        "Assets/Scripts/Scenes/Game/ChartVisualDisplayer.cs",
+        "Assets/Scripts/Scenes/Game/NoteLoader.cs",
+        "Assets/Scripts/Scenes/View/WsServer.cs"
+      ]
+    },
+    {
+      "name": "MajSimai",
+      "repository": "https://github.com/LingFeng-bbben/MajSimai",
+      "commit": "fdb2a3e39d8997a0abbf8b4679062d854473cc77",
+      "selection": "MajdataPlay pinned submodule Assets/Plugins/MajSimai; also symbolic HEAD on verification date",
+      "relevant_paths": [
+        "Runtime/SimaiParser.cs",
+        "Runtime/SimaiNoteParser.cs",
+        "Runtime/SimaiNote.cs",
+        "Runtime/SimaiTimingPoint.cs",
+        "Runtime/SimaiChart.cs",
+        "MajSimai.csproj"
+      ]
+    }
+  ],
+  "legacy_baseline": {
+    "file": "legacy_baseline.json",
+    "source_path_at_creation": "/Users/yukun/projects/MAI-RADAR-majdata-to-csv-20260830/outputs/six_dimension/astrodx_six_dimension_baselines.json",
+    "source_sha256": "bbf551899d47fbca9fe94204085ad81e974c39c00acdd26a71d02c859ea916c3",
+    "role": "reference_only_not_active_calibration"
+  },
+  "policy": "Links and metadata only; no upstream source is vendored in this scaffold.",
+  "parser_reference_validation": {
+    "method": "Local cached source git-blob SHA-1 matched the fixed commit tree; static semantic review, not runtime differential validation",
+    "blobs": {
+      "MajSimai/Runtime/SimaiParser.cs": "aa1b5a0db2558f4a73b9bfd08674bcec8fc9af2f",
+      "MajSimai/Runtime/SimaiNoteParser.cs": "730e5cde98188d11199a3926b4fdb0b6e7d1a7d6",
+      "MajSimai/Runtime/SimaiNote.cs": "5ce4efe3f5424071b5e6631b69d47c9bb159aaed",
+      "MajdataPlay/Assets/Scripts/Scenes/Game/NoteLoader.cs": "66059994991b3b0a25759589ead430a011dab989"
+    },
+    "runtime_differential_tested": false
+  }
+}

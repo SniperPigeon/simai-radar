@@ -1,0 +1,27 @@
+{
+  "schema_version": "events-0.2",
+  "status": "approved_schema_hand_authored_example",
+  "provenance": "hand_authored_prototype_not_parser_output",
+  "parser_version": null,
+  "dialect": "majdataplay_reference_proposed",
+  "time_origin": "chart",
+  "beat_unit": "quarter_note",
+  "ids": "consecutive integers starting at 1 in event output order",
+  "tables": {
+    "charts": "charts.csv",
+    "events": "events.csv",
+    "diagnostics": "diagnostics.csv"
+  },
+  "expected_counts": {
+    "charts": 1,
+    "events": 7,
+    "diagnostics": 0
+  },
+  "warning": "Examples demonstrate the proposed schema only; no implemented parser produced these files.",
+  "bundle_scope": "single_chart",
+  "slide_path_storage": "events.slide_path_json",
+  "bpm_storage": "events: kind=timing, timing_type=bpm",
+  "title": "Schema Prototype",
+  "difficulty_index": 5,
+  "chart_type": "sd"
+}

@@ -1,0 +1,7 @@
+&title=Schema Prototype
+&artist=simai-radar
+&first=0.25
+&lv_5=13
+&inote_5=
+(120){4}1,5h[4:1],1-5[4:1]*-7[4:1],A1,E
+&cabinet=SD
