@@ -1,0 +1,4 @@
+&title=invalid_note
+&lv_5=13
+&inote_5=
+(120){4}Z,E

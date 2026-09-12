@@ -1,0 +1,5 @@
+&title=comment_with_comma
+&lv_5=13
+&inote_5=
+(120){4}1,|| ignored comma ,
+2,3,4,E

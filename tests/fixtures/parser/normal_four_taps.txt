@@ -1,0 +1,4 @@
+&title=normal_four_taps
+&lv_5=13
+&inote_5=
+(120){4}1,2,3,4,E

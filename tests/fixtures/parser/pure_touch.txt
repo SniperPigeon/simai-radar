@@ -1,0 +1,4 @@
+&title=pure_touch
+&lv_5=13
+&inote_5=
+(120){4}A1,A2,A3,A4,E
