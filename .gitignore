@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# simai-radar: local datasets and generated artifacts
+.DS_Store
+/data/*/*
+!/data/*/.gitkeep
+/outputs/*
+!/outputs/.gitkeep
