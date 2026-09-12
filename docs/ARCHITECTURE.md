@@ -22,7 +22,13 @@ analysis 读取 ParseResult 的事件与时间字段，按显式配置调用独�
 
 batch 复用 read_bundle，将根目录的每个直接子文件夹作为一张谱面；原始文件适配则解析一次，在内存中逐张分析并保留失败记录。chart_type 在解析完成后独立检测 DX 特征，仅补全缺失的类型，不修改 parser 或事件；reporting 在外围组合 metadata、分析结果、可选评分结果与曲绘引用；exporters.CsvExporter 接收这些记录，输出总表和 covers 文件夹。
 
-pipeline 按 full、analysis、analysis_score 组合各层，允许注入分析器、评分变换器和导出器；full 不依赖中间 CSV，analysis 不映射或导出。cli 是唯一参数与文件夹选择入口，纯解析及事件 bundle 导出保留为库 API。映射模式已默认启用 dummy Pn，将 0/P50/P100 原始阈值映射到 0/50/200，阈值不从本批次计算；官方校准尚未进行。核心普通导入不加载这些外围组件，具体接口见 [分析调用说明](ANALYSIS.md)。
+pipeline 按 full、parse_only、analysis、analysis_score 组合各层，允许注入分析器、评分变换器
+和导出器；full 不依赖中间 CSV，analysis 不映射或导出。parse_only 由独立的
+parse_export 适配器完成原始文件发现和事件 bundle 写入，不构造 analyzer、mapper 或报告
+exporter。cli 是唯一参数与文件夹选择入口，纯解析及事件 bundle 导出仍保留为库 API。
+映射模式已默认启用 dummy Pn，将 0/P50/P100 原始阈值映射到 0/50/200，阈值不从本批次
+计算；官方校准尚未进行。核心普通导入不加载这些外围组件，具体接口见
+[分析调用说明](ANALYSIS.md)。
 
 秒时间从第一槽开始，音频 offset 独立；分拍不是拍号，BPM 变化不重置拍相位。物件跨窗口仍是一个事件，窗口只构造视图。Slide 声明时间与滑动区间分别保留，无头路径也不例外。
 

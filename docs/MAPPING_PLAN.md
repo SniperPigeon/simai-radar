@@ -1,6 +1,9 @@
 # 轻量谱面分析器与评分映射计划
 
-状态：分析接口、HOLD 示例、batch、CSV/曲绘导出和统一 CLI 已实现；模式为 full、analysis、analysis_score。映射调用链已默认启用 dummy Pn，支持每个 feature 独立配置映射器及参数；官方校准尚未进行。调用方式与实际口径见 [分析说明](ANALYSIS.md)。0830 六维代码只作历史参考，暂不迁移其指标、权重或评分策略。
+状态：分析接口、HOLD 示例、batch、CSV/曲绘导出和统一 CLI 已实现；模式为 full、
+parse_only、analysis、analysis_score。映射调用链已默认启用 dummy Pn，支持每个 feature
+独立配置映射器及参数；官方校准尚未进行。调用方式与实际口径见
+[分析说明](ANALYSIS.md)。0830 六维代码只作历史参考，暂不迁移其指标、权重或评分策略。
 
 ## 数据流
 

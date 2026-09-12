@@ -46,11 +46,13 @@ duration_s = max(chart_end_time_s, last_event_end_s 或 0)
 
 ## 统一 CLI 与模式
 
-统一入口为 `scripts/mairadar.py`，安装包后使用 `mairadar`，或设置 PYTHONPATH=src 后使用 `python -m mairadar`。三种模式由外围 pipeline 组合：
+统一入口为 `scripts/mairadar.py`，安装包后使用 `mairadar`，或设置 PYTHONPATH=src 后使用
+`python -m mairadar`。四种模式由外围 pipeline 组合：
 
 | --mode | 输入 | 执行步骤 | 输出 |
 | --- | --- | --- | --- |
 | full | 原始 Simai 文件或目录 | 解析 → 特征分析 → 映射 → 导出 | 总表 CSV 与曲绘 |
+| parse_only | 原始 Simai 文件或目录 | 解析 → bundle 写入 | 每张谱面一个事件 bundle |
 | analysis | 已导出的 bundle 根目录 | 特征分析 | 终端逐行 JSON，不写文件 |
 | analysis_score | 已导出的 bundle 根目录 | 特征分析 → 映射 → 导出 | 总表 CSV 与曲绘 |
 
@@ -60,13 +62,20 @@ python scripts/mairadar.py --mode analysis --choose
 # 以下模式默认使用 dummy Pn 映射器：
 python scripts/mairadar.py --mode analysis_score --input data/parsed --output outputs/scored
 python scripts/mairadar.py --mode full --input data/raw --output outputs/full --difficulty 5 6
+python scripts/mairadar.py --mode parse_only --input data/raw --output data/parsed --difficulty 5 6
 ```
 
-需要 Python 3.11+。`--choose` 延迟加载 tkinter 打开输入目录选择器；没有 tkinter 或 GUI 时使用 `--input`。取消选择返回非零。`--difficulty` 和 `--chart-type` 仅供 full 使用。analysis 不接受 --output，另外两种模式必须提供 --output。
+需要 Python 3.11+。`--choose` 延迟加载 tkinter 打开输入目录选择器；没有 tkinter 或 GUI
+时使用 `--input`。取消选择返回非零。`--difficulty` 和 `--chart-type` 仅供 full 与
+parse_only 使用。analysis 不接受 --output，其他模式必须提供 --output；`--format` 只作用
+于会产生评分报告的 full 与 analysis_score。
 
 full 对目录递归发现 maidata.txt、majdata.txt 和 .simai；解析一次后直接把内存事件交给分析器，不导出或重新读取中间 bundle。单个文件内的不同难度分别输出报告行。类型优先使用 --chart-type、显式 metadata，缺失时由解析后的独立 DX 检测器补全。
 
-只保留统一 CLI；纯解析和事件 bundle 导出通过 parse_file / write_bundle 库 API 调用。
+parse_only 使用同样的原始文件发现、难度选择和类型优先级，但解析后直接调用 bundle
+写入层。每张成功写入的谱面保留 events、metadata、解析诊断、完整性状态和可选曲绘；
+它不导入 analysis 或 scoring 实现。不完整谱面和单文件失败不会阻断其他谱面，但批量结果
+返回非零。纯解析和事件 bundle 导出也继续支持 parse_file / write_bundle 库 API。
 
 analysis 和 analysis_score 将根目录的每个直接子文件夹作为现有 CSV bundle 读取，不递归，也不自动发现 maidata。直接子文件忽略。损坏、缺少文件或不完整的 bundle 均保留结果行；其他目录继续处理。空输入、批量部分失败、映射失败和导出失败均返回非零。
 
@@ -80,7 +89,9 @@ analysis 的终端 JSON 每张谱面一行，包含 metadata、`analysis.feature
 
 完整谱面未命中时按 SD 补全。这是基于当前物件规则的缺省分类，不代表识别官方发行版本；有显式类型时不会覆盖。incomplete 返回 None，不做分类，也不进入后续特征计算和映射。检测结果只写入外围 chart metadata，不修改事件或源文件。
 
-CLI 三种模式共用 bundle 到分析结果的适配步骤，因此都可以补全缺失类型。新增检测是单独模块，不增加外部依赖。直接调用示例：
+三个会进入分析层的 CLI 模式共用 bundle 到分析结果的适配步骤，因此都可以补全缺失
+类型；parse_only 在写 bundle 前调用同一个独立检测器。新增检测不进入语法 parser，也不
+增加外部依赖。直接调用示例：
 
 ```python
 from mairadar.chart_type import detect_chart_type

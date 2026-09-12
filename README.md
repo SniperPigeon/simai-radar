@@ -59,15 +59,19 @@ mairadar \
 python scripts/mairadar.py --mode full --input data/raw --output outputs/full
 ```
 
-### 三种运行模式
+### 四种运行模式
 
 | 模式 | 输入 | 执行内容 | 输出 |
 | --- | --- | --- | --- |
 | `full` | 单个原始 Simai 文件，或原始谱面目录 | 解析 → 特征分析 → 映射 → 导出 | 汇总 `charts.csv` 与曲绘 |
+| `parse_only` | 单个原始 Simai 文件，或原始谱面目录 | 仅解析并保存 | 每张谱面一个事件 bundle |
 | `analysis` | 事件 bundle 根目录 | 特征分析 | 每张谱面一行 JSON；不写文件 |
 | `analysis_score` | 事件 bundle 根目录 | 特征分析 → 映射 → 导出 | 汇总 `charts.csv` 与曲绘 |
 
 ```bash
+# 只解析原始谱面并保存事件 bundle
+mairadar --mode parse_only --input data/raw --output data/parsed
+
 # 只分析已经保存的事件 bundle
 mairadar --mode analysis --input data/parsed
 
@@ -78,7 +82,10 @@ mairadar --mode analysis_score --input data/parsed --output outputs/scored
 mairadar --mode full --input data/raw --output outputs/full --difficulty 5 6 --chart-type dx
 ```
 
-`full` 会递归发现 `maidata.txt`、`majdata.txt` 和 `.simai`，只解析一次并在内存中继续分析，不会先生成中间 bundle。`--difficulty` 与 `--chart-type` 仅用于 `full`；DX/SD 只读取明确 metadata 或参数，不会根据曲名或物件种类猜测。
+`full` 和 `parse_only` 会递归发现 `maidata.txt`、`majdata.txt` 和 `.simai`。
+`full` 只解析一次并在内存中继续分析，不会先生成中间 bundle；`parse_only` 到写入事件
+bundle 为止，不构造分析器或映射器。`--difficulty` 与 `--chart-type` 仅用于这两个原始输入
+模式；DX/SD 只读取明确 metadata、调用方参数或独立的解析后检测，不会根据曲名猜类型。
 
 批处理中一张谱面失败不会阻止其余谱面继续处理。只要存在解析不完整、分析/映射失败、bundle 损坏或导出失败，进程就会返回非零状态，并把细节保留在诊断中。
 
@@ -369,7 +376,8 @@ src/mairadar/
   model.py         事件、谱面 metadata 与解析结果
   io.py            原始文件适配及事件 bundle 读写
   batch.py         原始文件或 bundle 的批处理
-  pipeline.py      full / analysis / analysis_score 组合
+  pipeline.py      full / parse_only / analysis / analysis_score 组合
+  parse_export.py  原始谱面到事件 bundle 的独立批处理适配
   cli.py           命令行入口
 res/               小型合成样例和固定参考
 tests/             parser、analysis、scoring、I/O 与 pipeline 测试

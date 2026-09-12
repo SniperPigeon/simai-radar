@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 from mairadar.analysis import AnalysisResult, FeatureResult
 from mairadar.cli import main
 from mairadar.exporters import ExportResult
-from mairadar.io import parse_file, write_bundle
+from mairadar.io import parse_file, read_bundle, write_bundle
 from mairadar.pipeline import run_pipeline
 from mairadar.scoring import FeatureScore, ScoreResult
 
@@ -53,6 +53,59 @@ def read_csv(report):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_parse_only_writes_bundles_without_analysis_mapping_or_report_export(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = fixtures(root)
+            analyzer, transformer, exporter = Mock(), Mock(), Mock()
+            parsed, report = run_pipeline(
+                "parse_only",
+                source,
+                output=root / "parsed-only",
+                analyzer=analyzer,
+                transformer=transformer,
+                exporter=exporter,
+            )
+
+            self.assertIsNone(report)
+            self.assertEqual(parsed.exported_bundles, 2)
+            self.assertEqual(parsed.failed_records, 0)
+            self.assertEqual(parsed.exit_code, 0)
+            analyzer.analyze.assert_not_called()
+            transformer.transform.assert_not_called()
+            exporter.export.assert_not_called()
+            targets = sorted((root / "parsed-only").iterdir())
+            self.assertEqual([target.name for target in targets], ["测试-5-dx", "测试-6-dx"])
+            self.assertTrue(all({path.name for path in target.iterdir()} == {
+                "manifest.json", "charts.csv", "events.csv", "diagnostics.csv", "cover.png",
+            } for target in targets))
+            bundles = [read_bundle(target) for target in targets]
+            self.assertEqual([bundle.chart.difficulty_index for bundle in bundles], [5, 6])
+            self.assertTrue(all(bundle.chart.chart_type == "dx" for bundle in bundles))
+            self.assertTrue(all((target / "cover.png").is_file() for target in targets))
+
+    def test_parse_only_filters_difficulty_and_keeps_partial_bundle_visible(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "partial.simai"
+            source.write_text("(120){4}1,invalid,E")
+            parsed, report = run_pipeline(
+                "parse_only",
+                source,
+                output=root / "parsed",
+                difficulties=[5],
+                chart_type="sd",
+            )
+
+            self.assertIsNone(report)
+            self.assertEqual(parsed.exported_bundles, 1)
+            self.assertEqual(parsed.failed_records, 1)
+            self.assertEqual(parsed.records[0].status, "partial")
+            self.assertEqual(parsed.exit_code, 1)
+            restored = read_bundle(parsed.records[0].bundle_path)
+            self.assertFalse(restored.complete)
+            self.assertEqual(restored.chart.chart_type, "sd")
+
     def test_complete_chain_proceeds_but_incomplete_parse_never_reaches_analysis_or_mapping(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -210,6 +263,7 @@ class PipelineTests(unittest.TestCase):
                 ("analysis", {"output": root / "out"}),
                 ("analysis", {"difficulties": [5]}),
                 ("analysis_score", {}),
+                ("parse_only", {}),
                 ("full", {"output": root / "raw" / "out"}),
             ):
                 with self.subTest(mode=mode, options=options), self.assertRaises(ValueError):
@@ -233,6 +287,43 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(main([
                     "--mode", "analysis_score", "-i", str(root / "bundles"), "-o", str(root / "out2"),
                 ], transformer=TestMapper()), 0)
+
+    def test_cli_parse_only_does_not_construct_default_mapper_and_rejects_format(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = fixtures(root)
+            configured = Mock(side_effect=AssertionError("mapper must not be constructed"))
+            stdout = io.StringIO()
+            with patch("mairadar.scoring.config.TRANSFORMER", configured), \
+                 contextlib.redirect_stdout(stdout):
+                code = main([
+                    "--mode", "parse_only", "--input", str(source),
+                    "--output", str(root / "parsed"), "--difficulty", "6",
+                ])
+            self.assertEqual(code, 0)
+            configured.assert_not_called()
+            self.assertIn("bundles=1 failed_or_partial=0", stdout.getvalue())
+            self.assertEqual([path.name for path in (root / "parsed").iterdir()], ["测试-6-dx"])
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                code = main([
+                    "--mode", "parse_only", "--input", str(source),
+                    "--output", str(root / "rejected"), "--format", "visualizer",
+                ])
+            self.assertEqual(code, 1)
+            self.assertIn("--format is only available in scoring modes", stderr.getvalue())
+            self.assertFalse((root / "rejected").exists())
+
+    def test_parse_only_adapter_import_has_no_analysis_or_scoring_dependency(self):
+        process = subprocess.run([
+            sys.executable,
+            "-c",
+            "import mairadar.parse_export, sys; "
+            "assert 'mairadar.analysis' not in sys.modules; "
+            "assert 'mairadar.scoring' not in sys.modules",
+        ], capture_output=True, text=True)
+        self.assertEqual(process.returncode, 0, process.stderr)
 
     def test_unified_script_and_module_analysis_print_json_and_default_dummy_completes_mvp(self):
         with tempfile.TemporaryDirectory() as temp:

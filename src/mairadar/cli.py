@@ -1,4 +1,4 @@
-"""Unified CLI: full, analysis, and analysis_score compose independent layers."""
+"""Unified CLI: parse, analyze, score, and export through independent layers."""
 
 import argparse
 from dataclasses import asdict
@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 from . import __version__
-from .pipeline import MODES, run_pipeline
+from .pipeline import MODES, SCORING_MODES, run_pipeline
 
 
 def choose_directory() -> Path | None:
@@ -37,15 +37,27 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=MODES, required=True)
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--input", "-i", type=Path, help="full: raw file/root; other modes: bundle root")
+    source.add_argument(
+        "--input", "-i", type=Path,
+        help="full/parse_only: raw file or root; analysis modes: bundle root",
+    )
     source.add_argument("--choose", action="store_true", help="choose the input directory")
-    parser.add_argument("--output", "-o", type=Path, help="new or empty report directory; scoring modes only")
+    parser.add_argument(
+        "--output", "-o", type=Path,
+        help="new or empty bundle/report directory; omitted only for analysis",
+    )
     parser.add_argument(
         "--format", choices=("csv", "visualizer"), default="csv",
         help="scoring output format (default: csv)",
     )
-    parser.add_argument("--difficulty", "-d", type=_difficulty, nargs="+", help="full only: inote indexes")
-    parser.add_argument("--chart-type", choices=("dx", "sd"), help="full only: explicit chart type override")
+    parser.add_argument(
+        "--difficulty", "-d", type=_difficulty, nargs="+",
+        help="full/parse_only: inote indexes",
+    )
+    parser.add_argument(
+        "--chart-type", choices=("dx", "sd"),
+        help="full/parse_only: explicit chart type override",
+    )
     parser.add_argument("--version", action="version", version=__version__)
     args = parser.parse_args(argv)
     try:
@@ -58,12 +70,12 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
             if args.input is None:
                 print("Folder selection cancelled", file=sys.stderr)
                 return 1
-        if args.mode != "analysis" and transformer is None:
+        if args.mode in SCORING_MODES and transformer is None:
             from .scoring.config import TRANSFORMER
             if TRANSFORMER is not None:
                 transformer = TRANSFORMER()
-        if args.mode == "analysis" and args.format != "csv":
-            raise ValueError("analysis does not export; --format is only available in scoring modes")
+        if args.mode not in SCORING_MODES and args.format != "csv":
+            raise ValueError("--format is only available in scoring modes")
         if exporter is None and args.format == "visualizer":
             from .exporters import VisualizerExporter
             exporter = VisualizerExporter()
@@ -72,7 +84,12 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
             transformer=transformer, exporter=exporter,
             difficulties=args.difficulty, chart_type=args.chart_type,
         )
-        if report is None:
+        if args.mode == "parse_only":
+            print(
+                f"bundles={batch.exported_bundles} "
+                f"failed_or_partial={batch.failed_records} output={batch.output_path}"
+            )
+        elif report is None:
             for record in batch.records:
                 print(json.dumps({
                     "source": record.source_name,
@@ -89,7 +106,19 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
             print(f"charts={len(batch.records)} failed_or_partial={report.failed_records} {artifact}")
         for record in batch.records:
             if record.status != "ok":
-                print(f"{record.source_name}: {record.status}; see result diagnostics", file=sys.stderr)
+                if args.mode == "parse_only":
+                    if record.bundle_path is not None:
+                        detail = f"see {record.bundle_path / 'diagnostics.csv'}"
+                    else:
+                        detail = "; ".join(
+                            f"{issue.code}: {issue.message}" for issue in record.diagnostics
+                        )
+                    print(f"{record.source_name}: {record.status}; {detail}", file=sys.stderr)
+                else:
+                    print(
+                        f"{record.source_name}: {record.status}; see result diagnostics",
+                        file=sys.stderr,
+                    )
         return max(batch.exit_code, report.exit_code if report is not None else 0)
     except Exception as exc:
         print(str(exc), file=sys.stderr)
