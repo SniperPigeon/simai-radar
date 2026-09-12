@@ -149,7 +149,7 @@ class BatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             bundle(root, cover=False)
-            command = [sys.executable, str(ROOT / "scripts/analyze_charts.py"),
+            command = [sys.executable, str(ROOT / "scripts/mairadar.py"), "--mode", "analysis",
                        "--input", str(root / "input")]
             process = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(process.returncode, 0, process.stderr)

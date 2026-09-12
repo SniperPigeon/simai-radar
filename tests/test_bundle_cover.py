@@ -1,6 +1,7 @@
 """Optional artwork stays in the export layer, with transactional replacement."""
 
 import base64
+import csv
 import json
 from pathlib import Path
 import subprocess
@@ -122,18 +123,19 @@ class CoverTests(unittest.TestCase):
                     write_bundle(bundle, root / "out", overwrite=True, cover_path=root / name)
             self.assertEqual(read_bundle(target), bundle)
 
-    def test_cli_discovers_cover_and_can_disable_or_override_it(self):
+    def test_unified_cli_discovers_cover_for_full_report(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = root / "maidata.txt"
             source.write_text("&title=CLI\n&cabinet=SD\n&inote_5=(120)1,E")
             (root / "bg.png").write_bytes(PNG)
-            args = [sys.executable, str(ROOT / "scripts/parse_chart.py"), "-i", str(source), "-o", str(root / "out")]
-            for extra, has_cover in (([], True), (["--overwrite", "--no-cover"], False),
-                                     (["--overwrite", "--cover", str(root / "bg.png")], True)):
-                result = subprocess.run(args + extra, capture_output=True, text=True)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(read_cover_path(root / "out/CLI-5-sd") is not None, has_cover)
+            args = [sys.executable, str(ROOT / "scripts/mairadar.py"), "--mode", "full",
+                    "-i", str(source), "-o", str(root / "out")]
+            result = subprocess.run(args, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with (root / "out/charts.csv").open(encoding="utf-8-sig") as stream:
+                [row] = list(csv.DictReader(stream))
+            self.assertEqual((root / "out" / row["cover_path"]).read_bytes(), PNG)
 
     def test_cli_batch_uses_each_songs_own_cover(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -143,13 +145,15 @@ class CoverTests(unittest.TestCase):
                 folder.mkdir(parents=True)
                 (folder / "maidata.txt").write_text(f"&title={title}\n&cabinet=SD\n&inote_5=(120)1,E")
                 (folder / "bg.png").write_bytes(PNG + title.encode())
-            args = [sys.executable, str(ROOT / "scripts/parse_chart.py"), "-i", str(root / "input"), "-o", str(root / "out")]
+            args = [sys.executable, str(ROOT / "scripts/mairadar.py"), "--mode", "full",
+                    "-i", str(root / "input"), "-o", str(root / "out")]
             result = subprocess.run(args, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            for title in ("A", "B"):
-                self.assertEqual(read_cover_path(root / f"out/{title}-5-sd").read_bytes(), PNG + title.encode())
-            result = subprocess.run(args + ["--cover", str(root / "input/A/bg.png")], capture_output=True, text=True)
-            self.assertEqual(result.returncode, 2)
+            with (root / "out/charts.csv").open(encoding="utf-8-sig") as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual([row["title"] for row in rows], ["A", "B"])
+            for row in rows:
+                self.assertEqual((root / "out" / row["cover_path"]).read_bytes(), PNG + row["title"].encode())
 
 
 if __name__ == "__main__":

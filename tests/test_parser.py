@@ -459,10 +459,10 @@ class EnvelopeAndIOTests(unittest.TestCase):
 
 class CLITests(unittest.TestCase):
     def run_cli(self, *args):
-        return subprocess.run([sys.executable, str(ROOT / "scripts/parse_chart.py"), *map(str, args)],
+        return subprocess.run([sys.executable, str(ROOT / "scripts/mairadar.py"), "--mode", "full", *map(str, args)],
                               text=True, capture_output=True, cwd=ROOT)
 
-    def test_directory_discovery_partial_exit_and_four_files(self):
+    def test_directory_discovery_partial_exit_and_summary_rows(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             for name, text in [("good", "(120)1,E"), ("bad", "(120)Z,E")]:
@@ -471,12 +471,13 @@ class CLITests(unittest.TestCase):
                 p.write_text(f"&title={name}\n&cabinet=SD\n&inote_5=" + text)
             result = self.run_cli("-i", root / "input", "-o", root / "output")
             self.assertEqual(result.returncode, 1, result.stderr)
-            self.assertIn("charts_complete=1 charts_partial=1", result.stdout)
-            bundles = [read_bundle(p) for p in (root / "output").iterdir()]
-            self.assertEqual(len(bundles), 2)
-            self.assertEqual(sum(b.complete for b in bundles), 1)
+            self.assertIn("charts=2 failed_or_partial=1", result.stdout)
+            with (root / "output/charts.csv").open(encoding="utf-8-sig") as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(sum(row["status"] == "ok" for row in rows), 1)
 
-    def test_difficulty_option_and_idempotent_overwrite(self):
+    def test_difficulty_option_and_existing_report_preserved(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             p = root / "maidata.txt"
@@ -484,13 +485,17 @@ class CLITests(unittest.TestCase):
             args = ["-i", p, "-o", root / "out", "-d", "6"]
             result = self.run_cli(*args)
             self.assertEqual(result.returncode, 0, result.stderr)
-            [directory] = (root / "out").iterdir()
-            self.assertEqual(read_bundle(directory).chart.difficulty_index, 6)
+            report = root / "out/charts.csv"
+            with report.open(encoding="utf-8-sig") as stream:
+                [row] = list(csv.DictReader(stream))
+            self.assertEqual(row["difficulty_index"], "6")
+            original = report.read_bytes()
             self.assertEqual(self.run_cli(*args).returncode, 1)
-            self.assertEqual(self.run_cli(*args, "--overwrite").returncode, 0)
+            self.assertEqual(report.read_bytes(), original)
 
     def test_invalid_usage_and_unreadable_utf8_fail(self):
-        self.assertEqual(self.run_cli("-i", "no-such-file", "-o", "unused").returncode, 2)
+        self.assertEqual(self.run_cli("-i", "no-such-file", "-o", "unused").returncode, 1)
+        self.assertEqual(self.run_cli("--unknown").returncode, 2)
         with tempfile.TemporaryDirectory() as temp:
             p = Path(temp) / "maidata.txt"
             p.write_bytes(b"\xff\xfe")
@@ -503,9 +508,11 @@ class CLITests(unittest.TestCase):
             path.write_text("(120)1,E")
             result = self.run_cli("-i", path, "-o", root / "out", "-d", "5", "--chart-type", "dx")
             self.assertEqual(result.returncode, 0, result.stderr)
-            bundle = read_bundle(root / "out/Example-5-dx")
-            self.assertEqual(bundle.chart.chart_type, "dx")
-            self.assertEqual(bundle.events, parse_chart(path.read_text()).events)
+            with (root / "out/charts.csv").open(encoding="utf-8-sig") as stream:
+                [row] = list(csv.DictReader(stream))
+            self.assertEqual((row["title"], row["chart_type"], row["difficulty_index"]),
+                             ("Example", "dx", "5"))
+            self.assertEqual(row["status"], "ok")
 
     def test_importing_parser_does_not_import_export_or_cli(self):
         result = subprocess.run(
