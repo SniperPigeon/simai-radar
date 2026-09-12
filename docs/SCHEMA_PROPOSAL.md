@@ -17,6 +17,7 @@ output/
     charts.csv
     diagnostics.csv
     manifest.json
+    cover.jpg          # 可选，扩展名随原图格式
 ```
 
 目录名不附加 hash 或自动后缀，不作为解析核心的歌曲 ID。DX/SD 来自明确的 cabinet/cabinate 元数据或调用方指定；不从曲名、文件夹或 Touch 数量猜测。文件名非法字符替换为下划线，原始 title 不改。缺少必要的导出 metadata 时由外围报错；不会影响只解析文本的 API。
@@ -81,7 +82,7 @@ output/
 
 `diagnostics.csv`：severity、code、message、source_start、source_end、source_line、source_column、raw_text、recovery_json。无需 chart_id，由同一结果/目录确定归属。
 
-`manifest.json` 是可选 CSV 导出的描述：schema/parser 版本、固定参考 commit、title/difficulty_index/chart_type、来源说明、表名、行数、complete/status。CSV SHA-256 仅用于导出文件完整性校验，不参与任何解析身份、去重或目录命名，解析核心不计算 hash。
+`manifest.json` 是可选 CSV 导出的描述：schema/parser 版本、固定参考 commit、title/difficulty_index/chart_type、来源说明、表名、行数、complete/status。CSV SHA-256 仅用于导出文件完整性校验，不参与任何解析身份、去重或目录命名，解析核心不计算 hash。可选的 assets.cover 记录包内 cover.jpg/jpeg/png/webp 的相对文件名；附件一同纳入 file_sha256 校验，曲绘不进入事件或纯文本解析结果。
 
 ## 时间与空值
 
