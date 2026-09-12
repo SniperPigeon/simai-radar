@@ -18,7 +18,7 @@ python scripts/parse_chart.py --input data/raw --output data/parsed
 python scripts/parse_chart.py --input path/to/maidata.txt --output data/parsed --difficulty 6 --overwrite
 ```
 
-输出目录为 `<title>-<difficulty_index>-dx/sd`，例如 `Link-6-sd`，包含 events.csv、charts.csv、diagnostics.csv、manifest.json。DX/SD 来自 cabinet/cabinate 元数据；缺失时可用 --chart-type 指定。文件目录名不使用 hash；events 不含 chart_id，event_id 和 head_event_id 为单次结果内的整数编号。
+输出目录为 `<title>-<difficulty_index>-dx/sd`，例如 `Link-6-sd`，包含 events.csv、charts.csv、diagnostics.csv、manifest.json，并可附带 cover.jpg/png 等曲绘。CLI 默认发现相邻 bg.*；可用 --cover 指定、--no-cover 关闭。DX/SD 来自 cabinet/cabinate 元数据；缺失时可用 --chart-type 指定。文件目录名不使用 hash；events 不含 chart_id，event_id 和 head_event_id 为单次结果内的整数编号。
 
 ```text
 src/mairadar/
