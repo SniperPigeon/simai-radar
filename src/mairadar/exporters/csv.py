@@ -63,7 +63,7 @@ class CsvExporter:
             columns = list(FIXED_COLUMNS) + [f"{name}_raw" for name in names]
             if score_columns:
                 columns += [f"{name}_score" for name in names]
-            used_covers: set[str] = set()
+            used_covers: dict[str, Path] = {}
             failures = 0
             with (staging / "charts.csv").open("w", encoding="utf-8-sig", newline="") as stream:
                 writer = csv.DictWriter(stream, fieldnames=columns)
@@ -98,7 +98,7 @@ class CsvExporter:
                 shutil.rmtree(staging)
 
     @staticmethod
-    def _copy_cover(record: AnalysisRecord, staging: Path, used: set[str]) -> str:
+    def _copy_cover(record: AnalysisRecord, staging: Path, used: dict[str, Path]) -> str:
         if record.chart is None:
             raise ValueError("Artwork export requires chart metadata")
         source = Path(record.cover_path)
@@ -108,6 +108,9 @@ class CsvExporter:
         filename = bundle_directory_name(record.chart) + suffix
         key = unicodedata.normalize("NFC", filename).casefold()
         if key in used:
+            existing = used[key]
+            if source.read_bytes() == existing.read_bytes():
+                return existing.relative_to(staging).as_posix()
             raise ValueError(f"Conflicting cover filename: {filename}")
         target = staging / "covers" / filename
         try:
@@ -115,7 +118,7 @@ class CsvExporter:
         except OSError:
             target.unlink(missing_ok=True)
             raise
-        used.add(key)
+        used[key] = target
         return f"covers/{filename}"
 
     @staticmethod
