@@ -3,14 +3,21 @@
 from copy import deepcopy
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Protocol
 
 from .analysis import AnalysisIssue, ChartAnalyzer
 from .batch import BatchResult, analyze_directory, analyze_source
 from .scoring import FeatureScore, ScoreResult, ScoreTransformer
 
-if TYPE_CHECKING:
-    from .exporters import CsvExporter, ExportResult
+class ExportReport(Protocol):
+    failed_records: int
+
+    @property
+    def exit_code(self) -> int: ...
+
+
+class ReportExporter(Protocol):
+    def export(self, records, output, *, feature_names, include_scores) -> ExportReport: ...
 
 MODES = ("full", "analysis", "analysis_score")
 
@@ -44,9 +51,9 @@ def _map_batch(batch: BatchResult, transformer: ScoreTransformer) -> None:
 def run_pipeline(
     mode: str, source: str | Path, *, output: str | Path | None = None,
     analyzer: ChartAnalyzer | None = None, transformer: ScoreTransformer | None = None,
-    exporter: "CsvExporter | None" = None,
+    exporter: ReportExporter | None = None,
     difficulties: list[int] | None = None, chart_type: str | None = None,
-) -> tuple[BatchResult, "ExportResult | None"]:
+) -> tuple[BatchResult, ExportReport | None]:
     """analysis returns raw results only; scoring modes require an explicit mapper."""
     if mode not in MODES:
         raise ValueError(f"Unknown mode: {mode}")

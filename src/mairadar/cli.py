@@ -40,6 +40,10 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
     source.add_argument("--input", "-i", type=Path, help="full: raw file/root; other modes: bundle root")
     source.add_argument("--choose", action="store_true", help="choose the input directory")
     parser.add_argument("--output", "-o", type=Path, help="new or empty report directory; scoring modes only")
+    parser.add_argument(
+        "--format", choices=("csv", "visualizer"), default="csv",
+        help="scoring output format (default: csv)",
+    )
     parser.add_argument("--difficulty", "-d", type=_difficulty, nargs="+", help="full only: inote indexes")
     parser.add_argument("--chart-type", choices=("dx", "sd"), help="full only: explicit chart type override")
     parser.add_argument("--version", action="version", version=__version__)
@@ -58,6 +62,11 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
             from .scoring.config import TRANSFORMER
             if TRANSFORMER is not None:
                 transformer = TRANSFORMER()
+        if args.mode == "analysis" and args.format != "csv":
+            raise ValueError("analysis does not export; --format is only available in scoring modes")
+        if exporter is None and args.format == "visualizer":
+            from .exporters import VisualizerExporter
+            exporter = VisualizerExporter()
         batch, report = run_pipeline(
             args.mode, args.input, output=args.output, analyzer=analyzer,
             transformer=transformer, exporter=exporter,
@@ -73,7 +82,11 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
                     "diagnostics": [asdict(issue) for issue in record.diagnostics],
                 }, ensure_ascii=False, allow_nan=False))
         else:
-            print(f"charts={len(batch.records)} failed_or_partial={report.failed_records} csv={report.csv_path}")
+            if hasattr(report, "site_path"):
+                artifact = f"visualizer={report.site_path}"
+            else:
+                artifact = f"csv={report.csv_path}"
+            print(f"charts={len(batch.records)} failed_or_partial={report.failed_records} {artifact}")
         for record in batch.records:
             if record.status != "ok":
                 print(f"{record.source_name}: {record.status}; see result diagnostics", file=sys.stderr)
