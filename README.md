@@ -288,21 +288,16 @@ exporter = VisualizerExporter({
 一个特征分析器是支持无参数构造、并实现 `analyze(context) -> FeatureResult` 的类。分析器只读 `AnalysisContext` 中的事件快照，不需要接触文件或原始 Simai。
 
 ```python
-from mairadar.analysis import AnalysisContext, ChartAnalyzer, FeatureResult
-
-
-class NoteDensityAnalyzer:
-    def analyze(self, context: AnalysisContext) -> FeatureResult:
-        duration = context.duration_s
-        if duration <= 0:
-            return FeatureResult(None, success=False)
-
-        count = sum(event.kind != "timing" for event in context.events)
-        return FeatureResult(count / duration)
+from mairadar.analysis import ChartAnalyzer
+from mairadar.analysis.features import NoteDensityAnalyzer
 
 
 analyzer = ChartAnalyzer({"note_density": NoteDensityAnalyzer})
 ```
+
+内置 `NoteDensityAnalyzer` 使用 1.5 秒固定窗口、Hold/Slide/Touch 物量补正和波动修正；
+完整公式、Touch 邻接与边界规则见 [分析说明](docs/ANALYSIS.md#整体物量口径)。它尚未加入
+默认特征与评分映射配置，避免在正式校准前引入任意映射阈值。
 
 `AnalysisContext` 提供：
 

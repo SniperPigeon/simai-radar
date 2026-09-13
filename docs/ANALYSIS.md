@@ -1,6 +1,6 @@
 # 谱面分析 MVP
 
-核心按显式配置调用独立维度分析器，返回原始指标；当前只有用于验证流程的 HOLD 频率。评分层已默认接入按 feature 独立配置的 dummy Pn 映射器，用于打通 MVP；旧版六维与官方校准未迁移。
+核心按显式配置调用独立维度分析器，返回原始指标；当前默认配置仍只有用于验证流程的 HOLD 频率，另提供可显式启用的整体物量分析器。评分层已默认接入按 feature 独立配置的 dummy Pn 映射器，用于打通 MVP；整体物量尚未配置评分映射，旧版六维与官方校准未迁移。
 
 ## 直接调用
 
@@ -43,6 +43,59 @@ duration_s = max(chart_end_time_s, last_event_end_s 或 0)
 输出为一个数值。仅统计 kind=hold，排除 TouchHold；同位置同时声明不去重，长 Hold 只计一次。时长保留开头休止、结尾空槽及超出谱面结束标记的持续物件尾部，不叠加音频 offset。
 
 正常完整且时长为正的无 Hold 谱面得到 FeatureResult(0, success=True)；零时长返回 FeatureResult(None, success=False)。解析不完整或模型校验失败时，不执行子分析器和映射器，各维结果均标记失败，主分析器分别记录 PARSE_INCOMPLETE 或 INVALID_INPUT。连接 Slide 的各段时间由 parser 按固定 MajdataPlay bar 数分配，分析器可直接读取，不重新扫描原始 Simai。
+
+## 整体物量口径
+
+`NoteDensityAnalyzer` 使用从谱面时间原点开始、互不重叠的 1.5 秒窗口。末窗按完整
+1.5 秒补零；事件恰好位于谱面结束点时归入末窗。分析时长仍为
+`max(chart_end_time_s, last_event_end_s)`，不叠加音频 offset。
+
+每个窗口先累加以下补正物量：
+
+- Tap 为 1；Slide 的显式星星头仍是独立 Tap；
+- 普通 Hold 的全局拍轴长度不超过八分音符（`end_beat-start_beat <= 1/2`）为 1，
+  否则为 2；TouchHold 进入 Touch 规则；
+- 同一 Slide 组先汇总全部连接段与共享头/无头分支的 `bar_count`，再计算
+  `ceil(total_bar_count / 64)`；组归入最早的实际 Slide 开始时间；
+- Touch 先在同一时间按传感器邻接求连通分量。不同时间的分量若相距不超过
+  十六分音符（全局拍轴 `<= 1/4`）且空间相邻，则按时间顺序优先合并；已经跨时间
+  合并的分量不再参与下一次合并，因此一个最终组最多包含两个时间点。每组为 1。
+
+Touch 邻接只认图中共享边，循环下标按 1–8 取模：
+
+```text
+C   : B1..B8
+A_i : B_i, D_i, D_(i+1), E_i, E_(i+1)
+B_i : A_i, B_(i-1), B_(i+1), C, E_i, E_(i+1)
+D_i : A_(i-1), A_i
+E_i : A_(i-1), A_i, B_(i-1), B_i
+```
+
+C1/C2 在 parser 中统一为逻辑 `C`；只在角上接触的区域（例如 D1/E1）不邻接。
+同时同位置的重复声明不会仅因位置相等而去重。
+
+设窗口补正物量为 `w_i`，则：
+
+```text
+x_i = w_i / 1.5
+mu = population_mean(x_i)
+CV = population_std(x_i) / mu
+note_density_raw = mu * (1 + 0.3 * CV)
+                 = mu + 0.3 * population_std(x_i)
+```
+
+正时长空谱得到 0；零时长不可用。`start_beat/end_beat` 是精确有理数字符串，足够完成
+八分音符和十六分音符判断；当前 schema 不导出小节边界或 `{分拍}` 时间线，`||s`
+拍号扩展也尚未支持。本口径不依赖小节边界。
+
+显式启用方式：
+
+```python
+from mairadar.analysis import ChartAnalyzer
+from mairadar.analysis.features import NoteDensityAnalyzer
+
+analyzer = ChartAnalyzer({"note_density": NoteDensityAnalyzer})
+```
 
 ## 统一 CLI 与模式
 
