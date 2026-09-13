@@ -296,8 +296,8 @@ analyzer = ChartAnalyzer({"note_density": NoteDensityAnalyzer})
 ```
 
 内置 `NoteDensityAnalyzer` 使用 1.5 秒固定窗口、Hold/Slide/Touch 物量补正和波动修正；
-完整公式、Touch 邻接与边界规则见 [分析说明](docs/ANALYSIS.md#整体物量口径)。它尚未加入
-默认特征与评分映射配置，避免在正式校准前引入任意映射阈值。
+完整公式、Touch 邻接与边界规则见 [分析说明](docs/ANALYSIS.md#整体物量口径)。默认配置以
+`note` 启用它，并使用当前观察批次的中位数与 P99 作临时映射锚点；该映射不代表正式校准。
 
 `AnalysisContext` 提供：
 
@@ -312,7 +312,7 @@ analyzer = ChartAnalyzer({"note_density": NoteDensityAnalyzer})
 ```python
 FEATURES = {
     "hold": HoldFrequencyAnalyzer,
-    "note_density": NoteDensityAnalyzer,
+    "note": NoteDensityAnalyzer,
 }
 ```
 
@@ -359,7 +359,7 @@ class RadarTransformer(FeatureScoreTransformer):
 TRANSFORMER = RadarTransformer
 ```
 
-仓库提供的 `DummyPnMapper` 使用预先给定的 `p50`、`p100` 做两段线性映射：`0 → 0`、`P50 → 50`、`P100 → 200`，范围外截断；这些锚点不会从当前数据批次计算。
+仓库提供的 `DummyPnMapper` 使用预先给定的 `p50`、`p100` 做两段线性映射：`0 → 0`、`P50 → 50`、`P100 → 200`，范围外截断；锚点可以由离线观察确定，但运行时不会从当前输入批次自动重新计算。
 
 也可以完全替换整体 `ScoreTransformer.transform(AnalysisResult) -> ScoreResult`，或只在调用时注入实验配置：
 

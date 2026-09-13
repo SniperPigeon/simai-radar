@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 from mairadar.analysis import AnalysisResult, FeatureResult
 from mairadar.scoring import DummyPnMapper, FeatureScoreTransformer
+from mairadar.scoring.config import FEATURE_MAPPERS, TRANSFORMER
 
 
 class ScaleMapper:
@@ -17,6 +18,14 @@ class ScaleMapper:
 
 
 class ScoringTests(unittest.TestCase):
+    def test_default_note_mapping_uses_versioned_observation_anchors(self):
+        note = FEATURE_MAPPERS["note"]
+        self.assertEqual((note.p50, note.p100), (3.540077197, 9.328672541))
+        transformer = TRANSFORMER()
+        scores = transformer.transform(AnalysisResult({"note": FeatureResult(note.p50)}))
+        self.assertEqual(scores.features["note"].value, 50)
+        self.assertEqual(scores.mapping_version, "provisional-note-p50-p99-20260913-v1")
+
     def test_two_segments_anchors_interiors_and_clamping(self):
         mapper = DummyPnMapper(p50=2, p100=6)
         for raw, expected in ((-1, 0), (0, 0), (1, 25), (2, 50), (3, 87.5),

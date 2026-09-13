@@ -1,6 +1,6 @@
 # 谱面分析 MVP
 
-核心按显式配置调用独立维度分析器，返回原始指标；当前默认配置仍只有用于验证流程的 HOLD 频率，另提供可显式启用的整体物量分析器。评分层已默认接入按 feature 独立配置的 dummy Pn 映射器，用于打通 MVP；整体物量尚未配置评分映射，旧版六维与官方校准未迁移。
+核心按显式配置调用独立维度分析器，返回原始指标；当前默认配置包含用于验证流程的 HOLD 频率和整体物量。评分层按 feature 独立配置映射器：HOLD 仍使用 dummy 锚点，整体物量暂用 2026-09-13 观察批次的中位数与 P99，以便生成 visualizer 后继续检查分布；两者都不代表官方校准。
 
 ## 直接调用
 
@@ -88,7 +88,7 @@ note_density_raw = mu * (1 + 0.3 * CV)
 八分音符和十六分音符判断；当前 schema 不导出小节边界或 `{分拍}` 时间线，`||s`
 拍号扩展也尚未支持。本口径不依赖小节边界。
 
-显式启用方式：
+单独启用整体物量的方式：
 
 ```python
 from mairadar.analysis import ChartAnalyzer
@@ -194,12 +194,20 @@ CsvExporter 接收 AnalysisRecord 序列，不发现目录、不运行分析器�
 ```python
 FEATURE_MAPPERS = {
     "hold": DummyPnMapper(p50=1.0, p100=2.0),
-    # 增加 feature 时在此声明它自己的映射器实例与参数。
+    "note": DummyPnMapper(p50=3.540077197, p100=9.328672541),
 }
-TRANSFORMER = FeatureScoreTransformer
+
+class DefaultScoreTransformer(FeatureScoreTransformer):
+    def __init__(self):
+        super().__init__(
+            FEATURE_MAPPERS,
+            mapping_version="provisional-note-p50-p99-20260913-v1",
+        )
+
+TRANSFORMER = DefaultScoreTransformer
 ```
 
-p50、p100 是原始指标的数值阈值，要求 `0 < p50 < p100` 且均为有限数值。默认 HOLD 的 1、2 仅是 dummy 参数，不是从官方谱面计算的百分位。不会根据本批次重新拟合阈值。
+p50、p100 是原始指标的数值阈值，要求 `0 < p50 < p100` 且均为有限数值。默认 HOLD 的 1、2 仅是 dummy 参数；整体物量的 3.540077197、9.328672541 分别来自当前 7512 张观察样本的中位数和 P99。它们都是固定的临时配置，后续批次不会自动重新拟合。
 
 DummyPnMapper 使用两段线性变换：
 
@@ -210,7 +218,7 @@ p50 < x < p100:   50 + 150 * (x - p50) / (p100 - p50)
 x >= p100:        200
 ```
 
-即 0→0、P50→50、P100→200，范围外截断到 0–200，保留浮点分数、不取整。默认 HOLD 示例：0.5→25、1→50、1.5→125、2→200。NaN、无穷值及无效阈值明确报错。
+即 0→0、P50→50、P100→200，范围外截断到 0–200，保留浮点分数、不取整。默认 HOLD 示例：0.5→25、1→50、1.5→125、2→200；整体物量在当前临时映射下 3.540077197→50、9.328672541→200。NaN、无穷值及无效阈值明确报错。
 
 同一映射器类可以配置不同阈值，也可以替换为其他实现 map 的类。调用方可以直接注入自己的配置：
 
@@ -230,7 +238,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
-ScoreResult 独立存储标准分数与 mapping_version。默认版本为 dummy-pn-v1；后续调整指标或参数时应同步维护版本。pipeline 校验映射输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
+ScoreResult 独立存储标准分数与 mapping_version。默认版本为 `provisional-note-p50-p99-20260913-v1`；后续调整指标或参数时应同步维护版本。pipeline 校验映射输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 
 pipeline 将评分输出附在 AnalysisRecord.scores 上，导出器追加 `<feature>_score` 并保留映射诊断和版本。映射全部失败时仍保留分数列，以空值表示失败。直接调用导出组件输出原始分析时，可省略评分结果及标准分数列。
 

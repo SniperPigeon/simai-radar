@@ -82,7 +82,10 @@ class BatchTests(unittest.TestCase):
             self.assertEqual([row["status"] for row in rows], ["ok", "error", "error"])
             self.assertEqual([row["hold_raw"] for row in rows], ["2.0", "", ""])
             self.assertTrue(all(row["cover_path"] == "" for row in rows))
-            self.assertEqual(json.loads(rows[1]["diagnostics"])["features"], {"hold": False})
+            self.assertEqual(
+                json.loads(rows[1]["diagnostics"])["features"],
+                {"hold": False, "note": False},
+            )
             self.assertEqual(json.loads(rows[-1]["diagnostics"])["source"], "broken")
             self.assertEqual(report.failed_records, 2)
             self.assertEqual((batch.exit_code, report.exit_code), (1, 1))

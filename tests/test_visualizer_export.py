@@ -93,12 +93,20 @@ class VisualizerExporterTests(unittest.TestCase):
             payload = json.loads(report.data_path.read_text())
             self.assertEqual(payload["schemaVersion"], "mairadar-visualizer-1")
             self.assertEqual(payload["mappingVersions"], ["visualizer-test-v1"])
-            self.assertEqual(payload["dimensions"], [{
-                "key": "hold",
-                "label": "Hold 频率",
-                "shortLabel": "Hold",
-                "color": "#ef476f",
-            }])
+            self.assertEqual(payload["dimensions"], [
+                {
+                    "key": "hold",
+                    "label": "Hold频率",
+                    "shortLabel": "Hold",
+                    "color": "#ef476f",
+                },
+                {
+                    "key": "note",
+                    "label": "总体物量",
+                    "shortLabel": "Note",
+                    "color": "#ff9f1c",
+                },
+            ])
             self.assertEqual(payload["stats"]["songCount"], 1)
             self.assertEqual(payload["stats"]["chartCount"], 2)
             [exported_song] = payload["songs"]

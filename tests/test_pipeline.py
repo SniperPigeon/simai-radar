@@ -339,6 +339,7 @@ class PipelineTests(unittest.TestCase):
                 rows = [json.loads(line) for line in process.stdout.splitlines()]
                 self.assertEqual(len(rows), 2)
                 self.assertEqual(rows[0]["analysis"]["features"]["hold"], {"data": 2.0, "success": True})
+                self.assertTrue(rows[0]["analysis"]["features"]["note"]["success"])
             for mode, input_dir in (("full", "raw"), ("analysis_score", "bundles")):
                 process = subprocess.run([
                     sys.executable, "-m", "mairadar", "--mode", mode, "-i", str(root / input_dir),
@@ -349,8 +350,9 @@ class PipelineTests(unittest.TestCase):
                     rows = list(csv.DictReader(stream))
                 self.assertEqual([float(row["hold_raw"]) for row in rows], [2, 1])
                 self.assertEqual([float(row["hold_score"]) for row in rows], [200, 50])
+                self.assertTrue(all(row["note_raw"] and row["note_score"] for row in rows))
                 self.assertTrue(all(json.loads(row["diagnostics"])["scoring"]["mapping_version"]
-                                    == "dummy-pn-v1" for row in rows))
+                                    == "provisional-note-p50-p99-20260913-v1" for row in rows))
                 self.assertTrue(all((root / mode / row["cover_path"]).is_file() for row in rows))
 
 
