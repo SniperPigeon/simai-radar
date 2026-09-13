@@ -41,6 +41,30 @@ def read_rows(path):
 
 
 class BatchTests(unittest.TestCase):
+    def test_csv_exports_one_shared_cover_for_all_difficulties_of_a_song(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            song = root / "raw" / "song"
+            song.mkdir(parents=True)
+            source = song / "maidata.txt"
+            source.write_text(
+                "&title=Shared Cover\n&inote_5=(120){4}1,2,E\n"
+                "&inote_6=(120){4}3,4,E\n"
+            )
+            (song / "bg.png").write_bytes(b"one cover")
+
+            batch = analyze_source(source)
+            report = CsvExporter().export(
+                batch.records, root / "report", feature_names=batch.feature_names,
+            )
+            _, rows = read_rows(report.csv_path)
+            self.assertEqual([row["cover_path"] for row in rows], [
+                "covers/Shared Cover.png", "covers/Shared Cover.png",
+            ])
+            self.assertEqual([path.name for path in (root / "report" / "covers").iterdir()], [
+                "Shared Cover.png",
+            ])
+
     def test_distribution_excludes_utage_by_default_and_explicit_index_includes_it(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -166,7 +190,7 @@ class BatchTests(unittest.TestCase):
             copyfile = shutil.copyfile
 
             def fail_first(source, target):
-                if target.name.startswith("A-"):
+                if target.name == "A.png":
                     target.write_bytes(b"partial copy")
                     raise OSError("simulated copy failure")
                 return copyfile(source, target)

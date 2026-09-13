@@ -10,10 +10,10 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
-import unicodedata
 
-from mairadar.io import COVER_EXTENSIONS, bundle_directory_name
 from mairadar.reporting import AnalysisRecord
+
+from .artwork import export_song_covers
 
 
 SCHEMA_VERSION = "mairadar-visualizer-1"
@@ -159,7 +159,9 @@ class VisualizerExporter:
             key = (source, chart.chart_type, chart.title, chart.artist)
             groups.setdefault(key, []).append((index, record))
 
-        used_covers: dict[str, Path] = {}
+        cover_paths, cover_issues, cover_count = export_song_covers(
+            records, staging, Path("assets/covers"),
+        )
         failed_indexes = {index for index, record in enumerate(records) if record.status != "ok"}
         songs = []
         chart_number = 0
@@ -170,13 +172,8 @@ class VisualizerExporter:
             for record_index, record in grouped:
                 chart_number += 1
                 chart = record.chart
-                cover = None
-                export_issues = []
-                if record.cover_path is not None:
-                    try:
-                        cover = self._copy_cover(record, staging, used_covers)
-                    except (OSError, ValueError) as exc:
-                        export_issues.append(str(exc))
+                cover = cover_paths.get(record_index)
+                export_issues = cover_issues.get(record_index, [])
                 raw_scores = self._raw_scores(record, names)
                 scores = self._scores(record, names)
                 dominant = self._dominant(scores, names)
@@ -237,7 +234,7 @@ class VisualizerExporter:
             "stats": {
                 "songCount": len(songs),
                 "chartCount": sum(len(song["charts"]) for song in songs),
-                "coverCount": len(used_covers),
+                "coverCount": cover_count,
                 "failedChartCount": len(failed_indexes),
                 "skippedRecordCount": skipped,
             },
@@ -279,32 +276,3 @@ class VisualizerExporter:
     @staticmethod
     def _kind_label(chart_type: str | None) -> str:
         return {"dx": "DX谱", "sd": "标谱"}.get(chart_type, "类型未提供")
-
-    @staticmethod
-    def _copy_cover(
-        record: AnalysisRecord,
-        staging: Path,
-        used: dict[str, Path],
-    ) -> str:
-        chart = record.chart
-        if chart is None:
-            raise ValueError("Artwork export requires chart metadata")
-        source = Path(record.cover_path)
-        suffix = source.suffix.lower()
-        if suffix not in COVER_EXTENSIONS:
-            raise ValueError(f"Unsupported cover extension: {suffix}")
-        filename = bundle_directory_name(chart) + suffix
-        key = unicodedata.normalize("NFC", filename).casefold()
-        if key in used:
-            existing = used[key]
-            if source.read_bytes() == existing.read_bytes():
-                return f"assets/covers/{existing.name}"
-            raise ValueError(f"Conflicting cover filename: {filename}")
-        target = staging / "assets" / "covers" / filename
-        try:
-            shutil.copyfile(source, target)
-        except OSError:
-            target.unlink(missing_ok=True)
-            raise
-        used[key] = target
-        return f"assets/covers/{filename}"

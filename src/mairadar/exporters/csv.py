@@ -9,11 +9,11 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
-import unicodedata
 
 from mairadar.analysis import AnalysisIssue
-from mairadar.io import COVER_EXTENSIONS, bundle_directory_name
 from mairadar.reporting import AnalysisRecord
+
+from .artwork import export_song_covers
 
 FIXED_COLUMNS = (
     "title", "artist", "designer", "difficulty_index", "level", "chart_type",
@@ -63,19 +63,20 @@ class CsvExporter:
             columns = list(FIXED_COLUMNS) + [f"{name}_raw" for name in names]
             if score_columns:
                 columns += [f"{name}_score" for name in names]
-            used_covers: dict[str, Path] = {}
+            cover_paths, cover_issues, _ = export_song_covers(
+                records, staging, Path("covers"),
+            )
             failures = 0
             with (staging / "charts.csv").open("w", encoding="utf-8-sig", newline="") as stream:
                 writer = csv.DictWriter(stream, fieldnames=columns)
                 writer.writeheader()
-                for record in records:
+                for index, record in enumerate(records):
                     row = self._row(record, names, score_columns)
-                    issues = []
-                    if record.cover_path is not None:
-                        try:
-                            row["cover_path"] = self._copy_cover(record, staging, used_covers)
-                        except (OSError, ValueError) as exc:
-                            issues.append(AnalysisIssue("COVER_EXPORT_FAILED", str(exc)))
+                    row["cover_path"] = cover_paths.get(index)
+                    issues = [
+                        AnalysisIssue("COVER_EXPORT_FAILED", message)
+                        for message in cover_issues.get(index, ())
+                    ]
                     if issues:
                         row["diagnostics"]["export"] = [asdict(issue) for issue in issues]
                     failures += row["status"] != "ok"
@@ -95,30 +96,6 @@ class CsvExporter:
         finally:
             if staging.exists():
                 shutil.rmtree(staging)
-
-    @staticmethod
-    def _copy_cover(record: AnalysisRecord, staging: Path, used: dict[str, Path]) -> str:
-        if record.chart is None:
-            raise ValueError("Artwork export requires chart metadata")
-        source = Path(record.cover_path)
-        suffix = source.suffix.lower()
-        if suffix not in COVER_EXTENSIONS:
-            raise ValueError(f"Unsupported cover extension: {suffix}")
-        filename = bundle_directory_name(record.chart) + suffix
-        key = unicodedata.normalize("NFC", filename).casefold()
-        if key in used:
-            existing = used[key]
-            if source.read_bytes() == existing.read_bytes():
-                return existing.relative_to(staging).as_posix()
-            raise ValueError(f"Conflicting cover filename: {filename}")
-        target = staging / "covers" / filename
-        try:
-            shutil.copyfile(source, target)
-        except OSError:
-            target.unlink(missing_ok=True)
-            raise
-        used[key] = target
-        return f"covers/{filename}"
 
     @staticmethod
     def _row(record: AnalysisRecord, names: tuple[str, ...], scores: bool) -> dict:

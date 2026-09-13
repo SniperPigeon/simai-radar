@@ -74,12 +74,12 @@ DummyPnMapper 将 0–P50 线性映射到 0–50，将 P50–P100 线性映射�
 outputs/analysis/
   charts.csv
   covers/
-    曲名-难度编号-dx或sd.png
+    曲名.png
 ```
 
 固定列为 title、artist、designer、difficulty_index、level、chart_type、cover_path、status、diagnostics。动态列按配置生成 `<feature>_raw`；映射模式追加 `<feature>_score`。MVP 原始列为 hold_raw，直接使用 FeatureResult.data；映射模式另有 hold_score，失败值留空。
 
-cover_path 相对 CSV 所在目录，例如 `covers/曲名-5-dx.png`。导出组件负责复制曲绘，缺图留空；命名沿用标题、难度编号和显式类型，同名曲绘内容相同则复用，内容不同明确报错，不追加 hash。DX/SD 优先使用显式值；缺失时在语法解析后按约定的 DX 物件规则补全，不从曲名猜测。
+cover_path 相对 CSV 所在目录，例如 `covers/曲名.png`。导出组件按来源、标题和曲师作单次报告内的临时归组，同曲全部难度与 DX/SD 共用一份曲绘；缺图留空，同名曲绘内容相同则复用，内容不同明确诊断且不覆盖，不追加 hash。该规则不构成歌曲身份或注册表。DX/SD 优先使用显式值；缺失时在语法解析后按约定的 DX 物件规则补全，不从曲名猜测。
 
 单个 bundle 或维度失败时继续处理其他项，失败数值留空并记录诊断；批量部分失败返回非零状态。原始指标和标准分数的有效状态分别保留，映射失败不覆盖已得到的原始值。
 

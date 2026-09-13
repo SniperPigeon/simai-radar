@@ -67,7 +67,7 @@ class ChartTypeTests(unittest.TestCase):
             self.assertEqual([row["chart_type"] for row in rows], ["dx", "sd"])
             self.assertTrue(all(row["status"] == "ok" for row in rows))
             for row in rows:
-                self.assertEqual(row["cover_path"], f"covers/{row['title']}-5-{row['chart_type']}.png")
+                self.assertEqual(row["cover_path"], f"covers/{row['title']}.png")
                 self.assertTrue((root / "out" / row["cover_path"]).is_file())
 
     def test_explicit_metadata_and_caller_override_take_priority(self):

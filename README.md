@@ -269,7 +269,7 @@ restored = read_bundle(directory)
 
 `manifest.json` 记录 schema/parser 版本、固定上游 commit、表名、行数、完整性状态、可选曲绘路径以及各文件 SHA-256。`read_bundle` 会先校验布局、checksum 和模型约束。checksum 只用于文件完整性，不是歌曲身份；项目不会创建全局 ID、身份 hash、曲库注册表或去重索引。
 
-目录名使用调用方提供的标题、难度编号和 DX/SD 类型；缺失项保留空段（如 `曲名-5-`、全部缺失时 `--`），metadata 本身保持为空，不从文件名补曲名。非法文件名字符替换为下划线，不自动追加 hash 后缀。默认拒绝覆盖同名 bundle；即使显式使用 `overwrite=True`，也只会替换布局匹配且不含额外用户文件的旧 bundle。
+目录名使用调用方提供的标题、难度编号和 DX/SD 类型；缺失项保留空段（如 `曲名-5-`、全部缺失时 `--`），metadata 本身保持为空，不从文件名补曲名。非法文件名字符替换为下划线。默认拒绝覆盖同名 bundle；即使显式使用 `overwrite=True`，也只会替换布局匹配且不含额外用户文件的旧 bundle。
 
 事件 bundle 与最终分析报告不是同一种产物。评分模式导出的报告结构是：
 
@@ -277,7 +277,7 @@ restored = read_bundle(directory)
 outputs/scored/
   charts.csv
   covers/
-    <title>-<difficulty_index>-<dx|sd>.png
+    <title>.png
 ```
 
 报告表先保存固定 metadata 与状态列，再按分析配置顺序追加 `<feature>_raw` 和 `<feature>_score`。`diagnostics` 列为 JSON，汇总输入、parser、analysis 和 scoring 各层诊断；`cover_path` 始终使用相对路径。

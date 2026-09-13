@@ -206,7 +206,7 @@ outputs/analysis/
 
 CSV 使用 UTF-8 BOM，固定列为 title、artist、designer、difficulty_index、level、chart_type、cover_path、status、diagnostics，后面追加配置中的 `<feature>_raw`。失败值留空，diagnostics 为 JSON，包含源子目录、解析和主分析器诊断、各维成功与否。普通 metadata 缺失时留空；DX/SD 缺失时按下述独立检测规则补全。
 
-曲绘按原样复制，cover_path 相对 CSV 所在目录。同名曲绘字节完全相同时复用文件，保留全部谱面行；复制失败或同名曲绘内容不同时，曲绘引用留空并保留导出诊断，不改变分析/评分状态或增加失败计数。CSV 与 visualizer 使用相同策略。文件名按标题、难度编号、DX/SD 命名，缺少字段时相应段留空，不追加 hash，也不去重报告行。
+曲绘按原样复制，cover_path 相对 CSV 所在目录。导出期按来源、标题和曲师临时归组，同曲全部难度及 DX/SD 谱面共享一份按标题命名的曲绘；不创建歌曲注册表或稳定身份。同名文件字节完全相同时复用；不同歌曲同名但内容冲突，或同一歌曲内出现不同曲绘时，保留导出诊断且不覆盖已有文件，不改变分析/评分状态或增加失败计数。CSV 与 visualizer 使用相同策略，不追加 hash，也不去重报告行。
 
 批处理与导出可以分别使用：
 

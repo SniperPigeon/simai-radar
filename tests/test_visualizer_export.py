@@ -116,6 +116,7 @@ class VisualizerExporterTests(unittest.TestCase):
             ])
             self.assertEqual(payload["stats"]["songCount"], 1)
             self.assertEqual(payload["stats"]["chartCount"], 2)
+            self.assertEqual(payload["stats"]["coverCount"], 1)
             [exported_song] = payload["songs"]
             self.assertEqual(exported_song["id"], "song-1")
             self.assertEqual(exported_song["difficulties"], [2, 7])
@@ -128,6 +129,10 @@ class VisualizerExporterTests(unittest.TestCase):
             self.assertTrue(all(chart["kind"] == "DX" for chart in exported_song["charts"]))
             self.assertTrue(all(chart["cover"].startswith("assets/covers/")
                                 for chart in exported_song["charts"]))
+            self.assertEqual(
+                {chart["cover"] for chart in exported_song["charts"]},
+                {"assets/covers/测试曲.png"},
+            )
             self.assertTrue(all((root / "site" / chart["cover"]).is_file()
                                 for chart in exported_song["charts"]))
 
