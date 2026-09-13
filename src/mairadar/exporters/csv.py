@@ -77,7 +77,6 @@ class CsvExporter:
                         except (OSError, ValueError) as exc:
                             issues.append(AnalysisIssue("COVER_EXPORT_FAILED", str(exc)))
                     if issues:
-                        row["status"] = "error" if record.status == "error" else "partial"
                         row["diagnostics"]["export"] = [asdict(issue) for issue in issues]
                     failures += row["status"] != "ok"
                     row["diagnostics"] = json.dumps(

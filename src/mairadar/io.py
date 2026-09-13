@@ -35,24 +35,22 @@ def parse_file(path: str | Path, *, difficulties: list[int] | None = None,
     bundles = parse_text(path.read_bytes().decode("utf-8-sig"), difficulties=difficulties)
     for bundle in bundles:
         bundle.chart.source_name = source_name if source_name is not None else path.name
-        if not bundle.chart.title:
-            bundle.chart.title = path.stem
     return bundles
+
+
+def is_empty_chart(bundle: ChartBundle) -> bool:
+    """Skip empty inputs at the batch boundary, without hiding malformed notes."""
+    return not any(event.kind != "timing" for event in bundle.events) and all(
+        diagnostic.severity != "error" or diagnostic.code == "EMPTY_CHART"
+        for diagnostic in bundle.diagnostics
+    )
 
 
 def bundle_directory_name(chart: Chart) -> str:
     """Human-readable export name, never a song identity or deduplication key."""
-    if not chart.title or not chart.title.strip():
-        raise ValueError("Export requires a title in chart metadata")
-    if chart.difficulty_index is None:
-        raise ValueError("Export requires difficulty_index; use --difficulty for raw text")
-    if chart.chart_type not in {"dx", "sd"}:
-        raise ValueError("Export requires cabinet=DX/SD metadata or --chart-type dx/sd")
     # Only filesystem-unsafe characters change; original metadata stays intact.
-    title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", chart.title).strip().rstrip(".")
-    if not title:
-        raise ValueError("Title cannot form a directory name")
-    return f"{title}-{chart.difficulty_index}-{chart.chart_type}"
+    title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", chart.title or "").strip().rstrip(".")
+    return f"{title}-{chart.difficulty_index or ''}-{chart.chart_type or ''}"
 
 
 def find_cover(directory: str | Path) -> Path | None:

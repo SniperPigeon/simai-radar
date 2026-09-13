@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .analysis import AnalysisIssue, ChartAnalyzer
 from .chart_type import detect_chart_type
-from .io import find_cover, parse_file, read_bundle, read_cover_path
+from .io import find_cover, is_empty_chart, parse_file, read_bundle, read_cover_path
 from .model import ChartBundle, ParseResult
 from .reporting import AnalysisRecord
 
@@ -45,6 +45,9 @@ def analyze_directory(
         records.append(record)
         try:
             bundle = read_bundle(folder)
+            if is_empty_chart(bundle):
+                records.pop()
+                continue
             record.chart = bundle.chart
             record.analysis = _analyze_bundle(bundle, analyzer)
             if include_cover:
@@ -83,6 +86,8 @@ def analyze_source(
             ))
             continue
         for bundle in bundles:
+            if is_empty_chart(bundle):
+                continue
             record = AnalysisRecord(name, chart=bundle.chart)
             records.append(record)
             try:

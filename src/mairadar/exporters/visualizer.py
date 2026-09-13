@@ -175,7 +175,6 @@ class VisualizerExporter:
                         cover = self._copy_cover(record, staging, used_covers)
                     except (OSError, ValueError) as exc:
                         export_issues.append(str(exc))
-                        failed_indexes.add(record_index)
                 raw_scores = self._raw_scores(record, names)
                 scores = self._scores(record, names)
                 dominant = self._dominant(scores, names)
@@ -184,8 +183,6 @@ class VisualizerExporter:
                 if not math.isfinite(duration) or duration <= 0:
                     duration = None
                 status = record.status
-                if export_issues and status == "ok":
-                    status = "partial"
                 charts.append({
                     "id": f"chart-{chart_number}",
                     "kind": self._kind(chart.chart_type),
@@ -218,7 +215,7 @@ class VisualizerExporter:
             metadata = first.metadata_json if isinstance(first.metadata_json, dict) else {}
             songs.append({
                 "id": f"song-{song_number}",
-                "title": first.title or first.source_name or grouped[0][1].source_name,
+                "title": first.title or "",
                 "artist": first.artist or "",
                 "genre": metadata.get("genre") or "",
                 "cover": song_cover,
