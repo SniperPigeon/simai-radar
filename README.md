@@ -84,8 +84,9 @@ mairadar --mode full --input data/raw --output outputs/full --difficulty 5 6 --c
 
 `full` 和 `parse_only` 会递归发现 `maidata.txt`、`majdata.txt` 和 `.simai`。
 `full` 只解析一次并在内存中继续分析，不会先生成中间 bundle；`parse_only` 到写入事件
-bundle 为止，不构造分析器或映射器。分布分析模式默认排除 7 号宴谱；使用
-`--include-utage` 可在普通谱基础上纳入宴谱，显式 `--difficulty 7` 则只选择宴谱。
+bundle 为止，不构造分析器或映射器。执行分析的 full、analysis 和 analysis_score 默认只
+选择 5 号 Master 与 6 号 Re:Master；`--include-utage` 会在两者基础上追加 7 号宴谱，显式
+`--difficulty` 则完全覆盖默认选择。parse_only 默认仍保存所有难度，也可显式筛选。
 `--difficulty` 可用于所有模式，
 `--chart-type` 仅用于两个原始输入模式；DX/SD 不会根据曲名猜类型。
 
@@ -124,8 +125,8 @@ python scripts/mairadar.py \
 `analysis` 与 `analysis_score` 不读取原始 Simai。只修改 Note、Peak 等分析算法或映射参数时，
 可以持续复用同一批 bundle；修改 parser 或事件 schema 后才需要重新执行 `parse_only`。
 现有旧版 `events-0.2` bundle 不能交给当前 `events-0.3` reader，需要从原始谱面重新生成。
-报告输出必须是新目录或空目录。分布分析默认排除宴谱；需要纳入时添加
-`--include-utage`。
+报告输出必须是新目录或空目录。分析默认只选择 5 号 Master 与 6 号 Re:Master；需要在
+默认集合上纳入 7 号宴谱时添加 `--include-utage`。
 
 ## 解析器 API
 

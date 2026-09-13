@@ -70,17 +70,18 @@ class BatchTests(unittest.TestCase):
             root = Path(temp)
             source = root / "maidata.txt"
             source.write_text(
-                "&title=Selection\n&inote_5=(120){4}1,2,E\n"
+                "&title=Selection\n&inote_4=(120){4}7,8,E\n"
+                "&inote_5=(120){4}1,2,E\n&inote_6=(120){4}5,6,E\n"
                 "&inote_7=(120){4}3,4,E\n"
             )
 
             default_raw = analyze_source(source)
             explicit_raw = analyze_source(source, difficulties=[7])
             included_raw = analyze_source(source, include_utage=True)
-            self.assertEqual([r.chart.difficulty_index for r in default_raw.records], [5])
+            self.assertEqual([r.chart.difficulty_index for r in default_raw.records], [5, 6])
             self.assertEqual([r.chart.difficulty_index for r in explicit_raw.records], [7])
             self.assertEqual(
-                [r.chart.difficulty_index for r in included_raw.records], [5, 7],
+                [r.chart.difficulty_index for r in included_raw.records], [5, 6, 7],
             )
 
             for parsed in parse_file(source):
@@ -92,10 +93,12 @@ class BatchTests(unittest.TestCase):
             included_bundles = analyze_directory(
                 root / "bundles", include_cover=False, include_utage=True,
             )
-            self.assertEqual([r.chart.difficulty_index for r in default_bundles.records], [5])
+            self.assertEqual(
+                [r.chart.difficulty_index for r in default_bundles.records], [5, 6],
+            )
             self.assertEqual([r.chart.difficulty_index for r in explicit_bundles.records], [7])
             self.assertEqual(
-                [r.chart.difficulty_index for r in included_bundles.records], [5, 7],
+                [r.chart.difficulty_index for r in included_bundles.records], [5, 6, 7],
             )
 
     def test_metadata_raw_columns_cover_relative_path_and_offset(self):

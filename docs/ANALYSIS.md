@@ -240,7 +240,11 @@ python scripts/mairadar.py --mode parse_only --input data/raw --output data/pars
 full 与 parse_only 使用。analysis 不接受 --output，其他模式必须提供 --output；`--format`
 只作用于会产生评分报告的 full 与 analysis_score。
 
-full 对目录递归发现 maidata.txt、majdata.txt 和 .simai；解析一次后直接把内存事件交给分析器，不导出或重新读取中间 bundle。分布分析默认排除 `difficulty_index=7` 的宴谱；使用 `--include-utage` 可在默认普通谱集合上纳入宴谱，显式 `--difficulty 7` 则只选择宴谱。类型优先使用 --chart-type、显式 metadata，缺失时由解析后的独立 DX 检测器补全。
+full 对目录递归发现 maidata.txt、majdata.txt 和 .simai；解析一次后直接把内存事件交给
+分析器，不导出或重新读取中间 bundle。执行分析的 full、analysis 和 analysis_score 默认
+只选择 `difficulty_index=5` 的 Master 与 `difficulty_index=6` 的 Re:Master；使用
+`--include-utage` 会在默认集合上追加 7 号宴谱，显式 `--difficulty` 则完全覆盖默认选择。
+类型优先使用 --chart-type、显式 metadata，缺失时由解析后的独立 DX 检测器补全。
 
 批处理跳过空正文、纯注释及只有时间指令/休止而没有物件的谱面，parse_only 也不导出这些空包。含非法物件或其他实质错误的谱面仍返回失败；显式请求不存在的难度仍报告 MISSING_CHART。纯文本 parser 保留原有空谱诊断，跳过逻辑位于外围批处理层。
 
@@ -249,7 +253,10 @@ parse_only 使用同样的原始文件发现、难度选择和类型优先级，
 它不导入 analysis 或 scoring 实现。不完整谱面和单文件失败不会阻断其他谱面，但批量结果
 返回非零。纯解析和事件 bundle 导出也继续支持 parse_file / write_bundle 库 API。
 
-analysis 和 analysis_score 将根目录的每个直接子文件夹作为现有 CSV bundle 读取，不递归，也不自动发现 maidata；同样默认排除宴谱，并接受 `--include-utage` 或显式 `--difficulty`。直接子文件忽略。损坏、缺少文件或不完整的 bundle 均保留结果行；其他目录继续处理。空输入、批量部分失败、映射失败和导出失败均返回非零。
+analysis 和 analysis_score 将根目录的每个直接子文件夹作为现有 CSV bundle 读取，不递归，
+也不自动发现 maidata；同样默认只选择 5、6，并接受 `--include-utage` 或显式
+`--difficulty`。直接子文件忽略。损坏、缺少文件或不完整的 bundle 均保留结果行；其他
+目录继续处理。空输入、批量部分失败、映射失败和导出失败均返回非零。
 
 analysis 的终端 JSON 每张谱面一行，包含 metadata、`analysis.features` 下各维的 data/success 和诊断；既可直接检查，也可由外部调用者消费。摘要和错误提示不混入 JSON 行。
 

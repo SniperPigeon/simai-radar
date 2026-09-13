@@ -11,6 +11,7 @@ from .reporting import AnalysisRecord
 
 
 UTAGE_DIFFICULTY_INDEX = 7
+DEFAULT_ANALYSIS_DIFFICULTY_INDEXES = frozenset({5, 6})
 
 
 @dataclass
@@ -39,7 +40,11 @@ def _include_in_distribution(
     include_utage: bool,
 ) -> bool:
     if difficulties is None:
-        return include_utage or index != UTAGE_DIFFICULTY_INDEX
+        return (
+            index is None
+            or index in DEFAULT_ANALYSIS_DIFFICULTY_INDEXES
+            or (include_utage and index == UTAGE_DIFFICULTY_INDEX)
+        )
     return index in difficulties
 
 

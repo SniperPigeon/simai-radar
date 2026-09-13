@@ -24,7 +24,7 @@ class CompatibilityTests(unittest.TestCase):
             path.write_text('&title=T\n&inote_1=\n&inote_2=|| comment\n'
                             '&inote_3=(120){4},,E\n&inote_4=(120)1,E\n'
                             '&inote_5=(120)bad,E')
-            batch = analyze_source(path)
+            batch = analyze_source(path, difficulties=[4, 5])
             self.assertEqual([r.chart.difficulty_index for r in batch.records], [4, 5])
             self.assertEqual([r.status for r in batch.records], ['ok', 'error'])
             missing = analyze_source(path, difficulties=[6])
@@ -35,7 +35,7 @@ class CompatibilityTests(unittest.TestCase):
             self.assertEqual(exported.exported_bundles, 2)
             empty = parse_text('&title=empty\n&inote_1=(120),,E')[0]
             write_bundle(empty, root / 'bundles')
-            restored = analyze_directory(root / 'bundles')
+            restored = analyze_directory(root / 'bundles', difficulties=[4, 5])
             self.assertEqual(len(restored.records), 2)
 
     def test_bad_difficulty_metadata_and_body_do_not_poison_siblings(self):

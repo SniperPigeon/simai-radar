@@ -52,11 +52,11 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
     )
     parser.add_argument(
         "--difficulty", "-d", type=_difficulty, nargs="+",
-        help="chart indexes; distribution modes exclude Utage/7 unless explicitly selected",
+        help="chart indexes; analysis defaults to Master/5 and Re:Master/6",
     )
     parser.add_argument(
         "--include-utage", action="store_true",
-        help="include Utage/7 alongside ordinary charts in distribution modes",
+        help="include Utage/7 alongside default Master/5 and Re:Master/6 charts",
     )
     parser.add_argument(
         "--chart-type", choices=("dx", "sd"),
