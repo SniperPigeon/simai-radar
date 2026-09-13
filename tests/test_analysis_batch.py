@@ -103,7 +103,7 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(report.exit_code, 0)
             self.assertEqual(batch.exit_code, 0)  # Export errors do not mutate core results.
 
-    def test_different_colliding_covers_remain_an_error(self):
+    def test_different_colliding_covers_remain_empty_without_failing_analysis(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = bundle(root)
@@ -114,10 +114,12 @@ class BatchTests(unittest.TestCase):
             batch.records[1].cover_path = alternate
             report = CsvExporter().export(batch.records, root / "report", feature_names=batch.feature_names)
             _, rows = read_rows(report.csv_path)
-            self.assertEqual([row["status"] for row in rows], ["ok", "partial"])
+            self.assertEqual([row["status"] for row in rows], ["ok", "ok"])
             self.assertEqual(rows[1]["cover_path"], "")
             self.assertEqual((root / "report" / rows[0]["cover_path"]).read_bytes(), (root / "art.png").read_bytes())
-            self.assertEqual(report.exit_code, 1)
+            self.assertEqual(report.exit_code, 0)
+            self.assertEqual(json.loads(rows[1]["diagnostics"])["export"][0]["code"],
+                             "COVER_EXPORT_FAILED")
 
     def test_failed_cover_copy_keeps_raw_value_and_continues_next_record(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -136,7 +138,7 @@ class BatchTests(unittest.TestCase):
             with patch("mairadar.exporters.csv.shutil.copyfile", side_effect=fail_first):
                 report = CsvExporter().export(batch.records, root / "report", feature_names=batch.feature_names)
             _, rows = read_rows(report.csv_path)
-            self.assertEqual([row["status"] for row in rows], ["partial", "ok"])
+            self.assertEqual([row["status"] for row in rows], ["ok", "ok"])
             self.assertEqual(rows[0]["hold_raw"], "2.0")
             self.assertEqual(rows[0]["cover_path"], "")
             self.assertEqual(len(list((root / "report" / "covers").iterdir())), 1)

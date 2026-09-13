@@ -19,6 +19,8 @@ for event in result.events:
 
 重复 h、x 等布尔修饰符不会重复生成物件；物件位置、时长和剩余语法仍严格检查，raw_token 保留原文。仅末尾独立小写 e 兼容为结束符 E，并记录 info；其他未知 token 仍导致 incomplete，不静默丢物件后继续评分。
 
+独立 E 之后的内容忽略并记录 info，不影响下一个 inote。难度级 metadata 冲突或异常续行只影响对应难度；同值重复字段只记录 info。Slide 路径中间的 b 仅在 `[` 前或 token 末尾设置 BREAK，其他位置忽略；不合法的 `||s` 注释直接丢弃。抄谱修正放在外围脚本，不进入 parser 的语法恢复逻辑。
+
 处理完整 maidata 文本时使用 `parse_text(text, difficulties=[5, 6])`，返回 list[ChartBundle]，其中 chart 保存文本 metadata。parse_chart 则直接接收单个 inote 的正文。
 
 ## 文件适配与导出

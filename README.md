@@ -183,6 +183,23 @@ Slide 路径段内联在 `slide_path_json` 中：
 
 完整的字段约束、Slide 细节和当前语法边界见 [事件格式说明](docs/SCHEMA_PROPOSAL.md) 与 [语法支持状态](docs/SYNTAX_SUPPORT.md)。
 
+### test0913 谱包修正
+
+`scripts/repair_test0913_charts.py` 是独立的一次性转写修正脚本，默认预览，仅处理已审阅的文件、难度和错误 token；不在 parser 内自动修谱。使用 Python 3.11 或更新版本：
+
+```bash
+python3 scripts/repair_test0913_charts.py
+python3 scripts/repair_test0913_charts.py --apply
+```
+
+默认输入根目录为 `data/raw`（包含 `AstroDX-raw`），可用 `--root` 指定；原始字节备份保存在 `outputs/test0913-repairs/originals`，可用 `--backup-root` 指定输入树外的目录。脚本输出逐项 JSON 日志，保留 BOM 和原有换行；第二次执行不再修改文件，已有备份不覆盖。
+
+修正规则包括对径 v 改直线、V 改为距原拐点最近且终点合法的两格拐点、缺失 h 补全、Oboro 的时长移到 Slide 一侧、混合 Slide 时长按有理数相加并合并到末尾、删除多余冒号及已确认杂字符、C8/C8f 改 C。未列入规则的错误继续诊断，不自动猜测曲目 metadata 或选择重复正文。
+
+脚本也删除已确认的 `1$/` 尾部空同时押成员，保留用于休止的逗号及同位置重复物件。批处理跳过空谱，含实质语法错误的谱面仍报告失败。
+
+后续确认的规则也已纳入：7处缺失同时押分隔符补 `/`；仅对 INTERNET YAMERO 保留第一份 `inote_6`，仅对 ∀ 保留 `des_4=Luxizhel`。这些是逐文件的明确选择，不改变 parser 对其他冲突重复字段的诊断策略。
+
 ## 保存和读取事件 bundle
 
 事件 bundle 是解析层与离线分析层之间的可校验交换格式，不是歌曲数据库。每张谱面占一个子目录：
@@ -214,7 +231,7 @@ restored = read_bundle(directory)
 
 `manifest.json` 记录 schema/parser 版本、固定上游 commit、表名、行数、完整性状态、可选曲绘路径以及各文件 SHA-256。`read_bundle` 会先校验布局、checksum 和模型约束。checksum 只用于文件完整性，不是歌曲身份；项目不会创建全局 ID、身份 hash、曲库注册表或去重索引。
 
-目录名使用调用方提供的标题、难度编号和明确的 DX/SD 类型。非法文件名字符会替换为下划线，但原 metadata 不变；不会自动追加 hash 后缀。默认拒绝覆盖已有 bundle；即使显式使用 `overwrite=True`，也只会替换布局匹配且不含额外用户文件的旧 bundle。
+目录名使用调用方提供的标题、难度编号和 DX/SD 类型；缺失项保留空段（如 `曲名-5-`、全部缺失时 `--`），metadata 本身保持为空，不从文件名补曲名。非法文件名字符替换为下划线，不自动追加 hash 后缀。默认拒绝覆盖同名 bundle；即使显式使用 `overwrite=True`，也只会替换布局匹配且不含额外用户文件的旧 bundle。
 
 事件 bundle 与最终分析报告不是同一种产物。评分模式导出的报告结构是：
 

@@ -135,7 +135,7 @@ class TimelineTests(unittest.TestCase):
                 self.assertTrue(b.complete)
                 self.assertEqual(b.chart.chart_end_time_s, end)
                 self.assertEqual([d.code for d in b.diagnostics], ["EOF_TERMINATOR"])
-        self.assertFalse(chart("(120)1,E,2,").complete)
+        self.assertTrue(chart("(120)1,E,2,").complete)
 
     def test_unknown_note_is_local_but_invalid_bpm_stops_timeline(self):
         b = chart("(120){4}1,Z,2,E")
@@ -398,16 +398,17 @@ class EnvelopeAndIOTests(unittest.TestCase):
                 self.assertNotIn("chart_id", rows[0])
             self.assertEqual(len(list(Path(temp).iterdir())), 2)
 
-    def test_export_requires_type_but_text_parsing_does_not(self):
+    def test_export_keeps_missing_metadata_empty(self):
         result = parse_chart("(120)1,E")
         self.assertTrue(result.complete)
         b = exportable("(120)1,E", chart_type=None)
         with tempfile.TemporaryDirectory() as temp:
-            with self.assertRaisesRegex(ValueError, "chart-type"):
-                write_bundle(b, temp)
+            target = write_bundle(b, temp)
+            self.assertIsNone(read_bundle(target).chart.chart_type)
         metadata = Chart(title="A/B:C", difficulty_index=5, chart_type="dx")
         self.assertEqual(bundle_directory_name(metadata), "A_B_C-5-dx")
         self.assertEqual(metadata.title, "A/B:C")
+        self.assertEqual(bundle_directory_name(Chart()), "--")
 
     def test_export_type_comes_from_explicit_metadata(self):
         for name in ("cabinet", "cabinate"):
@@ -579,7 +580,7 @@ class CLITests(unittest.TestCase):
             with (root / "out/charts.csv").open(encoding="utf-8-sig") as stream:
                 [row] = list(csv.DictReader(stream))
             self.assertEqual((row["title"], row["chart_type"], row["difficulty_index"]),
-                             ("Example", "dx", "5"))
+                             ("", "dx", "5"))
             self.assertEqual(row["status"], "ok")
 
     def test_importing_parser_does_not_import_export_or_cli(self):

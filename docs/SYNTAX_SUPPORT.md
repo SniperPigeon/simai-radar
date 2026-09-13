@@ -6,11 +6,11 @@ parser 0.3.0 / schema events-0.3 已实现。下表的 supported 表示通过本
 
 | 语法 | 实际状态与边界 |
 | --- | --- |
-| `&key=value`、多行 `&inote_N` | supported；难度编号保留，未知 metadata 保留。常用标量 metadata 读取其声明行，后续普通注释不混入值；重复字段或异常续行明确诊断 |
+| `&key=value`、多行 `&inote_N` | supported；难度编号保留，未知 metadata 保留。标量字段只读取声明行；同值重复记录 info，不影响完整性。冲突重复、异常续行明确诊断，带难度编号的字段只影响对应难度；后值覆盖前值 |
 | title/artist/des/des_N/lv_N/first | supported；offset 独立；first_N 作为本项目显式支持的难度覆盖项优先于 first |
 | UTF-8 BOM、CRLF、Unicode | supported；source 范围相对去 BOM 后、未转换换行的 Unicode 文本，单位为 code point |
 | `||` 普通注释 | supported；注释中的逗号不推进时间；保留原文定位 |
-| `||s` 拍号扩展 | unsupported；UNSUPPORTED_METER，保留诊断，complete=false；不把分拍当拍号 |
+| `||s` 拍号扩展 | 正整数 `||s 分子/分母` 仍 unsupported，complete=false；不合法的指令及 some pattern / solips 等普通注释直接忽略，不改变时间或拍号 |
 | `(120)`、小数 BPM、变 BPM | supported；每次声明是 timing/bpm 事件，重复同值保留源身份，但不改变物件时间或拍相位 |
 | `{4}`、正整数/小数分拍 | supported；未声明分拍时按固定上游默认 4，不猜 BPM；大分母不自动改写 |
 | `{#seconds}` | supported；须先有 BPM，按参考转换成 `240/(BPM*seconds)` 的分拍。之后只改 BPM 会改变槽秒长，直到重新声明分拍 |
@@ -26,7 +26,7 @@ parser 0.3.0 / schema events-0.3 已实现。下表的 supported 表示通过本
 | 同头多 Slide `*` | supported；一个显式头 Tap，每条路径一行，共享 head_event_id；分支时间和修饰符独立 |
 | `?` / `!` 无头 Slide | supported；不生成头，但保留 slide_declare_time_s；两种标记保存到 flags.no_head_marker；按固定参考，两者都保留等待时间 |
 | `@` Tap-head Slide | supported；头为 Tap，is_slide_head=true，flags.tap_head=true |
-| Slide 头/路径的 `b/m` | supported；头前标记归头，路径标记仅接受紧邻 `[` 或路径末尾，其他位置明确诊断；不传播到所有分支 |
+| Slide 头/路径的 `b/m` | supported；路径前标记归头，路径中仅紧邻 `[` 或 token 末尾的 b 设置 BREAK，其余 b 直接忽略，与固定 NoteFlag.Detect 一致；m 的非法位置仍诊断。标记不传播到其他分支 |
 | Slide `x` | supported 为头部 EX；路径 is_ex=false；无头/后续分支的头修饰保留到 suppressed_head_flags，不伪造额外头 |
 | `c` | supported 为 flags.using_sv=false（参考默认启用 SV，c 关闭），不误写为 true |
 | Slide `[division:count]`、`[bpm#division:count]`、`[bpm#seconds]` | supported；custom BPM 同时确定等待时间。`[#seconds]` 仅适用于 Hold，不是该参考的合法 Slide 表达式 |
@@ -36,7 +36,7 @@ parser 0.3.0 / schema events-0.3 已实现。下表的 supported 表示通过本
 | Wifi 作为连接段 | rejected；固定播放器不允许 |
 | `<HS*...>` / `<SV*...>` | unsupported；UNSUPPORTED_SPEED，明确标记不完整；不假装已保存其播放效果 |
 | `K` 自定义 Slide | unsupported；保留定位诊断，不编造路径或输出一个看似完整的 Slide |
-| `E` / EOF | supported；仅末尾独立小写 e 作为显式兼容写法接受并记录 LOWERCASE_TERMINATOR info；E 必须单独作为槽中的结束标记，E 后有内容则报错；EOF 记录 info。末尾无逗号时保留最后物件，但不插入额外槽时长，是与固定上游扫描器的显式差异 |
+| `E` / EOF | supported；槽首（可带时间指令）的独立 E 终止当前 inote，后续内容直接忽略并记录 TRAILING_CONTENT info，后续难度照常解析。E1–E8 Touch 与数值科学计数法不作终止符；仅末尾独立小写 e 兼容为 E。EOF 记录 info，不插入额外槽时长 |
 | 未知 token / 非法持续时间 | error；跳过整个来源 token（`*` 组原子处理），保留可确定的其他物件，complete=false |
 | 未知或非法时间指令、缺失 BPM | error；停止该谱面后续时间扫描，chart_end_time_s 留空，不能确定的拍字段留空 |
 

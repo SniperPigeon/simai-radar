@@ -72,6 +72,8 @@ parse_only 使用。analysis 不接受 --output，其他模式必须提供 --out
 
 full 对目录递归发现 maidata.txt、majdata.txt 和 .simai；解析一次后直接把内存事件交给分析器，不导出或重新读取中间 bundle。单个文件内的不同难度分别输出报告行。类型优先使用 --chart-type、显式 metadata，缺失时由解析后的独立 DX 检测器补全。
 
+批处理跳过空正文、纯注释及只有时间指令/休止而没有物件的谱面，parse_only 也不导出这些空包。含非法物件或其他实质错误的谱面仍返回失败；显式请求不存在的难度仍报告 MISSING_CHART。纯文本 parser 保留原有空谱诊断，跳过逻辑位于外围批处理层。
+
 parse_only 使用同样的原始文件发现、难度选择和类型优先级，但解析后直接调用 bundle
 写入层。每张成功写入的谱面保留 events、metadata、解析诊断、完整性状态和可选曲绘；
 它不导入 analysis 或 scoring 实现。不完整谱面和单文件失败不会阻断其他谱面，但批量结果
@@ -113,7 +115,7 @@ outputs/analysis/
 
 CSV 使用 UTF-8 BOM，固定列为 title、artist、designer、difficulty_index、level、chart_type、cover_path、status、diagnostics，后面追加配置中的 `<feature>_raw`。失败值留空，diagnostics 为 JSON，包含源子目录、解析和主分析器诊断、各维成功与否。普通 metadata 缺失时留空；DX/SD 缺失时按下述独立检测规则补全。
 
-曲绘按原样复制，cover_path 相对 CSV 所在目录。曲绘缺失不影响原始指标；同名曲绘字节完全相同时复用已导出文件及其相对路径，保留全部谱面行；复制失败或同名曲绘内容不同时，相关行保留指标、曲绘引用留空、状态标记失败或部分成功。文件名采用现有的标题、难度编号和已确定的 DX/SD 约定，不追加 hash，也不去重报告行。
+曲绘按原样复制，cover_path 相对 CSV 所在目录。同名曲绘字节完全相同时复用文件，保留全部谱面行；复制失败或同名曲绘内容不同时，曲绘引用留空并保留导出诊断，不改变分析/评分状态或增加失败计数。CSV 与 visualizer 使用相同策略。文件名按标题、难度编号、DX/SD 命名，缺少字段时相应段留空，不追加 hash，也不去重报告行。
 
 批处理与导出可以分别使用：
 
