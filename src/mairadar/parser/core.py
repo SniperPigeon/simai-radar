@@ -10,6 +10,7 @@ from .notes import parse_note
 from .source import Source, SyntaxProblem, Token, number, seconds, split_top
 
 FIELD = re.compile(r"^[ \t]*&([^=\s]+)=[ \t]*", re.MULTILINE)
+TOUCH_E_SUFFIX = re.compile(r"[ \t]*[1-8]")
 LABELS = {1: "Easy", 2: "Basic", 3: "Advanced", 4: "Expert", 5: "Master", 6: "Re:Master", 7: "Utage"}
 
 
@@ -66,13 +67,22 @@ class ChartParser:
             if text.startswith("||", i):
                 finish = text.find("\n", i, end)
                 finish = end if finish < 0 else finish
-                if text.startswith("||s", i):
+                if text.startswith("||s", i) and re.fullmatch(
+                    r"\s*[1-9][0-9]*\s*/\s*[1-9][0-9]*\s*", text[i + 3:finish]
+                ):
                     self.diagnose("UNSUPPORTED_METER", "Player ||s meter extension is not implemented",
                                   i, finish, action="omit_unsupported_command")
                 i = finish
             elif text[i].isspace():
                 i += 1
             else:
+                # E1–E8 are Touch positions. A standalone E ends this inote;
+                # do not even scan ignored trailing comments/directives.
+                if (text[i] == "E" and (not chars or chars[-1] in ",)}")
+                        and not TOUCH_E_SUFFIX.match(text, i + 1, end)):
+                    chars.append("E")
+                    offsets.append(i)
+                    break
                 chars.append(text[i])
                 offsets.append(i)
                 i += 1
@@ -172,10 +182,9 @@ class ChartParser:
                                   notes.start, notes.end, severity="info", incomplete=False)
                 if notes.text == "E" or lowercase_end:
                     terminated = True
-                    if has_comma or boundary != len(token.text):
-                        start = token.offsets[boundary] if has_comma else notes.start
-                        self.diagnose("TRAILING_CONTENT", "Content follows the E terminator", start, token.end,
-                                      action="ignore_after_terminator")
+                    if self.source.text[notes.end:end].strip():
+                        self.diagnose("TRAILING_CONTENT", "Content after E ignored", notes.end, end,
+                                      severity="info", incomplete=False, action="ignore_after_terminator")
                     break
                 if notes.text or has_comma:
                     if self.bpm is None:
@@ -250,8 +259,8 @@ def parse_text(text: str, *, difficulties: list[int] | None = None) -> list[Char
         begin = match.end()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
         key = match[1]
-        if key in fields:
-            duplicate_spans.append((key, match.start(), end))
+        repeated = key in fields
+        previous_value = fields.get(key)
         value = text[begin:end]
         if re.fullmatch(r"(?:title|artist|cabinet|cabinate|des(?:_[0-9]+)?|first(?:_[0-9]+)?|lv_[0-9]+)", key):
             lines = value.splitlines(keepends=True)
@@ -263,6 +272,8 @@ def parse_text(text: str, *, difficulties: list[int] | None = None) -> list[Char
                 cursor += len(line)
         else:
             fields[key] = value.strip()
+        if repeated:
+            duplicate_spans.append((key, match.start(), end, previous_value == fields[key]))
         spans[key] = (begin, end)
     if matches:
         indexes = sorted(int(match[1]) for key in fields if (match := re.fullmatch(r"inote_([1-9][0-9]*)", key)))
@@ -287,10 +298,17 @@ def parse_text(text: str, *, difficulties: list[int] | None = None) -> list[Char
                       metadata_json={k: v for k, v in fields.items() if not re.fullmatch(r"inote_[0-9]+", k)})
         parser = ChartParser(source)
         for metadata_key, start, end in metadata_tails:
+            scoped = re.fullmatch(r"(?:des|first|lv)_([0-9]+)", metadata_key)
+            if scoped and int(scoped[1]) != index:
+                continue
             parser.diagnose("UNEXPECTED_METADATA_TEXT", f"Unexpected continuation of scalar &{metadata_key}",
                             start, end, action="retain_in_diagnostic")
-        for duplicate, start, end in duplicate_spans:
+        for duplicate, start, end, identical in duplicate_spans:
+            scoped = re.fullmatch(r"(?:inote|des|first|lv)_([0-9]+)", duplicate)
+            if scoped and int(scoped[1]) != index:
+                continue
             parser.diagnose("DUPLICATE_FIELD", f"Duplicate &{duplicate}; last value used", start, end,
+                            severity="info" if identical else "error", incomplete=not identical,
                             action="use_last_field")
         if matches and text[:matches[0].start()].strip():
             preamble = parser.masked_token(0, matches[0].start())

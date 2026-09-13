@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .chart_type import detect_chart_type
-from .io import find_cover, parse_file, write_bundle
+from .io import find_cover, is_empty_chart, parse_file, write_bundle
 from .model import Chart, ParseResult
 
 
@@ -88,6 +88,8 @@ def parse_source_to_bundles(
             continue
         cover_path = find_cover(path.parent)
         for bundle in bundles:
+            if is_empty_chart(bundle):
+                continue
             record = ParseOnlyRecord(name, chart=bundle.chart, complete=bundle.complete)
             records.append(record)
             try:

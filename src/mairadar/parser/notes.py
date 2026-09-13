@@ -28,7 +28,9 @@ def _flags(token: Token) -> tuple[Token, dict]:
                 name = "break" if char == "b" else "mine"
                 if saw_shape:
                     if i != len(token.text) - 1 and token.text[i + 1] != "[":
-                        raise SyntaxProblem("INVALID_MODIFIER", "Slide b/m must precede a duration or end the path")
+                        if char == "b":
+                            continue  # Pinned NoteFlag.Detect ignores this Slide b.
+                        raise SyntaxProblem("INVALID_MODIFIER", "Slide m must precede a duration or end the path")
                     flags["slide_" + name] = True
                 else:
                     flags["is_" + name] = True
