@@ -15,9 +15,9 @@ from unittest.mock import patch
 from mairadar.analysis import ChartAnalyzer
 from mairadar.analysis.features import HoldFrequencyAnalyzer
 from mairadar.cli import main
-from mairadar.batch import analyze_directory
+from mairadar.batch import analyze_directory, analyze_source
 from mairadar.exporters import CsvExporter
-from mairadar.io import write_bundle
+from mairadar.io import parse_file, write_bundle
 from mairadar.parser import parse_text
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +41,39 @@ def read_rows(path):
 
 
 class BatchTests(unittest.TestCase):
+    def test_distribution_excludes_utage_by_default_and_explicit_index_includes_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "maidata.txt"
+            source.write_text(
+                "&title=Selection\n&inote_5=(120){4}1,2,E\n"
+                "&inote_7=(120){4}3,4,E\n"
+            )
+
+            default_raw = analyze_source(source)
+            explicit_raw = analyze_source(source, difficulties=[7])
+            included_raw = analyze_source(source, include_utage=True)
+            self.assertEqual([r.chart.difficulty_index for r in default_raw.records], [5])
+            self.assertEqual([r.chart.difficulty_index for r in explicit_raw.records], [7])
+            self.assertEqual(
+                [r.chart.difficulty_index for r in included_raw.records], [5, 7],
+            )
+
+            for parsed in parse_file(source):
+                write_bundle(parsed, root / "bundles")
+            default_bundles = analyze_directory(root / "bundles", include_cover=False)
+            explicit_bundles = analyze_directory(
+                root / "bundles", include_cover=False, difficulties=[7],
+            )
+            included_bundles = analyze_directory(
+                root / "bundles", include_cover=False, include_utage=True,
+            )
+            self.assertEqual([r.chart.difficulty_index for r in default_bundles.records], [5])
+            self.assertEqual([r.chart.difficulty_index for r in explicit_bundles.records], [7])
+            self.assertEqual(
+                [r.chart.difficulty_index for r in included_bundles.records], [5, 7],
+            )
+
     def test_metadata_raw_columns_cover_relative_path_and_offset(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

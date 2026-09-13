@@ -30,7 +30,7 @@ class ScoringTests(unittest.TestCase):
         }))
         self.assertEqual(scores.features["note"].value, 50)
         self.assertEqual(scores.features["peak"].value, 50)
-        self.assertEqual(scores.mapping_version, "provisional-note-peak-20260913-v1")
+        self.assertEqual(scores.mapping_version, "provisional-note-peak-20260913-v3")
 
     def test_two_segments_anchors_interiors_and_clamping(self):
         mapper = DummyPnMapper(p50=2, p100=6)

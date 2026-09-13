@@ -99,21 +99,41 @@ analyzer = ChartAnalyzer({"note_density": NoteDensityAnalyzer})
 
 ## Peak 爆发口径
 
-`PeakDensityAnalyzer` 复用整体物量的全部 Tap/Hold/Slide/Touch 补正规则，不重新解释
-parser 事件。候选中心窗宽 1.5 秒，起点从谱面时间 0 开始每 0.5 秒移动一次；每个候选
-同时读取其左侧、中心和右侧三个互不重叠的 1.5 秒窗口：
+`PeakDensityAnalyzer` 复用整体物量的 Hold 长短判定、Slide 归组和 Touch 邻接归组，但使用
+独立的爆发权重：每个 Slide 组固定为 1，不按几何长度增加；每个 Touch/TouchHold 组为
+0.5。候选中心窗宽 1.5 秒，起点从谱面时间 0 开始每 0.5 秒移动一次；每个候选同时读取
+其左侧、中心和右侧三个互不重叠的 1.5 秒窗口：
 
 ```text
 L(s) = density([s-1.5, s))
 C(s) = density([s, s+1.5))
 R(s) = density([s+1.5, s+3.0))
 
-peak_raw = max_s(0.2 * L(s) + 0.6 * C(s) + 0.2 * R(s))
+q(s) = 0.2 * L(s) + 0.6 * C(s) + 0.2 * R(s)
 ```
 
-谱面边界外按零物量处理。直接最大化三窗加权值，因此持续 4.5 秒的高密区可以超过
-密度略高但孤立的单窗尖峰；0.5 秒步长也降低了爆发刚好落在固定 1.5 秒边界两侧时的
-切分敏感性。实现使用排序后的补正物量点和前缀和查询窗口，不复制跨窗口事件。
+谱面边界外按零物量处理。候选按 `q(s)` 从高到低选择；每个候选覆盖
+`[s-1.5, s+3.0)`，与已经入选的 4.5 秒区间重叠时跳过，最多取得三个互不重叠的峰
+`p1 >= p2 >= p3`。不足三个时以零补齐：
+
+```text
+peak_raw = 0.5 * p1 + 0.3 * p2 + 0.2 * p3
+```
+
+因此一次孤立尖峰只能取得其局部峰值的 50%，反复出现的爆发才会补足其余权重。
+0.5 秒步长降低了爆发落在固定 1.5 秒边界两侧时的切分敏感性。实现使用排序后的补正
+物量点和前缀和查询窗口，不复制跨窗口事件。
+
+Peak 还识别外键 Tap/Hold（包括 Slide 星星头）组成的扫键。按全局有理拍轴排序后，只有
+非同时、相邻键位、方向相同且拍间隔完全一致的连续序列才会延长；方向变化、非相邻键或
+同拍多键会断开当前序列。设物件是当前扫键的第 `n` 个，则：
+
+```text
+adjusted_weight(n) = base_weight / log2(max(2, n - 2))
+```
+
+前四个权重不变；第五个除以 `log2(3)`，第六个除以 2，之后继续对数衰减。这里使用
+`max(2, n-2)`，因为写成 `min` 会让第五个以后的除数恒为 1，无法产生预期衰减。
 
 ## 统一 CLI 与模式
 
@@ -137,11 +157,11 @@ python scripts/mairadar.py --mode parse_only --input data/raw --output data/pars
 ```
 
 需要 Python 3.11+。`--choose` 延迟加载 tkinter 打开输入目录选择器；没有 tkinter 或 GUI
-时使用 `--input`。取消选择返回非零。`--difficulty` 和 `--chart-type` 仅供 full 与
-parse_only 使用。analysis 不接受 --output，其他模式必须提供 --output；`--format` 只作用
-于会产生评分报告的 full 与 analysis_score。
+时使用 `--input`。取消选择返回非零。`--difficulty` 可用于所有模式，`--chart-type` 仅供
+full 与 parse_only 使用。analysis 不接受 --output，其他模式必须提供 --output；`--format`
+只作用于会产生评分报告的 full 与 analysis_score。
 
-full 对目录递归发现 maidata.txt、majdata.txt 和 .simai；解析一次后直接把内存事件交给分析器，不导出或重新读取中间 bundle。单个文件内的不同难度分别输出报告行。类型优先使用 --chart-type、显式 metadata，缺失时由解析后的独立 DX 检测器补全。
+full 对目录递归发现 maidata.txt、majdata.txt 和 .simai；解析一次后直接把内存事件交给分析器，不导出或重新读取中间 bundle。分布分析默认排除 `difficulty_index=7` 的宴谱；使用 `--include-utage` 可在默认普通谱集合上纳入宴谱，显式 `--difficulty 7` 则只选择宴谱。类型优先使用 --chart-type、显式 metadata，缺失时由解析后的独立 DX 检测器补全。
 
 批处理跳过空正文、纯注释及只有时间指令/休止而没有物件的谱面，parse_only 也不导出这些空包。含非法物件或其他实质错误的谱面仍返回失败；显式请求不存在的难度仍报告 MISSING_CHART。纯文本 parser 保留原有空谱诊断，跳过逻辑位于外围批处理层。
 
@@ -150,7 +170,7 @@ parse_only 使用同样的原始文件发现、难度选择和类型优先级，
 它不导入 analysis 或 scoring 实现。不完整谱面和单文件失败不会阻断其他谱面，但批量结果
 返回非零。纯解析和事件 bundle 导出也继续支持 parse_file / write_bundle 库 API。
 
-analysis 和 analysis_score 将根目录的每个直接子文件夹作为现有 CSV bundle 读取，不递归，也不自动发现 maidata。直接子文件忽略。损坏、缺少文件或不完整的 bundle 均保留结果行；其他目录继续处理。空输入、批量部分失败、映射失败和导出失败均返回非零。
+analysis 和 analysis_score 将根目录的每个直接子文件夹作为现有 CSV bundle 读取，不递归，也不自动发现 maidata；同样默认排除宴谱，并接受 `--include-utage` 或显式 `--difficulty`。直接子文件忽略。损坏、缺少文件或不完整的 bundle 均保留结果行；其他目录继续处理。空输入、批量部分失败、映射失败和导出失败均返回非零。
 
 analysis 的终端 JSON 每张谱面一行，包含 metadata、`analysis.features` 下各维的 data/success 和诊断；既可直接检查，也可由外部调用者消费。摘要和错误提示不混入 JSON 行。
 
@@ -220,7 +240,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-note-peak-20260913-v1",
+            mapping_version="provisional-note-peak-20260913-v3",
         )
 
 TRANSFORMER = DefaultScoreTransformer
@@ -257,7 +277,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
-ScoreResult 独立存储标准分数与 mapping_version。默认版本为 `provisional-note-peak-20260913-v1`；后续调整指标或参数时应同步维护版本。pipeline 校验映射输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
+ScoreResult 独立存储标准分数与 mapping_version。默认版本为 `provisional-note-peak-20260913-v3`；后续调整指标或参数时应同步维护版本。pipeline 校验映射输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 
 pipeline 将评分输出附在 AnalysisRecord.scores 上，导出器追加 `<feature>_score` 并保留映射诊断和版本。映射全部失败时仍保留分数列，以空值表示失败。直接调用导出组件输出原始分析时，可省略评分结果及标准分数列。
 

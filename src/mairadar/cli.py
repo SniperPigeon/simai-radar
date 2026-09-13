@@ -52,7 +52,11 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
     )
     parser.add_argument(
         "--difficulty", "-d", type=_difficulty, nargs="+",
-        help="full/parse_only: inote indexes",
+        help="chart indexes; distribution modes exclude Utage/7 unless explicitly selected",
+    )
+    parser.add_argument(
+        "--include-utage", action="store_true",
+        help="include Utage/7 alongside ordinary charts in distribution modes",
     )
     parser.add_argument(
         "--chart-type", choices=("dx", "sd"),
@@ -83,6 +87,7 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
             args.mode, args.input, output=args.output, analyzer=analyzer,
             transformer=transformer, exporter=exporter,
             difficulties=args.difficulty, chart_type=args.chart_type,
+            include_utage=args.include_utage,
         )
         if args.mode == "parse_only":
             print(

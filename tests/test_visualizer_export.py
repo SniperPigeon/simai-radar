@@ -81,6 +81,7 @@ class VisualizerExporterTests(unittest.TestCase):
                 "full",
                 root / "raw",
                 output=root / "site",
+                difficulties=[2, 7],
                 transformer=TestMapper(),
                 exporter=VisualizerExporter(),
             )

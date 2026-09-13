@@ -56,12 +56,13 @@ def run_pipeline(
     analyzer: ChartAnalyzer | None = None, transformer: ScoreTransformer | None = None,
     exporter: ReportExporter | None = None,
     difficulties: list[int] | None = None, chart_type: str | None = None,
+    include_utage: bool = False,
 ) -> tuple[BatchResult | ParseOnlyResult, ExportReport | None]:
     """analysis returns raw results only; scoring modes require an explicit mapper."""
     if mode not in MODES:
         raise ValueError(f"Unknown mode: {mode}")
-    if mode not in RAW_MODES and (difficulties is not None or chart_type is not None):
-        raise ValueError("Difficulty and chart type options are only supported in raw-input modes")
+    if mode not in RAW_MODES and chart_type is not None:
+        raise ValueError("Chart type override is only supported in raw-input modes")
     if mode == "analysis":
         if output is not None:
             raise ValueError("analysis does not export; omit --output")
@@ -95,9 +96,21 @@ def run_pipeline(
 
     analyzer = analyzer if analyzer is not None else ChartAnalyzer()
     if mode == "full":
-        batch = analyze_source(source, analyzer=analyzer, difficulties=difficulties, chart_type=chart_type)
+        batch = analyze_source(
+            source,
+            analyzer=analyzer,
+            difficulties=difficulties,
+            chart_type=chart_type,
+            include_utage=include_utage,
+        )
     else:
-        batch = analyze_directory(source, analyzer=analyzer, include_cover=mode != "analysis")
+        batch = analyze_directory(
+            source,
+            analyzer=analyzer,
+            include_cover=mode != "analysis",
+            difficulties=difficulties,
+            include_utage=include_utage,
+        )
     if not batch.records:
         raise ValueError("No raw chart files or child bundle directories found")
     if mode == "analysis":

@@ -84,10 +84,48 @@ mairadar --mode full --input data/raw --output outputs/full --difficulty 5 6 --c
 
 `full` 和 `parse_only` 会递归发现 `maidata.txt`、`majdata.txt` 和 `.simai`。
 `full` 只解析一次并在内存中继续分析，不会先生成中间 bundle；`parse_only` 到写入事件
-bundle 为止，不构造分析器或映射器。`--difficulty` 与 `--chart-type` 仅用于这两个原始输入
-模式；DX/SD 只读取明确 metadata、调用方参数或独立的解析后检测，不会根据曲名猜类型。
+bundle 为止，不构造分析器或映射器。分布分析模式默认排除 7 号宴谱；使用
+`--include-utage` 可在普通谱基础上纳入宴谱，显式 `--difficulty 7` 则只选择宴谱。
+`--difficulty` 可用于所有模式，
+`--chart-type` 仅用于两个原始输入模式；DX/SD 不会根据曲名猜类型。
 
 批处理中一张谱面失败不会阻止其余谱面继续处理。只要存在解析不完整、分析/映射失败、bundle 损坏或导出失败，进程就会返回非零状态，并把细节保留在诊断中。
+
+### 推荐的两阶段分析工作流
+
+调试 analyser 或评分映射时，不需要每次重新解析原始 Simai。第一次先把原始谱面解析为
+可校验的事件 bundle：
+
+```bash
+python scripts/mairadar.py \
+  --mode parse_only \
+  --input data/raw \
+  --output data/parsed-v03
+```
+
+之后修改 analyser 或映射参数，可以直接读取这些 bundle，重新分析并生成 visualizer：
+
+```bash
+python scripts/mairadar.py \
+  --mode analysis_score \
+  --format visualizer \
+  --input data/parsed-v03 \
+  --output outputs/visualizer-new
+```
+
+若只想检查 analyser 的原始指标，不执行评分映射或生成报告：
+
+```bash
+python scripts/mairadar.py \
+  --mode analysis \
+  --input data/parsed-v03
+```
+
+`analysis` 与 `analysis_score` 不读取原始 Simai。只修改 Note、Peak 等分析算法或映射参数时，
+可以持续复用同一批 bundle；修改 parser 或事件 schema 后才需要重新执行 `parse_only`。
+现有旧版 `events-0.2` bundle 不能交给当前 `events-0.3` reader，需要从原始谱面重新生成。
+报告输出必须是新目录或空目录。分布分析默认排除宴谱；需要纳入时添加
+`--include-utage`。
 
 ## 解析器 API
 

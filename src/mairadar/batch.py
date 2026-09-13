@@ -10,6 +10,9 @@ from .model import ChartBundle, ParseResult
 from .reporting import AnalysisRecord
 
 
+UTAGE_DIFFICULTY_INDEX = 7
+
+
 @dataclass
 class BatchResult:
     feature_names: tuple[str, ...]
@@ -30,12 +33,27 @@ def _analyze_bundle(bundle: ChartBundle, analyzer: ChartAnalyzer):
     return analyzer.analyze(parsed)
 
 
+def _include_in_distribution(
+    index: int | None,
+    difficulties: list[int] | None,
+    include_utage: bool,
+) -> bool:
+    if difficulties is None:
+        return include_utage or index != UTAGE_DIFFICULTY_INDEX
+    return index in difficulties
+
+
 def analyze_directory(
     root: str | Path, *, analyzer: ChartAnalyzer | None = None, include_cover: bool = True,
+    difficulties: list[int] | None = None, include_utage: bool = False,
 ) -> BatchResult:
     root = Path(root)
     if not root.is_dir():
         raise ValueError(f"Input must be a bundle root directory: {root}")
+    if difficulties is not None and any(
+        type(index) is not int or index < 1 for index in difficulties
+    ):
+        raise ValueError("difficulty indexes must be positive integers")
     analyzer = analyzer if analyzer is not None else ChartAnalyzer()
     records = []
     for folder in sorted(root.iterdir()):
@@ -45,6 +63,11 @@ def analyze_directory(
         records.append(record)
         try:
             bundle = read_bundle(folder)
+            if not _include_in_distribution(
+                bundle.chart.difficulty_index, difficulties, include_utage,
+            ):
+                records.pop()
+                continue
             if is_empty_chart(bundle):
                 records.pop()
                 continue
@@ -60,6 +83,7 @@ def analyze_directory(
 def analyze_source(
     source: str | Path, *, analyzer: ChartAnalyzer | None = None,
     difficulties: list[int] | None = None, chart_type: str | None = None,
+    include_utage: bool = False,
 ) -> BatchResult:
     """Parse raw files once and analyze in memory, without intermediate bundles."""
     source = Path(source)
@@ -86,6 +110,10 @@ def analyze_source(
             ))
             continue
         for bundle in bundles:
+            if not _include_in_distribution(
+                bundle.chart.difficulty_index, difficulties, include_utage,
+            ):
+                continue
             if is_empty_chart(bundle):
                 continue
             record = AnalysisRecord(name, chart=bundle.chart)

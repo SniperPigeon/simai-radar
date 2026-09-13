@@ -261,7 +261,7 @@ class PipelineTests(unittest.TestCase):
             for mode, options in (
                 ("unknown", {}),
                 ("analysis", {"output": root / "out"}),
-                ("analysis", {"difficulties": [5]}),
+                ("analysis", {"chart_type": "dx"}),
                 ("analysis_score", {}),
                 ("parse_only", {}),
                 ("full", {"output": root / "raw" / "out"}),
@@ -355,7 +355,7 @@ class PipelineTests(unittest.TestCase):
                     for row in rows
                 ))
                 self.assertTrue(all(json.loads(row["diagnostics"])["scoring"]["mapping_version"]
-                                    == "provisional-note-peak-20260913-v1" for row in rows))
+                                    == "provisional-note-peak-20260913-v3" for row in rows))
                 self.assertTrue(all((root / mode / row["cover_path"]).is_file() for row in rows))
 
 

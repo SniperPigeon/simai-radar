@@ -164,7 +164,11 @@ def _cross_time_components(
     ]
 
 
-def _touch_workload_points(events: list[Event]) -> list[tuple[float, int]]:
+def _touch_workload_points(
+    events: list[Event],
+    *,
+    group_weight: float = 1.0,
+) -> list[tuple[float, float]]:
     """Collapse spatial neighbors, then pair neighbors across at most two beats."""
     if not events:
         return []
@@ -185,11 +189,11 @@ def _touch_workload_points(events: list[Event]) -> list[tuple[float, int]]:
                 continue
             for group in _cross_time_components(left, right):
                 used.update(item.component_id for item in group)
-                output.append((min(item.time_s for item in group), 1))
+                output.append((min(item.time_s for item in group), group_weight))
 
     for components in by_beat.values():
         output.extend(
-            (component.time_s, 1)
+            (component.time_s, group_weight)
             for component in components
             if component.component_id not in used
         )
@@ -205,7 +209,11 @@ def _beat_duration(event: Event) -> Fraction:
     return duration
 
 
-def _slide_workload_points(events: list[Event]) -> list[tuple[float, int]]:
+def _slide_workload_points(
+    events: list[Event],
+    *,
+    length_unit: int | None = SLIDE_LENGTH_UNIT,
+) -> list[tuple[float, float]]:
     groups = defaultdict(list)
     for event in events:
         if event.head_event_id is not None:
@@ -224,14 +232,16 @@ def _slide_workload_points(events: list[Event]) -> list[tuple[float, int]]:
         )
         if total_length <= 0:
             raise ValueError("Slide group has no positive geometric length")
-        output.append((
-            min(event.start_time_s for event in group),
-            (total_length + SLIDE_LENGTH_UNIT - 1) // SLIDE_LENGTH_UNIT,
-        ))
+        weight = (
+            1.0
+            if length_unit is None
+            else (total_length + length_unit - 1) // length_unit
+        )
+        output.append((min(event.start_time_s for event in group), weight))
     return output
 
 
-def corrected_workload_points(events: tuple[Event, ...]) -> list[tuple[float, int]]:
+def corrected_workload_points(events: tuple[Event, ...]) -> list[tuple[float, float]]:
     """Return corrected onset-time workloads shared by Note and Peak."""
     output = []
     slides = []

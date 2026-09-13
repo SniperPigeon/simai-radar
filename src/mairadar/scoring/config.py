@@ -15,7 +15,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-note-peak-20260913-v1",
+            mapping_version="provisional-note-peak-20260913-v3",
         )
 
 
