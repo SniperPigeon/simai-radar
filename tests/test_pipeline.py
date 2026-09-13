@@ -351,11 +351,13 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual([float(row["hold_raw"]) for row in rows], [2, 1])
                 self.assertEqual([float(row["hold_score"]) for row in rows], [200, 50])
                 self.assertTrue(all(
-                    row["note_raw"] and row["note_score"] and row["peak_raw"] and row["peak_score"]
+                    row["note_raw"] and row["note_score"]
+                    and row["peak_raw"] and row["peak_score"]
+                    and row["slide_raw"] and row["slide_score"]
                     for row in rows
                 ))
                 self.assertTrue(all(json.loads(row["diagnostics"])["scoring"]["mapping_version"]
-                                    == "provisional-note-peak-20260913-v3" for row in rows))
+                                    == "provisional-slide-20260913-v8" for row in rows))
                 self.assertTrue(all((root / mode / row["cover_path"]).is_file() for row in rows))
 
 

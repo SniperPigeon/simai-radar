@@ -1,6 +1,9 @@
 # 谱面分析 MVP
 
-核心按显式配置调用独立维度分析器，返回原始指标；当前默认配置包含用于验证流程的 HOLD 频率、整体物量和 Peak 爆发。评分层按 feature 独立配置映射器：HOLD 仍使用 dummy 锚点，整体物量暂用 2026-09-13 观察批次的中位数与 P99，Peak 使用宽松的探索锚点，以便生成 visualizer 后继续检查分布；这些都不代表官方校准。
+核心按显式配置调用独立维度分析器，返回原始指标；当前默认配置包含用于验证流程的 HOLD
+频率、整体物量、Peak 爆发和 Slide 压力。评分层按 feature 独立配置映射器：HOLD 仍使用
+dummy 锚点，整体物量暂用 2026-09-13 观察批次的中位数与 P99，Peak 使用宽松的探索
+锚点，Slide 使用有限普通谱抽样的取整探索锚点；这些都不代表官方校准。
 
 ## 直接调用
 
@@ -135,6 +138,82 @@ adjusted_weight(n) = base_weight / log2(max(2, n - 2))
 前四个权重不变；第五个除以 `log2(3)`，第六个除以 2，之后继续对数衰减。这里使用
 `max(2, n-2)`，因为写成 `min` 会让第五个以后的除数恒为 1，无法产生预期衰减。
 
+## Slide 压力口径
+
+`SlidePressureAnalyzer` 只读取 events-0.3 事件，不重新扫描 Simai。实现、导出列和界面统一
+使用 `slide`，不使用口语化的星星命名。共享同一 `head_event_id` 的路径为一个 Slide 组；
+无头分支按相同来源声明分组。
+
+对组 `i` 中每条路径 `p`，令 `L_p` 为全部段的 `bar_count` 之和：
+
+```text
+M_p = sqrt(L_p / 20)
+M_i = sum(M_p for p in group_i)
+```
+
+20 bar 是首版固定参考。自体压力不读取速度，避免 `v=L/T` 再乘长度平方根造成长度实际按
+`L^1.5` 重复贡献。零持续时间路径仍按输入异常直接跳过；同组其他有效分支继续计算，整组
+均无有效路径时跳过整组。不会为这种路径生成任意截断高分，也不会仅因此令整张谱的
+Slide 维失败。
+
+每个 Slide 组的启动干扰使用包含两端的 `[declare_time, latest_launch_time]`。共享头的分支
+可能分别启动，因此窗口保持到最后一个分支启动。排除本组自己的头与启动动作；普通
+Tap/Hold onset 和其他 Slide 启动动作权重为 1，同拍相邻 Touch/TouchHold 连通组权重为
+1.5。Touch 不跨时间合并，避免把恰在启动点的动作移动到窗口之外。启动时刻的其他物件
+明确计入。同一物件若同时干扰多个待启动 Slide，可分别进入各自的 `Q_i`：
+
+```text
+Q_i = sum(weight(e) for declare_i <= time(e) <= launch_i, excluding group_i)
+P_i = M_i + 0.5 * Q_i
+```
+
+Slide 按声明拍排序，声明秒时间差不超过 `1/60` 秒的 Slide 先形成同一 onset cluster，
+cluster 内不产生 cadence 边。这会把 `{9999}` 等极细分拍编码的准同时 Slide 视为同一
+次人体动作，避免 `0.5 / delta_time` 在零附近发散。相邻 cluster 只要满足
+`0 < delta_beat <= 1` 就属于同一个最大连续段，因此四分、附点八分、八分、三连音和更快
+间隔都连续；夹杂的非 Slide 物件不打断。声明拍有头时取关联头的 `start_beat`；无头时由
+`slide_declare_time_s` 和 timing/BPM 事件回算，不重新读取原文。
+
+一段 `r` 有 `n_r` 个 Slide 组、`m_r` 个 onset cluster。实际秒间隔而非 BPM 标签确定速度：
+
+```text
+A_r = 1                                                   if m_r == 1
+A_r = mean(0.5 / delta_time_k for adjacent clusters k)   if m_r >= 2
+```
+
+`G_r` 是第一至最后声明之间、不属于本段自身且未进入任何启动窗口的剩余夹杂物量。它只
+补充窗口外的段内上下文；已经进入一个或多个 `Q_i` 的物件不再进入 `G_r`：
+
+```text
+C_r = (sum(Q_i for i in r) + G_r) / n_r
+S_r = mean(M_i for i in r) * A_r + 0.5 * C_r
+```
+
+`C_r` 作为加权加项，不再被 cadence 乘算。连续段前 8 个 Slide 完整计数，之后有效长度
+按自然对数增长：
+
+```text
+n_eff_r = n_r                                            if n_r <= 8
+n_eff_r = 8 + 8 * ln(1 + (n_r - 8) / 8)                 if n_r > 8
+R_r = sqrt(n_eff_r) * S_r
+```
+
+`S_r` 是单位 Slide 的段强度，`R_r` 是使用 log 软上限后的段压力。全局不取最大段，而把
+每段的平方压力全部纳入：
+
+```text
+D = max(chart_end_time_s, last_event_end_s or 0)
+I_slide = sqrt(sum(n_eff_r * S_r**2) / sum(n_eff_r))
+rho_slide_eff = 60 * sum(n_eff_r) / D
+rho_slide_actual = 60 * sum(n_r) / D
+slide_raw = I_slide * sqrt(rho_slide_eff)
+          = sqrt((60 / D) * sum(R_r**2))
+```
+
+正时长无 Slide 谱面得到 0，零时长不可用。`slide_pressure_breakdown` 可供测试和实验代码
+检查每段的 `M/C/A/S/R`、实际/有效 Slide 数、全局活跃强度与实际/有效每分钟 Slide
+密度；默认 `FeatureResult` 仍只输出 `slide_raw`，不扩展通用结果契约。
+
 ## 统一 CLI 与模式
 
 统一入口为 `scripts/mairadar.py`，安装包后使用 `mairadar`，或设置 PYTHONPATH=src 后使用
@@ -234,19 +313,24 @@ FEATURE_MAPPERS = {
     "hold": DummyPnMapper(p50=1.0, p100=2.0),
     "note": DummyPnMapper(p50=3.540077197, p100=9.328672541),
     "peak": DummyPnMapper(p50=10.0, p100=20.0),
+    "slide": DummyPnMapper(p50=4.6, p100=27.0),
 }
 
 class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-note-peak-20260913-v3",
+            mapping_version="provisional-slide-20260913-v8",
         )
 
 TRANSFORMER = DefaultScoreTransformer
 ```
 
-p50、p100 是原始指标的数值阈值，要求 `0 < p50 < p100` 且均为有限数值。默认 HOLD 的 1、2 仅是 dummy 参数；整体物量的 3.540077197、9.328672541 分别来自当前 7512 张观察样本的中位数和 P99；Peak 的 10、20 是首轮观察用宽松锚点。它们都是固定的临时配置，后续批次不会自动重新拟合。
+p50、p100 是原始指标的数值阈值，要求 `0 < p50 < p100` 且均为有限数值。默认 HOLD 的
+1、2 仅是 dummy 参数；整体物量的 3.540077197、9.328672541 分别来自当前 7512 张观察
+样本的中位数和 P99；Peak 的 10、20 是首轮观察用宽松锚点；Slide 的 4.6、27 来自当前
+7326 张非宴谱的约 4.64 中位数和 26.59 P99 后取整，只用于首轮实现检查。它们都是
+固定的临时配置，后续批次不会自动重新拟合。
 
 DummyPnMapper 使用两段线性变换：
 
@@ -257,7 +341,10 @@ p50 < x < p100:   50 + 150 * (x - p50) / (p100 - p50)
 x >= p100:        200
 ```
 
-即 0→0、P50→50、P100→200，范围外截断到 0–200，保留浮点分数、不取整。默认 HOLD 示例：0.5→25、1→50、1.5→125、2→200；整体物量在当前临时映射下 3.540077197→50、9.328672541→200；Peak 为 10→50、20→200。NaN、无穷值及无效阈值明确报错。
+即 0→0、P50→50、P100→200，范围外截断到 0–200，保留浮点分数、不取整。默认 HOLD
+示例：0.5→25、1→50、1.5→125、2→200；整体物量在当前临时映射下
+3.540077197→50、9.328672541→200；Peak 为 10→50、20→200；Slide 为
+4.6→50、27→200。NaN、无穷值及无效阈值明确报错。
 
 同一映射器类可以配置不同阈值，也可以替换为其他实现 map 的类。调用方可以直接注入自己的配置：
 
@@ -277,7 +364,10 @@ exit_code = max(batch.exit_code, report.exit_code)
 
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
-ScoreResult 独立存储标准分数与 mapping_version。默认版本为 `provisional-note-peak-20260913-v3`；后续调整指标或参数时应同步维护版本。pipeline 校验映射输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
+ScoreResult 独立存储标准分数与 mapping_version。默认版本为
+`provisional-slide-20260913-v8`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
+设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 
 pipeline 将评分输出附在 AnalysisRecord.scores 上，导出器追加 `<feature>_score` 并保留映射诊断和版本。映射全部失败时仍保留分数列，以空值表示失败。直接调用导出组件输出原始分析时，可省略评分结果及标准分数列。
 
