@@ -350,9 +350,12 @@ class PipelineTests(unittest.TestCase):
                     rows = list(csv.DictReader(stream))
                 self.assertEqual([float(row["hold_raw"]) for row in rows], [2, 1])
                 self.assertEqual([float(row["hold_score"]) for row in rows], [200, 50])
-                self.assertTrue(all(row["note_raw"] and row["note_score"] for row in rows))
+                self.assertTrue(all(
+                    row["note_raw"] and row["note_score"] and row["peak_raw"] and row["peak_score"]
+                    for row in rows
+                ))
                 self.assertTrue(all(json.loads(row["diagnostics"])["scoring"]["mapping_version"]
-                                    == "provisional-note-p50-p99-20260913-v1" for row in rows))
+                                    == "provisional-note-peak-20260913-v1" for row in rows))
                 self.assertTrue(all((root / mode / row["cover_path"]).is_file() for row in rows))
 
 

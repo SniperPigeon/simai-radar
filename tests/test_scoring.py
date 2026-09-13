@@ -21,10 +21,16 @@ class ScoringTests(unittest.TestCase):
     def test_default_note_mapping_uses_versioned_observation_anchors(self):
         note = FEATURE_MAPPERS["note"]
         self.assertEqual((note.p50, note.p100), (3.540077197, 9.328672541))
+        peak = FEATURE_MAPPERS["peak"]
+        self.assertEqual((peak.p50, peak.p100), (10.0, 20.0))
         transformer = TRANSFORMER()
-        scores = transformer.transform(AnalysisResult({"note": FeatureResult(note.p50)}))
+        scores = transformer.transform(AnalysisResult({
+            "note": FeatureResult(note.p50),
+            "peak": FeatureResult(peak.p50),
+        }))
         self.assertEqual(scores.features["note"].value, 50)
-        self.assertEqual(scores.mapping_version, "provisional-note-p50-p99-20260913-v1")
+        self.assertEqual(scores.features["peak"].value, 50)
+        self.assertEqual(scores.mapping_version, "provisional-note-peak-20260913-v1")
 
     def test_two_segments_anchors_interiors_and_clamping(self):
         mapper = DummyPnMapper(p50=2, p100=6)

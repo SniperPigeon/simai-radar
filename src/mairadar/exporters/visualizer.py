@@ -37,6 +37,7 @@ class DimensionPresentation:
 DIMENSION_PRESENTATION = {
     "hold": DimensionPresentation("Hold频率", "Hold"),
     "note": DimensionPresentation("总体物量", "Note"),
+    "peak": DimensionPresentation("Peak爆发", "Peak"),
 }
 
 

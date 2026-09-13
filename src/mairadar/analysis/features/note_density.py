@@ -231,7 +231,8 @@ def _slide_workload_points(events: list[Event]) -> list[tuple[float, int]]:
     return output
 
 
-def _workload_points(events: tuple[Event, ...]) -> list[tuple[float, int]]:
+def corrected_workload_points(events: tuple[Event, ...]) -> list[tuple[float, int]]:
+    """Return corrected onset-time workloads shared by Note and Peak."""
     output = []
     slides = []
     touches = []
@@ -268,7 +269,7 @@ class NoteDensityAnalyzer:
 
         count = _window_count(duration)
         workload = [0] * count
-        for time_s, weight in _workload_points(context.events):
+        for time_s, weight in corrected_workload_points(context.events):
             # The final window includes an event exactly at the chart endpoint.
             index = min(math.floor(time_s / WINDOW_SECONDS), count - 1)
             workload[index] += weight

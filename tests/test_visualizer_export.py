@@ -106,6 +106,12 @@ class VisualizerExporterTests(unittest.TestCase):
                     "shortLabel": "Note",
                     "color": "#ff9f1c",
                 },
+                {
+                    "key": "peak",
+                    "label": "Peak爆发",
+                    "shortLabel": "Peak",
+                    "color": "#2a9d8f",
+                },
             ])
             self.assertEqual(payload["stats"]["songCount"], 1)
             self.assertEqual(payload["stats"]["chartCount"], 2)

@@ -313,6 +313,7 @@ analyzer = ChartAnalyzer({"note_density": NoteDensityAnalyzer})
 FEATURES = {
     "hold": HoldFrequencyAnalyzer,
     "note": NoteDensityAnalyzer,
+    "peak": PeakDensityAnalyzer,
 }
 ```
 

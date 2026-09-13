@@ -1,6 +1,6 @@
 # 谱面分析 MVP
 
-核心按显式配置调用独立维度分析器，返回原始指标；当前默认配置包含用于验证流程的 HOLD 频率和整体物量。评分层按 feature 独立配置映射器：HOLD 仍使用 dummy 锚点，整体物量暂用 2026-09-13 观察批次的中位数与 P99，以便生成 visualizer 后继续检查分布；两者都不代表官方校准。
+核心按显式配置调用独立维度分析器，返回原始指标；当前默认配置包含用于验证流程的 HOLD 频率、整体物量和 Peak 爆发。评分层按 feature 独立配置映射器：HOLD 仍使用 dummy 锚点，整体物量暂用 2026-09-13 观察批次的中位数与 P99，Peak 使用宽松的探索锚点，以便生成 visualizer 后继续检查分布；这些都不代表官方校准。
 
 ## 直接调用
 
@@ -96,6 +96,24 @@ from mairadar.analysis.features import NoteDensityAnalyzer
 
 analyzer = ChartAnalyzer({"note_density": NoteDensityAnalyzer})
 ```
+
+## Peak 爆发口径
+
+`PeakDensityAnalyzer` 复用整体物量的全部 Tap/Hold/Slide/Touch 补正规则，不重新解释
+parser 事件。候选中心窗宽 1.5 秒，起点从谱面时间 0 开始每 0.5 秒移动一次；每个候选
+同时读取其左侧、中心和右侧三个互不重叠的 1.5 秒窗口：
+
+```text
+L(s) = density([s-1.5, s))
+C(s) = density([s, s+1.5))
+R(s) = density([s+1.5, s+3.0))
+
+peak_raw = max_s(0.2 * L(s) + 0.6 * C(s) + 0.2 * R(s))
+```
+
+谱面边界外按零物量处理。直接最大化三窗加权值，因此持续 4.5 秒的高密区可以超过
+密度略高但孤立的单窗尖峰；0.5 秒步长也降低了爆发刚好落在固定 1.5 秒边界两侧时的
+切分敏感性。实现使用排序后的补正物量点和前缀和查询窗口，不复制跨窗口事件。
 
 ## 统一 CLI 与模式
 
@@ -195,19 +213,20 @@ CsvExporter 接收 AnalysisRecord 序列，不发现目录、不运行分析器�
 FEATURE_MAPPERS = {
     "hold": DummyPnMapper(p50=1.0, p100=2.0),
     "note": DummyPnMapper(p50=3.540077197, p100=9.328672541),
+    "peak": DummyPnMapper(p50=10.0, p100=20.0),
 }
 
 class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-note-p50-p99-20260913-v1",
+            mapping_version="provisional-note-peak-20260913-v1",
         )
 
 TRANSFORMER = DefaultScoreTransformer
 ```
 
-p50、p100 是原始指标的数值阈值，要求 `0 < p50 < p100` 且均为有限数值。默认 HOLD 的 1、2 仅是 dummy 参数；整体物量的 3.540077197、9.328672541 分别来自当前 7512 张观察样本的中位数和 P99。它们都是固定的临时配置，后续批次不会自动重新拟合。
+p50、p100 是原始指标的数值阈值，要求 `0 < p50 < p100` 且均为有限数值。默认 HOLD 的 1、2 仅是 dummy 参数；整体物量的 3.540077197、9.328672541 分别来自当前 7512 张观察样本的中位数和 P99；Peak 的 10、20 是首轮观察用宽松锚点。它们都是固定的临时配置，后续批次不会自动重新拟合。
 
 DummyPnMapper 使用两段线性变换：
 
@@ -218,7 +237,7 @@ p50 < x < p100:   50 + 150 * (x - p50) / (p100 - p50)
 x >= p100:        200
 ```
 
-即 0→0、P50→50、P100→200，范围外截断到 0–200，保留浮点分数、不取整。默认 HOLD 示例：0.5→25、1→50、1.5→125、2→200；整体物量在当前临时映射下 3.540077197→50、9.328672541→200。NaN、无穷值及无效阈值明确报错。
+即 0→0、P50→50、P100→200，范围外截断到 0–200，保留浮点分数、不取整。默认 HOLD 示例：0.5→25、1→50、1.5→125、2→200；整体物量在当前临时映射下 3.540077197→50、9.328672541→200；Peak 为 10→50、20→200。NaN、无穷值及无效阈值明确报错。
 
 同一映射器类可以配置不同阈值，也可以替换为其他实现 map 的类。调用方可以直接注入自己的配置：
 
@@ -238,7 +257,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
-ScoreResult 独立存储标准分数与 mapping_version。默认版本为 `provisional-note-p50-p99-20260913-v1`；后续调整指标或参数时应同步维护版本。pipeline 校验映射输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
+ScoreResult 独立存储标准分数与 mapping_version。默认版本为 `provisional-note-peak-20260913-v1`；后续调整指标或参数时应同步维护版本。pipeline 校验映射输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 
 pipeline 将评分输出附在 AnalysisRecord.scores 上，导出器追加 `<feature>_score` 并保留映射诊断和版本。映射全部失败时仍保留分数列，以空值表示失败。直接调用导出组件输出原始分析时，可省略评分结果及标准分数列。
 
