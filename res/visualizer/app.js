@@ -4,6 +4,7 @@ const DEFAULT_DISTRIBUTION_PERCENTILES = Object.freeze([30, 67, 85, 99]);
 const PERCENTILE_PRECISION = 3;
 const PERCENTILE_STEP = 10 ** -PERCENTILE_PRECISION;
 const MAX_DISTRIBUTION_PERCENTILE = 100 - PERCENTILE_STEP;
+const DISTRIBUTION_SCORE_ANCHORS = Object.freeze([50, 100, 150, 200]);
 
 const state = {
   data: null,
@@ -23,7 +24,8 @@ const state = {
   distributionKind: "all",
   distributionDifficulty: "all",
   distributionLevel: "all",
-  distributionPercentiles: [...DEFAULT_DISTRIBUTION_PERCENTILES],
+  distributionPercentilesByDimension: {},
+  clientMappedDimensions: new Set(),
 };
 
 const elements = {
@@ -151,6 +153,54 @@ function distributionValues() {
     .sort((left, right) => left - right);
 }
 
+function currentDistributionPercentiles() {
+  return state.distributionPercentilesByDimension[state.distributionDimension]
+    || [...DEFAULT_DISTRIBUTION_PERCENTILES];
+}
+
+function mapRawScore(rawValue, rawThresholds) {
+  if (!Number.isFinite(rawValue)) return null;
+  if (rawValue <= 0) return 0;
+  const rawAnchors = [0, ...rawThresholds];
+  const scoreAnchors = [0, ...DISTRIBUTION_SCORE_ANCHORS];
+  for (let index = 1; index < rawAnchors.length; index += 1) {
+    const upperRaw = rawAnchors[index];
+    if (rawValue > upperRaw) continue;
+    const lowerRaw = rawAnchors[index - 1];
+    const lowerScore = scoreAnchors[index - 1];
+    const upperScore = scoreAnchors[index];
+    if (upperRaw <= lowerRaw) return upperScore;
+    return lowerScore + (
+      (upperScore - lowerScore) * (rawValue - lowerRaw) / (upperRaw - lowerRaw)
+    );
+  }
+  return DISTRIBUTION_SCORE_ANCHORS.at(-1);
+}
+
+function refreshDominantDimension(chart) {
+  const available = state.data.dimensions.filter(
+    (dimension) => Number.isFinite(chart.scores?.[dimension.key]),
+  );
+  chart.dominantDimension = available.length
+    ? available.reduce((highest, dimension) =>
+        chart.scores[dimension.key] > chart.scores[highest.key] ? dimension : highest,
+      ).key
+    : null;
+}
+
+function applyDistributionMapping(values) {
+  const dimensionKey = state.distributionDimension;
+  if (!state.clientMappedDimensions.has(dimensionKey) || !values.length) return;
+  const rawThresholds = currentDistributionPercentiles().map(
+    (percent) => percentile(values, percent),
+  );
+  state.charts.forEach(({ chart }) => {
+    if (!chart.scores) chart.scores = {};
+    chart.scores[dimensionKey] = mapRawScore(chart.rawScores?.[dimensionKey], rawThresholds);
+    refreshDominantDimension(chart);
+  });
+}
+
 function renderDistributionDimensionTabs() {
   elements.distributionDimensionTabs.innerHTML = state.data.dimensions
     .map(
@@ -168,12 +218,12 @@ function renderDistributionDimensionTabs() {
 }
 
 function renderThresholdControls() {
-  elements.thresholdControls.innerHTML = state.distributionPercentiles
+  elements.thresholdControls.innerHTML = currentDistributionPercentiles()
     .map(
       (value, index) => `
         <label class="threshold-control" style="--threshold-color:var(--threshold-${index + 1})">
           <span class="threshold-control-heading">
-            <strong>T${index + 1}</strong>
+            <strong>T${index + 1} · ${DISTRIBUTION_SCORE_ANCHORS[index]} 分</strong>
             <span>P<output data-threshold-percent-output="${index}">${value}</output></span>
           </span>
           <span class="threshold-control-inputs">
@@ -187,7 +237,7 @@ function renderThresholdControls() {
 }
 
 function syncThresholdControls(values) {
-  state.distributionPercentiles.forEach((percent, index) => {
+  currentDistributionPercentiles().forEach((percent, index) => {
     document.querySelectorAll(`[data-threshold-index="${index}"]`).forEach((input) => {
       input.value = String(percent);
     });
@@ -201,12 +251,15 @@ function syncThresholdControls(values) {
 function setDistributionPercentile(index, rawValue) {
   const value = Number(rawValue);
   if (!Number.isFinite(value)) return;
-  const lower = index === 0 ? 1 : state.distributionPercentiles[index - 1] + PERCENTILE_STEP;
-  const upper = index === state.distributionPercentiles.length - 1
+  const percentiles = currentDistributionPercentiles();
+  const lower = index === 0 ? 1 : percentiles[index - 1] + PERCENTILE_STEP;
+  const upper = index === percentiles.length - 1
     ? MAX_DISTRIBUTION_PERCENTILE
-    : state.distributionPercentiles[index + 1] - PERCENTILE_STEP;
+    : percentiles[index + 1] - PERCENTILE_STEP;
   const clamped = Math.min(upper, Math.max(lower, value));
-  state.distributionPercentiles[index] = Number(clamped.toFixed(PERCENTILE_PRECISION));
+  percentiles[index] = Number(clamped.toFixed(PERCENTILE_PRECISION));
+  state.distributionPercentilesByDimension[state.distributionDimension] = percentiles;
+  state.clientMappedDimensions.add(state.distributionDimension);
   renderDistributionResults();
 }
 
@@ -251,7 +304,7 @@ function renderDistributionChart(values, dimension) {
   const bins = histogram(values, binCount, maximum);
   const maxBin = Math.max(...bins, 1);
   const barWidth = plotWidth / binCount;
-  const thresholdLines = state.distributionPercentiles.map((percent, index) => ({
+  const thresholdLines = currentDistributionPercentiles().map((percent, index) => ({
     percent,
     value: percentile(values, percent),
     index,
@@ -306,7 +359,7 @@ function renderRangeShare(values) {
     elements.rangeShare.innerHTML = "";
     return;
   }
-  const thresholds = state.distributionPercentiles.map((percent) => percentile(values, percent));
+  const thresholds = currentDistributionPercentiles().map((percent) => percentile(values, percent));
   const counts = Array.from({ length: thresholds.length + 1 }, () => 0);
   values.forEach((value) => {
     const index = thresholds.findIndex((threshold) => value <= threshold);
@@ -340,6 +393,7 @@ function renderDistributionResults() {
     .map(({ chart }) => chart.rawScores[state.distributionDimension])
     .sort((left, right) => left - right);
   const total = values.reduce((sum, value) => sum + value, 0);
+  applyDistributionMapping(values);
   const filterParts = [
     state.distributionKind === "all" ? "全部谱面" : state.distributionKind,
     difficultyText(state.distributionDifficulty),
@@ -357,12 +411,12 @@ function renderDistributionResults() {
   ]
     .map(([label, value]) => `<div><span>${label}</span><strong>${value}</strong></div>`)
     .join("");
-  elements.thresholdRows.innerHTML = state.distributionPercentiles
+  elements.thresholdRows.innerHTML = currentDistributionPercentiles()
     .map((percent, index) => {
       const samplePosition = values.length
         ? Math.round(((values.length - 1) * percent) / 100) + 1
         : 0;
-      return `<tr><td>T${index + 1} · P${percentileText(percent)}</td><td>${rawValueText(percentile(values, percent))}</td><td>${samplePosition.toLocaleString("zh-CN")} / ${values.length.toLocaleString("zh-CN")}</td></tr>`;
+      return `<tr><td>T${index + 1} · P${percentileText(percent)}</td><td>${rawValueText(percentile(values, percent))}</td><td>${DISTRIBUTION_SCORE_ANCHORS[index]}</td><td>${samplePosition.toLocaleString("zh-CN")} / ${values.length.toLocaleString("zh-CN")}</td></tr>`;
     })
     .join("");
   syncThresholdControls(values);
@@ -906,7 +960,10 @@ function bindEvents() {
     setDistributionPercentile(Number(input.dataset.thresholdIndex), input.value);
   });
   elements.resetDistributionThresholds.addEventListener("click", () => {
-    state.distributionPercentiles = [...DEFAULT_DISTRIBUTION_PERCENTILES];
+    state.distributionPercentilesByDimension[state.distributionDimension] = [
+      ...DEFAULT_DISTRIBUTION_PERCENTILES,
+    ];
+    state.clientMappedDimensions.add(state.distributionDimension);
     renderDistributionResults();
   });
 }
@@ -959,6 +1016,12 @@ async function init() {
     state.selectedChartId = state.songs[0]?.charts[0]?.id || null;
     state.rankingDimension = state.data.dimensions[0].key;
     state.distributionDimension = state.data.dimensions[0].key;
+    state.distributionPercentilesByDimension = Object.fromEntries(
+      state.data.dimensions.map((dimension) => [
+        dimension.key,
+        [...DEFAULT_DISTRIBUTION_PERCENTILES],
+      ]),
+    );
     elements.radarTitle.textContent = state.data.dimensions.length >= 3
       ? `${state.data.dimensions.length} 维图`
       : "评分详情";

@@ -325,7 +325,7 @@ class PipelineTests(unittest.TestCase):
         ], capture_output=True, text=True)
         self.assertEqual(process.returncode, 0, process.stderr)
 
-    def test_unified_script_and_module_analysis_print_json_and_default_dummy_completes_mvp(self):
+    def test_unified_script_and_module_analysis_print_json_and_default_mapping_completes_mvp(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             fixtures(root)
@@ -350,6 +350,10 @@ class PipelineTests(unittest.TestCase):
                     rows = list(csv.DictReader(stream))
                 self.assertEqual([float(row["hold_raw"]) for row in rows], [2, 1])
                 self.assertEqual([float(row["hold_score"]) for row in rows], [200, 50])
+                self.assertEqual(
+                    [float(row["slide_tricky_score"]) for row in rows],
+                    [float(row["slide_tricky_raw"]) for row in rows],
+                )
                 self.assertTrue(all(
                     row["note_raw"] and row["note_score"]
                     and row["peak_raw"] and row["peak_score"]
@@ -359,7 +363,7 @@ class PipelineTests(unittest.TestCase):
                     for row in rows
                 ))
                 self.assertTrue(all(json.loads(row["diagnostics"])["scoring"]["mapping_version"]
-                                    == "provisional-standalone-cumulate-20260914-v24"
+                                    == "provisional-tricky-identity-20260915-v25"
                                     for row in rows))
                 self.assertTrue(all((root / mode / row["cover_path"]).is_file() for row in rows))
 

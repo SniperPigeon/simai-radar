@@ -29,10 +29,10 @@ class FeatureMapper(Protocol):
     def map(self, data: float) -> float: ...
 
 
-from .linear import DummyPnMapper
-from .transformer import FeatureScoreTransformer
+from .linear import DummyPnMapper, IdentityMapper  # noqa: E402
+from .transformer import FeatureScoreTransformer  # noqa: E402
 
 __all__ = [
     "FeatureMapper", "FeatureScore", "ScoreResult", "ScoreTransformer",
-    "DummyPnMapper", "FeatureScoreTransformer",
+    "DummyPnMapper", "IdentityMapper", "FeatureScoreTransformer",
 ]

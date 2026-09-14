@@ -241,7 +241,7 @@ slide_cumulate = sum(L_r) / (D / 0.5)
 ```bash
 python scripts/mairadar.py --mode analysis --input data/parsed
 python scripts/mairadar.py --mode analysis --choose
-# 以下模式默认使用 dummy Pn 映射器：
+# 以下模式默认使用按 feature 配置的映射器：
 python scripts/mairadar.py --mode analysis_score --input data/parsed --output outputs/scored
 python scripts/mairadar.py --mode full --input data/raw --output outputs/full --difficulty 5 6
 python scripts/mairadar.py --mode parse_only --input data/raw --output data/parsed --difficulty 5 6
@@ -328,11 +328,14 @@ CsvExporter 接收 AnalysisRecord 序列，不发现目录、不运行分析器�
 默认配置位于 `src/mairadar/scoring/config.py`：
 
 ```python
+from mairadar.scoring import DummyPnMapper, IdentityMapper
+
+
 FEATURE_MAPPERS = {
     "hold": DummyPnMapper(p50=1.0, p100=2.0),
     "note": DummyPnMapper(p50=3.540077197, p100=9.328672541),
     "peak": DummyPnMapper(p50=10.0, p100=20.0),
-    "slide_tricky": DummyPnMapper(p50=27.5, p100=116.1),
+    "slide_tricky": IdentityMapper(),
     "slide_cumulate": DummyPnMapper(p50=0.36, p100=0.96),
     "slide_sequence": DummyPnMapper(p50=1.3, p100=2.9),
 }
@@ -341,16 +344,17 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-standalone-cumulate-20260914-v24",
+            mapping_version="provisional-tricky-identity-20260915-v25",
         )
 
 TRANSFORMER = DefaultScoreTransformer
 ```
 
-p50、p100 是原始指标的数值阈值，要求 `0 < p50 < p100` 且均为有限数值。默认 HOLD 的
+p50、p100 是 `DummyPnMapper` 的原始指标阈值，要求 `0 < p50 < p100` 且均为有限数值。默认 HOLD 的
 1、2 仅是 dummy 参数；整体物量的 3.540077197、9.328672541 分别来自当前 7512 张观察
 样本的中位数和 P99；Peak 的 10、20 是首轮观察用宽松锚点。当前 1888 张难度索引 5/6
-观察样本中，`slide_tricky` 中位数为 27.5、P99.9 约 116.06，临时取 27.5、116.1；
+观察样本中，`slide_tricky` 曾使用中位数 27.5、P99.9 约 116.06 作为临时锚点；当前默认
+改用 `IdentityMapper`，使 `slide_tricky_score` 原样等于 analyser 的 raw 值；
 `slide_cumulate` 独立复刻版本中位数约 0.363、P99 约 0.960，临时取 0.36、0.96；
 `slide_sequence` 暂取 1.3、2.9。它们都是固定临时配置，后续批次不会自动重新拟合。
 
@@ -365,8 +369,8 @@ x >= p100:        200
 
 即 0→0、P50→50、P100→200，范围外截断到 0–200，保留浮点分数、不取整。默认 HOLD
 示例：0.5→25、1→50、1.5→125、2→200；整体物量在当前临时映射下
-3.540077197→50、9.328672541→200；Peak 为 10→50、20→200；`slide_tricky` 为
-27.5→50、116.1→200；`slide_cumulate` 为 0.36→50、0.96→200。NaN、无穷值及无效
+3.540077197→50、9.328672541→200；Peak 为 10→50、20→200；`slide_cumulate` 为
+0.36→50、0.96→200。NaN、无穷值及无效
 阈值明确报错。
 
 同一映射器类可以配置不同阈值，也可以替换为其他实现 map 的类。调用方可以直接注入自己的配置：
@@ -388,7 +392,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-standalone-cumulate-20260914-v24`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-tricky-identity-20260915-v25`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 
@@ -400,4 +404,4 @@ pipeline 将评分输出附在 AnalysisRecord.scores 上，导出器追加 `<fea
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-合成测试覆盖已知频率、重复声明、持续物件尾部、变速、无效时长、维度失败隔离、批量部分失败、曲绘相对路径、冲突及发布失败。模式测试注入仅用于测试的映射器，验证 full 与 analysis_score 等价、analysis 不映射不导出、full 不读写中间 bundle，以及映射失败继续处理。另用自定义分析器和内存导出替身验证各层可替换。默认 dummy Pn 另有锚点、区间插值、截断、独立参数和错误隔离测试，并通过真实 CLI 对合成输入运行 full / analysis_score 验证完整输出；不代表已完成官方校准。文件夹选择的选择、取消、不可用分支通过 mock 验证，不代表已进行原生窗口人工验收。
+合成测试覆盖已知频率、重复声明、持续物件尾部、变速、无效时长、维度失败隔离、批量部分失败、曲绘相对路径、冲突及发布失败。模式测试注入仅用于测试的映射器，验证 full 与 analysis_score 等价、analysis 不映射不导出、full 不读写中间 bundle，以及映射失败继续处理。另用自定义分析器和内存导出替身验证各层可替换。dummy Pn 另有锚点、区间插值、截断、独立参数和错误隔离测试，identity 另有直通与非法值测试，并通过真实 CLI 对合成输入运行 full / analysis_score 验证完整输出；不代表已完成官方校准。文件夹选择的选择、取消、不可用分支通过 mock 验证，不代表已进行原生窗口人工验收。

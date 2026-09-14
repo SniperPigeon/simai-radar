@@ -1,7 +1,21 @@
-"""Dummy piecewise-linear mapping; thresholds are supplied raw values, not fitted."""
+"""Simple identity and dummy piecewise-linear feature mappings."""
 
 from dataclasses import dataclass
 import math
+
+
+@dataclass(frozen=True)
+class IdentityMapper:
+    """Validate and pass a raw feature value through unchanged."""
+
+    def map(self, data: float) -> float:
+        if (
+            isinstance(data, bool)
+            or not isinstance(data, (int, float))
+            or not math.isfinite(data)
+        ):
+            raise ValueError("Mapping input must be a finite number")
+        return float(data)
 
 
 @dataclass(frozen=True)

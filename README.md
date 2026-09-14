@@ -305,7 +305,8 @@ python3 -m http.server 4173 --bind 127.0.0.1
 ```
 
 visualizer exporter 与 CSV exporter 并列，只消费已经完成的 `AnalysisRecord`；它不读取
-原始 Simai、不运行 parser/analyzer，也不参与分数映射。模板固定保存在
+原始 Simai、不运行 parser/analyzer，也不在导出时修改分数。生成页面的分布工作台允许
+用户按 raw 百分位在浏览器内试算当前维度的分数。模板固定保存在
 `res/visualizer/`，CLI 不接受外部模板参数。维度由当前分析配置顺序生成，未知维度使用
 可读的字段名和循环配色；需要自定义显示名时，可在代码调用中传入展示配置：
 
@@ -412,7 +413,13 @@ class RadarTransformer(FeatureScoreTransformer):
 TRANSFORMER = RadarTransformer
 ```
 
-仓库提供的 `DummyPnMapper` 使用预先给定的 `p50`、`p100` 做两段线性映射：`0 → 0`、`P50 → 50`、`P100 → 200`，范围外截断；锚点可以由离线观察确定，但运行时不会从当前输入批次自动重新计算。
+仓库提供的 `DummyPnMapper` 使用预先给定的 `p50`、`p100` 做两段线性映射：`0 → 0`、`P50 → 50`、`P100 → 200`，范围外截断；锚点可以由离线观察确定，但运行时不会从当前输入批次自动重新计算。`IdentityMapper` 只校验有限数值并原样传递。默认配置暂时对 `slide_tricky` 使用 identity，避免在 GUI 查看 raw 分布之前先套用旧锚点；其他维度仍使用各自的 dummy Pn。
+
+GUI 分布页的百分位滑块始终从 `rawScores` 计算阈值。首次拖动某个维度后，页面按
+`0 → 0、T1 → 50、T2 → 100、T3 → 150、T4 → 200` 分段线性重算该维度，并同步更新
+详情、雷达图、主导维度和排行；每个维度单独保存自己的百分位设置。没有动过的维度仍
+显示导出时的分数。默认导出里 `slide_tricky_score == slide_tricky_raw`，因此调整前直接显示
+analyser 结果。
 
 也可以完全替换整体 `ScoreTransformer.transform(AnalysisResult) -> ScoreResult`，或只在调用时注入实验配置：
 
