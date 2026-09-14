@@ -1,9 +1,9 @@
 # 谱面分析 MVP
 
-核心按显式配置调用独立维度分析器，返回原始指标；当前默认配置包含用于验证流程的 HOLD
-频率、整体物量、Peak 爆发和 Slide 压力。评分层按 feature 独立配置映射器：HOLD 仍使用
-dummy 锚点，整体物量暂用 2026-09-13 观察批次的中位数与 P99，Peak 使用宽松的探索
-锚点，Slide 使用有限普通谱抽样的取整探索锚点；这些都不代表官方校准。
+核心按显式配置调用独立维度分析器，返回原始指标；当前默认配置包含纵连、整体物量、
+Peak 爆发和 Slide 压力。评分层按 feature 独立配置映射器：纵连和 Slide Tricky 暂时
+identity 直通，整体物量暂用 2026-09-13 观察批次的中位数与 P99，Peak 使用宽松的探索
+锚点，其他 Slide 维度使用有限普通谱抽样的取整探索锚点；这些都不代表官方校准。
 
 ## 直接调用
 
@@ -11,9 +11,9 @@ dummy 锚点，整体物量暂用 2026-09-13 观察批次的中位数与 P99，P
 from mairadar.parser import parse_chart
 from mairadar.analysis import ChartAnalyzer
 
-parsed = parse_chart("(120){4}1h[4:1],E")
+parsed = parse_chart("(180){8}1h[4:1],1,E")
 result = ChartAnalyzer().analyze(parsed)
-assert result.features["hold"].data == 2.0
+assert result.features["jack"].data == 2.0
 ```
 
 调用不需要歌曲 metadata、路径、音频或曲绘，不加载文件读写、评分模块或 GUI。输入沿用 ParseResult 的完整性和时间字段，保留 parser 的原文诊断。不会重新解析 Simai。
@@ -24,9 +24,9 @@ assert result.features["hold"].data == 2.0
 
 ```python
 from mairadar.analysis import ChartAnalyzer, FeatureResult
-from mairadar.analysis.features import HoldFrequencyAnalyzer
+from mairadar.analysis.features import JackSequenceAnalyzer
 
-features = {"hold": HoldFrequencyAnalyzer}
+features = {"jack": JackSequenceAnalyzer}
 analyzer = ChartAnalyzer(features=features)
 ```
 
@@ -36,16 +36,43 @@ AnalysisContext 提供事件元组、chart_end_time_s、last_event_end_s 和 dur
 
 FeatureResult 仅包含 data 和 success 两个字段，不携带单位、中间统计量或诊断。成功时 data 为有限数值；失败时 data=None、success=False。维度抛出的异常由主分析器记录到 AnalysisResult.diagnostics，其他维度仍执行；汇总状态为 ok、partial 或 error。
 
-## HOLD 示例口径
+## 纵连口径
 
 ```text
-hold_raw = 普通 Hold 声明数 / duration_s
-duration_s = max(chart_end_time_s, last_event_end_s 或 0)
+sequence_strength = 主键 Tap/Hold 数 + 1.5 * 有效打断 Tap 数
+equivalent_eighth_bpm = 30 * (主键时间点数 - 1) / (末次主键秒数 - 首次主键秒数)
+speed_factor = sqrt(equivalent_eighth_bpm / 180)
+weighted_strength = sequence_strength * speed_factor
+jack_raw = sum(weighted_strength_(x) / log2(x + 1), x=1..min(5, sequence_count))
 ```
 
-输出为一个数值。仅统计 kind=hold，排除 TouchHold；同位置同时声明不去重，长 Hold 只计一次。时长保留开头休止、结尾空槽及超出谱面结束标记的持续物件尾部，不叠加音频 offset。
+`JackSequenceAnalyzer` 只读取 1–8 外键的 Tap/Hold 声明时间，不使用 Hold 持续尾部，
+也不把 Touch、TouchHold 或 Slide 体放入外键时间流。按全局有理拍轴为每个键位建立
+最大连续候选：
 
-正常完整且时长为正的无 Hold 谱面得到 FeatureResult(0, success=True)；零时长返回 FeatureResult(None, success=False)。解析不完整或模型校验失败时，不执行子分析器和映射器，各维结果均标记失败，主分析器分别记录 PARSE_INCOMPLETE 或 INVALID_INPUT。连接 Slide 的各段时间由 parser 按固定 MajdataPlay bar 数分配，分析器可直接读取，不重新扫描原始 Simai。
+- 主键必须在至少两个不同时间点出现；Tap 与 Hold 都按一个主键物件计。同时间同位置的
+  重复声明仍各自计数，但只有一个时间点的重复声明不单独构成纵连。
+- 时间流中任意相邻外键时间点的间隔必须 `<= 1/2 beat`；超过即结束当前候选。
+- 至少连续形成两个主键时间点后才允许飞键。一次飞键可占用多个连续异键时间点，合计
+  最多四个其他位置的普通 Tap；数量上限对每次飞键独立应用，不跨序列累计。
+- 每次飞键的时间为从首个异键时间点到返回主键的拍长，必须 `<= 1/2 beat`。回到主键
+  后，数量和时间预算均重置，但需从该次返回开始重新累计两个主键时间点才能再次飞出。
+  边界值恰好八分音符时保留。
+- 异键 Hold 不能作为打断，会结束当前键位候选。与主键同拍的其他位置物件不位于两个
+  主键时间点之间，不计打断权重。
+
+速度使用主键不同时间点的实际秒数计算，因此自然包含 BPM 变化；同时重复声明增加主键
+物件权重，但不增加速度采样点。180 BPM 等效八分的系数为 1，快慢两侧均以平方根变化。
+
+每个键位按上述规则切成若干不可继续延伸的最大候选；候选先按 `sequence_strength` 从高
+到低排序，同强度时速度快者优先，再取前五条并应用速度和名次权重。名次 `x` 从 1 开始，
+因此第一条名次权重为 1，第二条为 `1/log2(3)`，依次衰减；不足五条不补零也不做均值
+归一化。正常完整谱面没有纵连时为 0；零时长谱面返回
+`FeatureResult(None, success=False)`。
+
+解析不完整或模型校验失败时，不执行子分析器和映射器，各维结果均标记失败，主分析器
+分别记录 PARSE_INCOMPLETE 或 INVALID_INPUT。该指标直接使用 parser 提供的全局拍轴，
+不重新扫描原始 Simai，也不受 BPM 变速或重复同值 BPM 声明影响。
 
 ## 整体物量口径
 
@@ -172,6 +199,21 @@ speed_j = sqrt(min(1, B_eq_j / 150))
 150 BPM 八分及更快不降；低于边界按平方根温和下降。该系数只乘等待期和一拍运动期的
 普通 Tap/Hold 贡献；实际 Slide 头、Touch、Slide 体和启动拍均保持原权重。没有可用普通
 按钮时间跨度时系数为 1。
+
+同一批普通按钮还使用双手动态规划求最小移动。状态是左右手当前外键位置；单押枚举交给
+任一只手，双押枚举两种左右手对应，圆环距离为 `min(abs(a-b), 8-abs(a-b))`。目标配置的
+头位置作为初始手位；尚未出现的另一只手第一次落点不产生移动。令 `D_min_j` 为最小总
+移动，`M_j` 为该路径中已有前手位的按键转移次数：
+
+```text
+d_avg_j = D_min_j / max(1, M_j)
+move_j = 0.7 + 0.3 * min(1, d_avg_j / 1.5)
+button_j = max(0.5, speed_j * move_j)
+```
+
+同位或双手固定键型得到 `move=0.7`，相邻扫约为 `0.9`，平均 1.5 格及以上为 1。该系数
+同样只作用于非启动拍的普通 Tap/Hold。任一普通按钮批次超过两键时不猜测手法，令
+`move=1`，其额外物量仍由原始计数和 16 物件上限处理。
 
 恰在本配置任一启动时刻的物件改计入启动负荷 `L_j`，不再套同位或待启动头乘数：
 
@@ -332,7 +374,7 @@ from mairadar.scoring import DummyPnMapper, IdentityMapper
 
 
 FEATURE_MAPPERS = {
-    "hold": DummyPnMapper(p50=1.0, p100=2.0),
+    "jack": IdentityMapper(),
     "note": DummyPnMapper(p50=3.540077197, p100=9.328672541),
     "peak": DummyPnMapper(p50=10.0, p100=20.0),
     "slide_tricky": IdentityMapper(),
@@ -344,14 +386,15 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-tricky-identity-20260915-v25",
+            mapping_version="provisional-jack-tricky-identity-20260915-v26",
         )
 
 TRANSFORMER = DefaultScoreTransformer
 ```
 
-p50、p100 是 `DummyPnMapper` 的原始指标阈值，要求 `0 < p50 < p100` 且均为有限数值。默认 HOLD 的
-1、2 仅是 dummy 参数；整体物量的 3.540077197、9.328672541 分别来自当前 7512 张观察
+p50、p100 是 `DummyPnMapper` 的原始指标阈值，要求 `0 < p50 < p100` 且均为有限数值。纵连
+目前用 `IdentityMapper`，不沿用已删除 Hold 频率占位项的 1、2 锚点；整体物量的
+3.540077197、9.328672541 分别来自当前 7512 张观察
 样本的中位数和 P99；Peak 的 10、20 是首轮观察用宽松锚点。当前 1888 张难度索引 5/6
 观察样本中，`slide_tricky` 曾使用中位数 27.5、P99.9 约 116.06 作为临时锚点；当前默认
 改用 `IdentityMapper`，使 `slide_tricky_score` 原样等于 analyser 的 raw 值；
@@ -367,8 +410,7 @@ p50 < x < p100:   50 + 150 * (x - p50) / (p100 - p50)
 x >= p100:        200
 ```
 
-即 0→0、P50→50、P100→200，范围外截断到 0–200，保留浮点分数、不取整。默认 HOLD
-示例：0.5→25、1→50、1.5→125、2→200；整体物量在当前临时映射下
+即 0→0、P50→50、P100→200，范围外截断到 0–200，保留浮点分数、不取整。整体物量在当前临时映射下
 3.540077197→50、9.328672541→200；Peak 为 10→50、20→200；`slide_cumulate` 为
 0.36→50、0.96→200。NaN、无穷值及无效
 阈值明确报错。
@@ -380,8 +422,8 @@ from mairadar.pipeline import run_pipeline
 from mairadar.scoring import DummyPnMapper, FeatureScoreTransformer
 
 mapper = FeatureScoreTransformer(
-    {"hold": DummyPnMapper(p50=2.0, p100=6.0)},
-    mapping_version="my-hold-v1",
+    {"jack": DummyPnMapper(p50=2.0, p100=6.0)},
+    mapping_version="my-jack-v1",
 )
 batch, report = run_pipeline(
     "analysis_score", "data/parsed", output="outputs/scored", transformer=mapper,
@@ -392,7 +434,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-tricky-identity-20260915-v25`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-jack-tricky-identity-20260915-v26`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 
@@ -404,4 +446,4 @@ pipeline 将评分输出附在 AnalysisRecord.scores 上，导出器追加 `<fea
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-合成测试覆盖已知频率、重复声明、持续物件尾部、变速、无效时长、维度失败隔离、批量部分失败、曲绘相对路径、冲突及发布失败。模式测试注入仅用于测试的映射器，验证 full 与 analysis_score 等价、analysis 不映射不导出、full 不读写中间 bundle，以及映射失败继续处理。另用自定义分析器和内存导出替身验证各层可替换。dummy Pn 另有锚点、区间插值、截断、独立参数和错误隔离测试，identity 另有直通与非法值测试，并通过真实 CLI 对合成输入运行 full / analysis_score 验证完整输出；不代表已完成官方校准。文件夹选择的选择、取消、不可用分支通过 mock 验证，不代表已进行原生窗口人工验收。
+合成测试覆盖纵连的八分边界、每次飞键的四打断与独立时间上限、重复声明、Top-K 衰减、变速、无效时长、维度失败隔离、批量部分失败、曲绘相对路径、冲突及发布失败。模式测试注入仅用于测试的映射器，验证 full 与 analysis_score 等价、analysis 不映射不导出、full 不读写中间 bundle，以及映射失败继续处理。另用自定义分析器和内存导出替身验证各层可替换。dummy Pn 另有锚点、区间插值、截断、独立参数和错误隔离测试，identity 另有直通与非法值测试，并通过真实 CLI 对合成输入运行 full / analysis_score 验证完整输出；不代表已完成官方校准。文件夹选择的选择、取消、不可用分支通过 mock 验证，不代表已进行原生窗口人工验收。

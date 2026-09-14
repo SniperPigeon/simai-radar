@@ -110,9 +110,9 @@ class VisualizerExporterTests(unittest.TestCase):
             self.assertEqual(payload["mappingVersions"], ["visualizer-test-v1"])
             self.assertEqual(payload["dimensions"], [
                 {
-                    "key": "hold",
-                    "label": "Hold频率",
-                    "shortLabel": "Hold",
+                    "key": "jack",
+                    "label": "纵连",
+                    "shortLabel": "纵连",
                     "color": "#ef476f",
                 },
                 {

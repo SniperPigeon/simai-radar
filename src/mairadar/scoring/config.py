@@ -2,14 +2,14 @@
 
 from . import DummyPnMapper, FeatureScoreTransformer, IdentityMapper, ScoreTransformer
 
-# HOLD remains an MVP placeholder. NOTE uses the 2026-09-13 observation batch's
-# median and P99. PEAK starts with broad exploratory anchors. The SLIDE
-# features use rounded Master/Re:Master observation anchors. SLIDE_TRICKY is
-# intentionally passed through so the visualizer receives the analyzer value
-# without applying a stale calibration first.
+# JACK and SLIDE_TRICKY are intentionally passed through so the visualizer
+# receives their analyzer values without applying stale calibration. NOTE uses
+# the 2026-09-13 observation batch's median and P99. PEAK starts with broad
+# exploratory anchors. The other SLIDE features use rounded Master/Re:Master
+# observation anchors.
 # None is official.
 FEATURE_MAPPERS = {
-    "hold": DummyPnMapper(p50=1.0, p100=2.0),
+    "jack": IdentityMapper(),
     "note": DummyPnMapper(p50=3.540077197, p100=9.328672541),
     "peak": DummyPnMapper(p50=10.0, p100=20.0),
     "slide_tricky": IdentityMapper(),
@@ -22,7 +22,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-tricky-identity-20260915-v25",
+            mapping_version="provisional-jack-tricky-identity-20260915-v26",
         )
 
 

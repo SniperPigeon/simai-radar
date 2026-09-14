@@ -20,6 +20,7 @@ from mairadar.analysis.features.slide import (
     TRICKY_SPEED_REFERENCE_EIGHTH_BPM,
     TRICKY_TOP_COUNT,
     _WorkloadPoint,
+    _minimum_average_button_movement,
     _sequence_length_factor,
     _sweep_adjusted_button_total,
     _top_unique_tricky_loads,
@@ -40,9 +41,16 @@ class SlidePressureTests(unittest.TestCase):
     def test_internal_taps_are_linear_and_launch_objects_are_halved(self):
         result = breakdown("(120){16}1-5[10:1],2,3,4,5,E")
         [section] = result.sections
-        self.assertAlmostEqual(section.internal_interference, 3.0)
+        [point] = result.tricky_points
+        self.assertAlmostEqual(
+            section.internal_interference,
+            3 * point.ordinary_button_factor,
+        )
         self.assertEqual(section.launch_interference, 0.5)
-        self.assertAlmostEqual(section.tricky_intensity, 3.5)
+        self.assertAlmostEqual(
+            section.tricky_intensity,
+            3 * point.ordinary_button_factor + 0.5,
+        )
 
     def test_touch_keeps_its_extra_weight_at_the_exact_launch(self):
         result = breakdown("(120){4}1-5[10:1],A1,E")
@@ -72,16 +80,24 @@ class SlidePressureTests(unittest.TestCase):
     def test_simultaneous_internal_batch_is_added_once(self):
         result = breakdown("(120){4}1-5[10:1]/2/3,,E")
         [section] = result.sections
-        self.assertAlmostEqual(section.internal_interference, 2.0)
+        [point] = result.tricky_points
+        self.assertAlmostEqual(
+            section.internal_interference,
+            2 * point.ordinary_button_factor,
+        )
 
     def test_double_slide_wait_assigns_each_external_object_only_once(self):
         result = breakdown("(120){4}1-5[10:1]/2-6[10:1]/3,,E")
         [section] = result.sections
         self.assertEqual((section.slide_count, section.onset_count), (2, 1))
-        self.assertEqual(section.internal_interference, 1.0)
+        [point] = result.tricky_points
+        self.assertEqual(
+            section.internal_interference,
+            point.ordinary_button_factor,
+        )
         self.assertAlmostEqual(
             result.tricky,
-            (1 + MULTI_SLIDE_UPLIFT) / TRICKY_TOP_COUNT,
+            point.load / TRICKY_TOP_COUNT,
         )
 
     def test_single_sweep_decays_from_fourth_timestamp(self):
@@ -118,6 +134,28 @@ class SlidePressureTests(unittest.TestCase):
         expected = 2 * (3 + 1 / math.log2(3) + 1 / math.log2(4))
         self.assertAlmostEqual(_sweep_adjusted_button_total(points, set()), expected)
 
+    def test_dp_minimum_movement_recognizes_fixed_hands_and_sweeps(self):
+        self.assertEqual(
+            _minimum_average_button_movement([(1, 8)] * 6),
+            0.0,
+        )
+        self.assertEqual(
+            _minimum_average_button_movement([(1,), (8,)] * 4),
+            0.0,
+        )
+        self.assertEqual(
+            _minimum_average_button_movement(
+                [(1,), (2,), (3,), (4,), (5,)]
+            ),
+            1.0,
+        )
+        self.assertEqual(
+            _minimum_average_button_movement(
+                [(1, 8), (2, 7), (3, 6), (4, 5)]
+            ),
+            1.0,
+        )
+
     def test_same_position_and_pending_slide_head_use_larger_multiplier(self):
         ordinary = _WorkloadPoint(
             ("event", 1), 0.0, 1.0, "button", Fraction(0), "1"
@@ -137,7 +175,11 @@ class SlidePressureTests(unittest.TestCase):
 
     def test_display_only_star_stays_at_tap_weight(self):
         result = breakdown("(120){4}1-5[10:1]/2$,,E")
-        self.assertEqual(result.sections[0].internal_interference, 1.0)
+        [point] = result.tricky_points
+        self.assertEqual(
+            result.sections[0].internal_interference,
+            point.ordinary_button_factor,
+        )
 
     def test_actual_pending_slide_head_gets_double_tap_weight(self):
         result = breakdown("(120){8}1-5[4:1],2-6[4:1],,E")
@@ -154,7 +196,7 @@ class SlidePressureTests(unittest.TestCase):
         # heads remain excluded; the first Slide launch later adds 1 to second.
         self.assertAlmostEqual(
             first.internal,
-            2 + first.ordinary_button_speed_factor,
+            2 + first.ordinary_button_factor,
         )
         self.assertEqual(second.internal, 1.0)
 
@@ -165,7 +207,7 @@ class SlidePressureTests(unittest.TestCase):
         # multiplier 1.5. The later Tap at 1.75 s is beyond launch + one beat.
         self.assertAlmostEqual(
             point.internal,
-            point.ordinary_button_speed_factor,
+            point.ordinary_button_factor,
         )
 
     def test_speed_factor_is_mild_below_150_bpm_eighths(self):
@@ -175,7 +217,10 @@ class SlidePressureTests(unittest.TestCase):
             120 / TRICKY_SPEED_REFERENCE_EIGHTH_BPM
         ) ** TRICKY_SPEED_EXPONENT
         self.assertAlmostEqual(slow.ordinary_button_speed_factor, expected)
-        self.assertAlmostEqual(slow.internal, 3 * expected)
+        self.assertAlmostEqual(
+            slow.internal,
+            3 * slow.ordinary_button_factor,
+        )
         self.assertEqual(slow.launch, 0.5)
         self.assertEqual(boundary.ordinary_button_speed_factor, 1.0)
 
@@ -200,16 +245,17 @@ class SlidePressureTests(unittest.TestCase):
         fast = breakdown("(120){4}1-5[0.25##0.2]/2,,E").sections[0]
         very_fast = breakdown("(120){4}1-5[0.01##0.2]/2,,E").sections[0]
         zero_wait = breakdown("(120){4}1-5[0##0.2]/2,,E").sections[0]
-        self.assertAlmostEqual(reference.tricky_intensity, 1.0)
-        self.assertAlmostEqual(fast.tricky_intensity, 1.0)
-        self.assertAlmostEqual(very_fast.tricky_intensity, 1.0)
+        self.assertAlmostEqual(reference.tricky_intensity, 0.7)
+        self.assertAlmostEqual(fast.tricky_intensity, 0.7)
+        self.assertAlmostEqual(very_fast.tricky_intensity, 0.7)
         self.assertAlmostEqual(zero_wait.tricky_intensity, 0.5)
 
     def test_tricky_is_not_divided_by_chart_duration(self):
         parsed = parse_chart("(120){4}1-5[0.5##0.2]/2,E")
         result = slide_feature_breakdown(tuple(parsed.events), 120.0)
-        self.assertAlmostEqual(result.tricky_total_load, 1.0)
-        self.assertAlmostEqual(result.tricky, 1 / TRICKY_TOP_COUNT)
+        [point] = result.tricky_points
+        self.assertAlmostEqual(result.tricky_total_load, point.load)
+        self.assertAlmostEqual(result.tricky, point.load / TRICKY_TOP_COUNT)
 
     def test_tricky_uses_zero_padded_top_five_mean(self):
         result = breakdown(
@@ -280,7 +326,11 @@ class SlidePressureTests(unittest.TestCase):
     def test_shared_head_paths_receive_small_post_interference_uplift(self):
         result = breakdown("(120){4}1-5[10:1]*-3[10:1]/2,,E")
         expected = 1 + MULTI_SLIDE_UPLIFT * (math.sqrt(2) - 1)
-        self.assertAlmostEqual(result.tricky, expected / TRICKY_TOP_COUNT)
+        [point] = result.tricky_points
+        self.assertAlmostEqual(
+            result.tricky,
+            expected * point.ordinary_button_factor / TRICKY_TOP_COUNT,
+        )
 
     def test_multi_head_multi_path_configuration_uses_generic_uplift(self):
         result = breakdown(
@@ -290,7 +340,10 @@ class SlidePressureTests(unittest.TestCase):
         expected = 1 + MULTI_SLIDE_UPLIFT * (2 * math.sqrt(2) - 1)
         self.assertEqual((point.head_count, point.slide_count), (2, 4))
         self.assertAlmostEqual(point.configuration_multiplier, expected)
-        self.assertAlmostEqual(point.load, expected)
+        self.assertAlmostEqual(
+            point.load,
+            expected * point.ordinary_button_factor,
+        )
 
     def test_sub_frame_stagger_merges_but_longer_stagger_keeps_cadence(self):
         merged = breakdown(

@@ -18,7 +18,8 @@ class ScaleMapper:
 
 
 class ScoringTests(unittest.TestCase):
-    def test_default_mapping_keeps_tricky_transparent(self):
+    def test_default_mapping_keeps_jack_and_tricky_transparent(self):
+        jack = FEATURE_MAPPERS["jack"]
         note = FEATURE_MAPPERS["note"]
         self.assertEqual((note.p50, note.p100), (3.540077197, 9.328672541))
         peak = FEATURE_MAPPERS["peak"]
@@ -26,17 +27,20 @@ class ScoringTests(unittest.TestCase):
         tricky = FEATURE_MAPPERS["slide_tricky"]
         cumulate = FEATURE_MAPPERS["slide_cumulate"]
         sequence = FEATURE_MAPPERS["slide_sequence"]
+        self.assertIsInstance(jack, IdentityMapper)
         self.assertIsInstance(tricky, IdentityMapper)
         self.assertEqual((cumulate.p50, cumulate.p100), (0.36, 0.96))
         self.assertEqual((sequence.p50, sequence.p100), (1.3, 2.9))
         transformer = TRANSFORMER()
         scores = transformer.transform(AnalysisResult({
+            "jack": FeatureResult(8.5),
             "note": FeatureResult(note.p50),
             "peak": FeatureResult(peak.p50),
             "slide_tricky": FeatureResult(36.63092975357146),
             "slide_cumulate": FeatureResult(cumulate.p50),
             "slide_sequence": FeatureResult(sequence.p50),
         }))
+        self.assertEqual(scores.features["jack"].value, 8.5)
         self.assertEqual(scores.features["note"].value, 50)
         self.assertEqual(scores.features["peak"].value, 50)
         self.assertEqual(scores.features["slide_tricky"].value, 36.63092975357146)
@@ -44,7 +48,7 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(scores.features["slide_sequence"].value, 50)
         self.assertEqual(
             scores.mapping_version,
-            "provisional-tricky-identity-20260915-v25",
+            "provisional-jack-tricky-identity-20260915-v26",
         )
 
     def test_identity_mapper_validates_and_preserves_finite_values(self):

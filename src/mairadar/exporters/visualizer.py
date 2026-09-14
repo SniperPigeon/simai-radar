@@ -35,7 +35,7 @@ class DimensionPresentation:
 # Edit this mapping to configure labels and colors for known analysis feature keys.
 # Unlisted keys are exported unchanged so a newly added feature remains visible.
 DIMENSION_PRESENTATION = {
-    "hold": DimensionPresentation("Hold频率", "Hold"),
+    "jack": DimensionPresentation("纵连", "纵连"),
     "note": DimensionPresentation("总体物量", "Note"),
     "peak": DimensionPresentation("Peak爆发", "Peak"),
     "slide_tricky": DimensionPresentation("Slide错位", "错位"),

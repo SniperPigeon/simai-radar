@@ -38,7 +38,7 @@ def fixtures(root):
     source = song / "maidata.txt"
     source.write_text(
         "&title=测试\n&artist=曲师\n&des=谱师\n&cabinet=DX\n"
-        "&inote_5=(120){4}1h[4:1],E\n&inote_6=(120){4}1h[4:1],,E\n"
+        "&inote_5=(180){8}1h[4:1],1,E\n&inote_6=(120){4}1h[4:1],,E\n"
     )
     cover = song / "bg.png"
     cover.write_bytes(b"synthetic attachment")
@@ -110,23 +110,23 @@ class PipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = root / "chart.simai"
-            source.write_text("(120){4}1h[4:1]/2-4-6[4:1],E")
+            source.write_text("(180){8}1h[4:1]/2-4-6[4:1],1,E")
             mapper = Mock(wraps=TestMapper())
             batch, report = run_pipeline("full", source, output=root / "complete", transformer=mapper)
             self.assertEqual(batch.exit_code, 0)
-            self.assertEqual(batch.records[0].analysis.features["hold"].data, 1)
+            self.assertEqual(batch.records[0].analysis.features["jack"].data, 2)
             mapper.transform.assert_called_once()
             self.assertEqual(read_csv(report)[0]["status"], "ok")
 
-            source.write_text("(120){4}1h[4:1]/2-4-6[4:1],invalid,E")
+            source.write_text("(180){8}1h[4:1]/2-4-6[4:1],1,invalid,E")
             mapper.reset_mock()
-            with patch("mairadar.analysis.features.HoldFrequencyAnalyzer.analyze") as feature:
+            with patch("mairadar.analysis.features.JackSequenceAnalyzer.analyze") as feature:
                 batch, report = run_pipeline("full", source, output=root / "incomplete", transformer=mapper)
                 feature.assert_not_called()
             mapper.transform.assert_not_called()
             self.assertEqual(batch.exit_code, 1)
             row = read_csv(report)[0]
-            self.assertEqual((row["hold_raw"], row["hold_score"]), ("", ""))
+            self.assertEqual((row["jack_raw"], row["jack_score"]), ("", ""))
 
     def test_custom_analyzer_mapper_and_exporter_compose_without_output_files(self):
         class FixedAnalyzer:
@@ -165,7 +165,7 @@ class PipelineTests(unittest.TestCase):
                 )
             self.assertIsNone(report)
             self.assertEqual(batch.exit_code, 0)
-            self.assertEqual([r.analysis.features["hold"].data for r in batch.records], [2, 1])
+            self.assertEqual([r.analysis.features["jack"].data for r in batch.records], [2, 0])
             mapper.transform.assert_not_called()
             exporter.export.assert_not_called()
             self.assertEqual(sorted(root.rglob("*")), before)
@@ -192,7 +192,7 @@ class PipelineTests(unittest.TestCase):
                 b.pop("diagnostics")
                 self.assertEqual(a, b)
                 self.assertEqual((root / "full" / a["cover_path"]).read_bytes(), b"synthetic attachment")
-            self.assertEqual([row["hold_score"] for row in left], ["21.0", "11.0"])
+            self.assertEqual([row["jack_score"] for row in left], ["21.0", "1.0"])
             self.assertEqual((full.exit_code, scored.exit_code), (0, 0))
 
     def test_missing_mapper_fails_before_reading_or_writing(self):
@@ -211,7 +211,7 @@ class PipelineTests(unittest.TestCase):
     def test_mapper_failure_preserves_raw_and_continues_other_charts(self):
         class SometimesFails(TestMapper):
             def transform(self, result):
-                if result.features["hold"].data == 2:
+                if result.features["jack"].data == 2:
                     raise ValueError("test mapping failed")
                 return super().transform(result)
 
@@ -222,8 +222,8 @@ class PipelineTests(unittest.TestCase):
                 "analysis_score", root / "bundles", output=root / "out", transformer=SometimesFails(),
             )
             rows = read_csv(report)
-            self.assertEqual([r["hold_raw"] for r in rows], ["2.0", "1.0"])
-            self.assertEqual([r["hold_score"] for r in rows], ["", "11.0"])
+            self.assertEqual([r["jack_raw"] for r in rows], ["2.0", "0.0"])
+            self.assertEqual([r["jack_score"] for r in rows], ["", "1.0"])
             self.assertEqual([r["status"] for r in rows], ["partial", "ok"])
             self.assertEqual((batch.exit_code, report.exit_code), (1, 1))
 
@@ -232,12 +232,12 @@ class PipelineTests(unittest.TestCase):
             root = Path(temp)
             fixtures(root)
             mapper = Mock()
-            mapper.transform.return_value = ScoreResult({"hold": FeatureScore(float("nan"))}, "invalid")
+            mapper.transform.return_value = ScoreResult({"jack": FeatureScore(float("nan"))}, "invalid")
             batch, report = run_pipeline(
                 "analysis_score", root / "bundles", output=root / "out", transformer=mapper,
             )
             self.assertEqual(batch.exit_code, 1)
-            self.assertTrue(all(row["hold_score"] == "" for row in read_csv(report)))
+            self.assertTrue(all(row["jack_score"] == "" for row in read_csv(report)))
             self.assertTrue(all(record.diagnostics[0].code == "MAPPING_FAILED" for record in batch.records))
 
     def test_full_partial_parse_and_unreadable_file_return_nonzero_with_good_rows(self):
@@ -338,7 +338,7 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(process.returncode, 0, process.stderr)
                 rows = [json.loads(line) for line in process.stdout.splitlines()]
                 self.assertEqual(len(rows), 2)
-                self.assertEqual(rows[0]["analysis"]["features"]["hold"], {"data": 2.0, "success": True})
+                self.assertEqual(rows[0]["analysis"]["features"]["jack"], {"data": 2.0, "success": True})
                 self.assertTrue(rows[0]["analysis"]["features"]["note"]["success"])
             for mode, input_dir in (("full", "raw"), ("analysis_score", "bundles")):
                 process = subprocess.run([
@@ -348,8 +348,8 @@ class PipelineTests(unittest.TestCase):
                 self.assertEqual(process.returncode, 0, process.stderr)
                 with (root / mode / "charts.csv").open(encoding="utf-8-sig") as stream:
                     rows = list(csv.DictReader(stream))
-                self.assertEqual([float(row["hold_raw"]) for row in rows], [2, 1])
-                self.assertEqual([float(row["hold_score"]) for row in rows], [200, 50])
+                self.assertEqual([float(row["jack_raw"]) for row in rows], [2, 0])
+                self.assertEqual([float(row["jack_score"]) for row in rows], [2, 0])
                 self.assertEqual(
                     [float(row["slide_tricky_score"]) for row in rows],
                     [float(row["slide_tricky_raw"]) for row in rows],
@@ -363,7 +363,7 @@ class PipelineTests(unittest.TestCase):
                     for row in rows
                 ))
                 self.assertTrue(all(json.loads(row["diagnostics"])["scoring"]["mapping_version"]
-                                    == "provisional-tricky-identity-20260915-v25"
+                                    == "provisional-jack-tricky-identity-20260915-v26"
                                     for row in rows))
                 self.assertTrue(all((root / mode / row["cover_path"]).is_file() for row in rows))
 

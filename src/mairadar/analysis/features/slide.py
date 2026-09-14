@@ -20,6 +20,9 @@ TRICKY_OBJECT_CAP = 16
 TRICKY_TOP_COUNT = 5
 TRICKY_SPEED_REFERENCE_EIGHTH_BPM = 150.0
 TRICKY_SPEED_EXPONENT = 0.5
+TRICKY_MOVEMENT_FLOOR = 0.7
+TRICKY_MOVEMENT_FULL_DISTANCE = 1.5
+TRICKY_BUTTON_FACTOR_FLOOR = 0.5
 TRICKY_UNIQUE_COUNT = 5
 TRICKY_LOAD_BUCKET_DECIMALS = 6
 TOUCH_INTERFERENCE_WEIGHT = 1.5
@@ -75,6 +78,9 @@ class _ClusterTricky:
     logical_object_count: int = 0
     object_cap_factor: float = 1.0
     ordinary_button_speed_factor: float = 1.0
+    average_button_movement: float = 0.0
+    ordinary_button_movement_factor: float = 1.0
+    ordinary_button_factor: float = 1.0
     configuration_multiplier: float = 1.0
 
     @property
@@ -99,6 +105,9 @@ class SlideTrickyPoint:
     logical_object_count: int = 0
     object_cap_factor: float = 1.0
     ordinary_button_speed_factor: float = 1.0
+    average_button_movement: float = 0.0
+    ordinary_button_movement_factor: float = 1.0
+    ordinary_button_factor: float = 1.0
     configuration_multiplier: float = 1.0
 
 
@@ -393,7 +402,7 @@ def _button_point_weight(
     point: _WorkloadPoint,
     target_positions: set[str],
     same_position_point_ids: set[tuple] | None = None,
-    ordinary_button_speed_factor: float = 1.0,
+    ordinary_button_factor: float = 1.0,
 ) -> float:
     multiplier = 1.0
     same_position_eligible = (
@@ -406,18 +415,18 @@ def _button_point_weight(
     # attached, valid Slide body keeps those syntax-only stars at Tap weight.
     if point.slide_head_body_weight > 0:
         multiplier = max(multiplier, PENDING_SLIDE_HEAD_MULTIPLIER)
-    speed_factor = (
-        ordinary_button_speed_factor
+    pattern_factor = (
+        ordinary_button_factor
         if point.slide_head_body_weight == 0 else 1.0
     )
-    return point.weight * multiplier * speed_factor
+    return point.weight * multiplier * pattern_factor
 
 
 def _sweep_adjusted_button_total(
     points: list[_WorkloadPoint],
     target_positions: set[str],
     same_position_point_ids: set[tuple] | None = None,
-    ordinary_button_speed_factor: float = 1.0,
+    ordinary_button_factor: float = 1.0,
 ) -> float:
     """Sum Tap/Hold load, decaying equal-rhythm one- and two-lane sweeps."""
     if not points:
@@ -442,7 +451,7 @@ def _sweep_adjusted_button_total(
                 point,
                 target_positions,
                 same_position_point_ids,
-                ordinary_button_speed_factor,
+                ordinary_button_factor,
             )
             for point in batch
         )
@@ -496,31 +505,138 @@ def _sweep_adjusted_button_total(
     return total
 
 
-def _ordinary_button_speed_factor(
+def _circular_button_distance(left: int, right: int) -> int:
+    difference = abs(left - right)
+    return min(difference, 8 - difference)
+
+
+def _minimum_average_button_movement(
+    batches: list[tuple[int, ...]],
+    initial_positions: tuple[int, ...] = (),
+) -> float | None:
+    """Return the minimum average per-key movement for one- or two-key batches."""
+    if any(len(batch) not in {1, 2} for batch in batches):
+        return None
+    starts = tuple(dict.fromkeys(initial_positions))
+    if len(starts) > 2:
+        return None
+    if len(starts) == 0:
+        states = {(None, None): (0, 0)}
+    elif len(starts) == 1:
+        states = {
+            (starts[0], None): (0, 0),
+            (None, starts[0]): (0, 0),
+        }
+    else:
+        states = {
+            (starts[0], starts[1]): (0, 0),
+            (starts[1], starts[0]): (0, 0),
+        }
+
+    for batch in batches:
+        if len(batch) == 1:
+            position = batch[0]
+            destinations = ((position, None), (None, position))
+        else:
+            left, right = batch
+            destinations = tuple(dict.fromkeys((
+                (left, right),
+                (right, left),
+            )))
+        next_states = {}
+        for (left, right), (distance, transitions) in states.items():
+            for next_left, next_right in destinations:
+                movement = 0
+                next_transitions = transitions
+                if next_left is not None:
+                    if left is not None:
+                        movement += _circular_button_distance(left, next_left)
+                        next_transitions += 1
+                    left_position = next_left
+                else:
+                    left_position = left
+                if next_right is not None:
+                    if right is not None:
+                        movement += _circular_button_distance(right, next_right)
+                        next_transitions += 1
+                    right_position = next_right
+                else:
+                    right_position = right
+                state = (left_position, right_position)
+                candidate = (distance + movement, next_transitions)
+                current = next_states.get(state)
+                if current is None or (
+                    candidate[0] < current[0]
+                    or (candidate[0] == current[0] and candidate[1] > current[1])
+                ):
+                    next_states[state] = candidate
+        states = next_states
+
+    if not states:
+        return 0.0
+    distance, transitions = min(
+        states.values(),
+        key=lambda value: (value[0], -value[1]),
+    )
+    return distance / max(1, transitions)
+
+
+def _ordinary_button_factors(
     cluster: _SlideOnsetCluster,
     assigned: list[_AssignedPoint],
-) -> float:
-    """Mildly downweight ordinary buttons below 150-BPM eighth-note speed."""
-    times = {
-        item.point.time_s
+) -> tuple[float, float, float, float]:
+    """Return speed, movement, average movement, and combined button factors."""
+    ordinary = [
+        item.point
         for item in assigned
         if (
             item.point.kind == "button"
             and item.point.slide_head_body_weight == 0
         )
-    }
-    if not times:
-        return 1.0
+    ]
+    if not ordinary:
+        return 1.0, 1.0, 0.0, 1.0
+    times = {point.time_s for point in ordinary}
     span = max(times) - cluster.declaration_time_s
     if span <= COMPARISON_TOLERANCE:
-        return 1.0
-    timepoint_rate = len(times) / span
-    equivalent_eighth_bpm = 30 * timepoint_rate
-    ratio = min(
-        1.0,
-        equivalent_eighth_bpm / TRICKY_SPEED_REFERENCE_EIGHTH_BPM,
+        speed_factor = 1.0
+    else:
+        timepoint_rate = len(times) / span
+        equivalent_eighth_bpm = 30 * timepoint_rate
+        ratio = min(
+            1.0,
+            equivalent_eighth_bpm / TRICKY_SPEED_REFERENCE_EIGHTH_BPM,
+        )
+        speed_factor = ratio ** TRICKY_SPEED_EXPONENT
+
+    by_time = defaultdict(list)
+    for point in ordinary:
+        if point.position is None:
+            raise ValueError("Ordinary button lacks its position")
+        by_time[point.time_s].append(int(point.position))
+    batches = [tuple(by_time[time_s]) for time_s in sorted(by_time)]
+    initial_positions = tuple(sorted({
+        int(event.position)
+        for group in cluster.groups
+        for event in group.events
+        if event.position is not None
+    }))
+    average_movement = _minimum_average_button_movement(
+        batches,
+        initial_positions,
     )
-    return ratio ** TRICKY_SPEED_EXPONENT
+    if average_movement is None:
+        movement_factor = 1.0
+        average_movement = 0.0
+    else:
+        movement_factor = TRICKY_MOVEMENT_FLOOR + (
+            1 - TRICKY_MOVEMENT_FLOOR
+        ) * min(1.0, average_movement / TRICKY_MOVEMENT_FULL_DISTANCE)
+    combined = max(
+        TRICKY_BUTTON_FACTOR_FLOOR,
+        speed_factor * movement_factor,
+    )
+    return speed_factor, movement_factor, average_movement, combined
 
 
 def _assign_points_to_onsets(
@@ -636,12 +752,17 @@ def _cluster_tricky(
         for item in internal
         if item.phase == "waiting" and item.point.kind == "button"
     }
-    speed_factor = _ordinary_button_speed_factor(cluster, counted)
+    (
+        speed_factor,
+        movement_factor,
+        average_movement,
+        ordinary_button_factor,
+    ) = _ordinary_button_factors(cluster, counted)
     internal_total = _sweep_adjusted_button_total(
         internal_buttons,
         target_positions,
         waiting_button_ids,
-        speed_factor,
+        ordinary_button_factor,
     ) + math.fsum(point.weight for point in internal_other)
     launch_head_owners = {
         point.owner_group_key
@@ -686,6 +807,9 @@ def _cluster_tricky(
         logical_object_count=logical_object_count,
         object_cap_factor=object_cap_factor,
         ordinary_button_speed_factor=speed_factor,
+        average_button_movement=average_movement,
+        ordinary_button_movement_factor=movement_factor,
+        ordinary_button_factor=ordinary_button_factor,
         configuration_multiplier=multiplier,
     )
 
@@ -827,6 +951,11 @@ def slide_feature_breakdown(
             logical_object_count=value.logical_object_count,
             object_cap_factor=value.object_cap_factor,
             ordinary_button_speed_factor=value.ordinary_button_speed_factor,
+            average_button_movement=value.average_button_movement,
+            ordinary_button_movement_factor=(
+                value.ordinary_button_movement_factor
+            ),
+            ordinary_button_factor=value.ordinary_button_factor,
             configuration_multiplier=value.configuration_multiplier,
         )
         for cluster, value in zip(clusters, cluster_tricky)
