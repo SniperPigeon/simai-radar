@@ -82,13 +82,14 @@ class SlideSectionMetrics:
 
 @dataclass(frozen=True)
 class SlideFeatureBreakdown:
-    """The two independent Slide raw features and their section details."""
+    """The independent Slide raw features and their shared section details."""
 
     tricky: float
     tricky_total_load: float
     tricky_all_load: float
     tricky_time_units: float
     tricky_unique_loads: tuple[float, ...]
+    cumulate: float
     sequence: float
     sections: tuple[SlideSectionMetrics, ...]
 
@@ -490,7 +491,7 @@ def slide_feature_breakdown(
     events: tuple[Event, ...],
     duration_s: float,
 ) -> SlideFeatureBreakdown:
-    """Calculate both Slide features without mutating canonical events."""
+    """Calculate Slide features without mutating canonical events."""
     if duration_s <= 0:
         raise ValueError("Slide features require a positive chart duration")
     groups = _build_slide_groups(events)
@@ -501,6 +502,7 @@ def slide_feature_breakdown(
             tricky_all_load=0.0,
             tricky_time_units=duration_s / TRICKY_REFERENCE_SECONDS,
             tricky_unique_loads=(),
+            cumulate=0.0,
             sequence=0.0,
             sections=(),
         )
@@ -522,6 +524,7 @@ def slide_feature_breakdown(
     tricky_total_load = _top_unique_tricky_load(section_loads)
     tricky_time_units = duration_s / TRICKY_REFERENCE_SECONDS
     tricky = tricky_total_load / tricky_time_units
+    cumulate = tricky_all_load / tricky_time_units
 
     sequence_sections = [
         section for section in sections
@@ -539,6 +542,7 @@ def slide_feature_breakdown(
         tricky_all_load=tricky_all_load,
         tricky_time_units=tricky_time_units,
         tricky_unique_loads=tricky_unique_loads,
+        cumulate=cumulate,
         sequence=sequence,
         sections=sections,
     )
@@ -552,6 +556,16 @@ class SlideTrickyAnalyzer:
             return FeatureResult(None, success=False)
         result = slide_feature_breakdown(context.events, context.duration_s)
         return FeatureResult(result.tricky)
+
+
+class SlideCumulateAnalyzer:
+    """Return all Slide tricky section loads per 0.5 seconds of chart time."""
+
+    def analyze(self, context: AnalysisContext) -> FeatureResult:
+        if context.duration_s <= 0:
+            return FeatureResult(None, success=False)
+        result = slide_feature_breakdown(context.events, context.duration_s)
+        return FeatureResult(result.cumulate)
 
 
 class SlideSequenceAnalyzer:

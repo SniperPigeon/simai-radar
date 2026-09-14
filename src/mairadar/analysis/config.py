@@ -4,6 +4,7 @@ from .features import (
     HoldFrequencyAnalyzer,
     NoteDensityAnalyzer,
     PeakDensityAnalyzer,
+    SlideCumulateAnalyzer,
     SlideSequenceAnalyzer,
     SlideTrickyAnalyzer,
 )
@@ -14,5 +15,6 @@ FEATURES = {
     "note": NoteDensityAnalyzer,
     "peak": PeakDensityAnalyzer,
     "slide_tricky": SlideTrickyAnalyzer,
+    "slide_cumulate": SlideCumulateAnalyzer,
     "slide_sequence": SlideSequenceAnalyzer,
 }
