@@ -1,7 +1,7 @@
 """Edit this explicit mapping to choose features and their output order."""
 
 from .features import (
-    HoldFrequencyAnalyzer,
+    JackSequenceAnalyzer,
     NoteDensityAnalyzer,
     PeakDensityAnalyzer,
     SlideCumulateAnalyzer,
@@ -11,7 +11,7 @@ from .features import (
 
 
 FEATURES = {
-    "hold": HoldFrequencyAnalyzer,
+    "jack": JackSequenceAnalyzer,
     "note": NoteDensityAnalyzer,
     "peak": PeakDensityAnalyzer,
     "slide_tricky": SlideTrickyAnalyzer,
