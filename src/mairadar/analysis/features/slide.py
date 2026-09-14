@@ -16,6 +16,8 @@ CADENCE_REFERENCE_SECONDS = 0.5
 SIMULTANEOUS_ONSET_SECONDS = 1 / 60
 SEQUENCE_FULL_ONSETS = 3
 CONCURRENCY_WEIGHT = 0.5
+TRICKY_OBJECT_CAP = 16
+TRICKY_TOP_COUNT = 5
 TRICKY_UNIQUE_COUNT = 5
 TRICKY_LOAD_BUCKET_DECIMALS = 6
 TOUCH_INTERFERENCE_WEIGHT = 1.5
@@ -68,11 +70,17 @@ class _AssignedPoint:
 class _ClusterTricky:
     internal: float
     launch: float
+    logical_object_count: int = 0
+    object_cap_factor: float = 1.0
     configuration_multiplier: float = 1.0
 
     @property
     def intensity(self) -> float:
-        return (self.internal + self.launch) * self.configuration_multiplier
+        return (
+            (self.internal + self.launch)
+            * self.object_cap_factor
+            * self.configuration_multiplier
+        )
 
 
 @dataclass(frozen=True)
@@ -85,6 +93,8 @@ class SlideTrickyPoint:
     load: float
     slide_count: int
     head_count: int = 1
+    logical_object_count: int = 0
+    object_cap_factor: float = 1.0
     configuration_multiplier: float = 1.0
 
 
@@ -380,18 +390,18 @@ def _button_point_weight(
     target_positions: set[str],
     same_position_point_ids: set[tuple] | None = None,
 ) -> float:
-    weight = point.weight
+    multiplier = 1.0
     same_position_eligible = (
         same_position_point_ids is None
         or point.point_id in same_position_point_ids
     )
     if same_position_eligible and point.position in target_positions:
-        weight *= SAME_POSITION_MULTIPLIER
+        multiplier = max(multiplier, SAME_POSITION_MULTIPLIER)
     # is_slide_head alone also covers display-only star modifiers. Requiring an
     # attached, valid Slide body keeps those syntax-only stars at Tap weight.
     if point.slide_head_body_weight > 0:
-        weight *= PENDING_SLIDE_HEAD_MULTIPLIER
-    return weight
+        multiplier = max(multiplier, PENDING_SLIDE_HEAD_MULTIPLIER)
+    return point.weight * multiplier
 
 
 def _sweep_adjusted_button_total(
@@ -609,11 +619,34 @@ def _cluster_tricky(
         point.weight + point.slide_head_body_weight
         for point in deduplicated_launch_points
     ) / 2
+    logical_object_count = sum(
+        int(point.weight) if point.kind == "slide_launch" else 1
+        for point in internal_other
+    ) + len(internal_buttons) + sum(
+        (
+            int(point.weight)
+            if point.kind == "slide_launch"
+            else 1 + int(point.slide_head_body_weight)
+            if point.kind == "button"
+            else 1
+        )
+        for point in deduplicated_launch_points
+    )
+    object_cap_factor = (
+        min(1.0, TRICKY_OBJECT_CAP / logical_object_count)
+        if logical_object_count > 0 else 1.0
+    )
     concurrency = math.fsum(
         math.sqrt(len(group.events)) for group in cluster.groups
     )
     multiplier = 1 + MULTI_SLIDE_UPLIFT * max(0.0, concurrency - 1)
-    return _ClusterTricky(internal_total, launch, multiplier)
+    return _ClusterTricky(
+        internal_total,
+        launch,
+        logical_object_count,
+        object_cap_factor,
+        multiplier,
+    )
 
 
 def _cadence_factor(section: list[_SlideOnsetCluster]) -> float:
@@ -750,6 +783,8 @@ def slide_feature_breakdown(
             load=value.intensity,
             slide_count=sum(len(group.events) for group in cluster.groups),
             head_count=len(cluster.groups),
+            logical_object_count=value.logical_object_count,
+            object_cap_factor=value.object_cap_factor,
             configuration_multiplier=value.configuration_multiplier,
         )
         for cluster, value in zip(clusters, cluster_tricky)
@@ -761,7 +796,12 @@ def slide_feature_breakdown(
         tricky_points,
         key=lambda point: (point.load, -point.time_s),
     )
-    tricky = peak.load
+    top_loads = sorted(
+        (point.load for point in tricky_points),
+        reverse=True,
+    )[:TRICKY_TOP_COUNT]
+    tricky_total_load = math.fsum(top_loads)
+    tricky = tricky_total_load / TRICKY_TOP_COUNT
 
     sequence_sections = [
         section for section in sections
@@ -775,7 +815,7 @@ def slide_feature_breakdown(
     )
     return SlideFeatureBreakdown(
         tricky=tricky,
-        tricky_total_load=peak.load,
+        tricky_total_load=tricky_total_load,
         tricky_unique_loads=tricky_unique_loads,
         tricky_peak_time_s=peak.time_s,
         tricky_points=tricky_points,
@@ -785,7 +825,7 @@ def slide_feature_breakdown(
 
 
 class SlideTrickyAnalyzer:
-    """Return the strongest single Slide interference configuration."""
+    """Return the zero-padded mean of the five strongest Slide configurations."""
 
     def analyze(self, context: AnalysisContext) -> FeatureResult:
         if context.duration_s <= 0:

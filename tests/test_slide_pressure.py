@@ -15,6 +15,8 @@ from mairadar.analysis.features.slide import (
     MULTI_SLIDE_UPLIFT,
     PENDING_SLIDE_HEAD_MULTIPLIER,
     SAME_POSITION_MULTIPLIER,
+    TRICKY_OBJECT_CAP,
+    TRICKY_TOP_COUNT,
     _WorkloadPoint,
     _sequence_length_factor,
     _sweep_adjusted_button_total,
@@ -77,7 +79,7 @@ class SlidePressureTests(unittest.TestCase):
         self.assertEqual(section.internal_interference, 1.0)
         self.assertAlmostEqual(
             result.tricky,
-            1 + MULTI_SLIDE_UPLIFT,
+            (1 + MULTI_SLIDE_UPLIFT) / TRICKY_TOP_COUNT,
         )
 
     def test_single_sweep_decays_from_fourth_timestamp(self):
@@ -114,7 +116,7 @@ class SlidePressureTests(unittest.TestCase):
         expected = 2 * (3 + 1 / math.log2(3) + 1 / math.log2(4))
         self.assertAlmostEqual(_sweep_adjusted_button_total(points, set()), expected)
 
-    def test_same_position_and_actual_pending_slide_head_multiply_tap_weight(self):
+    def test_same_position_and_pending_slide_head_use_larger_multiplier(self):
         ordinary = _WorkloadPoint(
             ("event", 1), 0.0, 1.0, "button", Fraction(0), "1"
         )
@@ -128,7 +130,7 @@ class SlidePressureTests(unittest.TestCase):
         )
         self.assertEqual(
             _sweep_adjusted_button_total([slide_head], {"1"}),
-            SAME_POSITION_MULTIPLIER * PENDING_SLIDE_HEAD_MULTIPLIER,
+            PENDING_SLIDE_HEAD_MULTIPLIER,
         )
 
     def test_display_only_star_stays_at_tap_weight(self):
@@ -161,6 +163,18 @@ class SlidePressureTests(unittest.TestCase):
         result = breakdown("(120){4}1-5[4##1],A1,B2,C,D3,E")
         self.assertEqual(result.sections[0].internal_interference, 3.0)
 
+    def test_configuration_object_count_scales_down_above_sixteen(self):
+        result = breakdown(
+            "(120){20}1-5[2##0.2],"
+            "2,4,7,3,8,5,2,6,3,7,4,8,2,5,3,6,4,7,5,E"
+        )
+        [point] = result.tricky_points
+        self.assertGreater(point.logical_object_count, TRICKY_OBJECT_CAP)
+        self.assertAlmostEqual(
+            point.object_cap_factor,
+            TRICKY_OBJECT_CAP / point.logical_object_count,
+        )
+
     def test_individual_wait_duration_does_not_scale_tricky_load(self):
         reference = breakdown("(120){4}1-5[0.5##0.2]/2,,E").sections[0]
         fast = breakdown("(120){4}1-5[0.25##0.2]/2,,E").sections[0]
@@ -175,15 +189,19 @@ class SlidePressureTests(unittest.TestCase):
         parsed = parse_chart("(120){4}1-5[0.5##0.2]/2,E")
         result = slide_feature_breakdown(tuple(parsed.events), 120.0)
         self.assertAlmostEqual(result.tricky_total_load, 1.0)
-        self.assertAlmostEqual(result.tricky, 1.0)
+        self.assertAlmostEqual(result.tricky, 1 / TRICKY_TOP_COUNT)
 
-    def test_tricky_uses_strongest_single_configuration(self):
+    def test_tricky_uses_zero_padded_top_five_mean(self):
         result = breakdown(
             "(120){4}1-5[0.5##0.2]/2,,3-7[0.5##0.2]/4/5,,E"
         )
         peak = max(result.tricky_points, key=lambda point: point.load)
-        self.assertEqual(result.tricky, peak.load)
-        self.assertEqual(result.tricky_total_load, peak.load)
+        top = sorted(
+            (point.load for point in result.tricky_points),
+            reverse=True,
+        )[:TRICKY_TOP_COUNT]
+        self.assertEqual(result.tricky, sum(top) / TRICKY_TOP_COUNT)
+        self.assertEqual(result.tricky_total_load, sum(top))
         self.assertEqual(result.tricky_peak_time_s, peak.time_s)
 
     def test_unique_group_loads_use_buckets_and_ignore_repeated_values(self):
@@ -242,7 +260,7 @@ class SlidePressureTests(unittest.TestCase):
     def test_shared_head_paths_receive_small_post_interference_uplift(self):
         result = breakdown("(120){4}1-5[10:1]*-3[10:1]/2,,E")
         expected = 1 + MULTI_SLIDE_UPLIFT * (math.sqrt(2) - 1)
-        self.assertAlmostEqual(result.tricky, expected)
+        self.assertAlmostEqual(result.tricky, expected / TRICKY_TOP_COUNT)
 
     def test_multi_head_multi_path_configuration_uses_generic_uplift(self):
         result = breakdown(
@@ -285,7 +303,7 @@ class SlidePressureTests(unittest.TestCase):
             "slide_cumulate": SlideCumulateAnalyzer,
             "slide_sequence": SlideSequenceAnalyzer,
         }).analyze(parsed)
-        self.assertAlmostEqual(result.features["slide_tricky"].data, 0.75)
+        self.assertAlmostEqual(result.features["slide_tricky"].data, 0.15)
         self.assertAlmostEqual(result.features["slide_cumulate"].data, 0.75)
         self.assertEqual(result.features["slide_sequence"].data, 0.0)
 

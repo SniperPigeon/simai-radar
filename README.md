@@ -338,7 +338,8 @@ analyzer = ChartAnalyzer({"note_density": NoteDensityAnalyzer})
 完整公式、Touch 邻接与边界规则见 [分析说明](docs/ANALYSIS.md#整体物量口径)。默认配置以
 `note` 启用它，并使用当前观察批次的中位数与 P99 作临时映射锚点；该映射不代表正式校准。
 
-Slide 分为三个独立维度：`slide_tricky` 取负荷最高的单个 Slide 启动配置；
+Slide 分为三个独立维度：`slide_tricky` 取五个最高单配置负荷的补零算术平均，每个配置
+最多按 16 个逻辑干扰物件计；
 `slide_cumulate` 由独立 analyser 按历史确认口径计算，
 不复用当前 Tricky helper，中文显示为“持续星星压力”；`slide_sequence` 只分析连续阵、
 同拍双押和同头多路径。`slide_tricky` 的 Tap 干扰包含同位、扫键和实际 Slide 头修正，
