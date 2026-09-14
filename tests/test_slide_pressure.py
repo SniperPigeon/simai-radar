@@ -16,6 +16,8 @@ from mairadar.analysis.features.slide import (
     PENDING_SLIDE_HEAD_MULTIPLIER,
     SAME_POSITION_MULTIPLIER,
     TRICKY_OBJECT_CAP,
+    TRICKY_SPEED_EXPONENT,
+    TRICKY_SPEED_REFERENCE_EIGHTH_BPM,
     TRICKY_TOP_COUNT,
     _WorkloadPoint,
     _sequence_length_factor,
@@ -150,14 +152,32 @@ class SlidePressureTests(unittest.TestCase):
         first, second = result.tricky_points
         # Tap 3 at 0.75 s belongs only to the nearer first launch. Their own
         # heads remain excluded; the first Slide launch later adds 1 to second.
-        self.assertEqual((first.internal, second.internal), (3.0, 1.0))
+        self.assertAlmostEqual(
+            first.internal,
+            2 + first.ordinary_button_speed_factor,
+        )
+        self.assertEqual(second.internal, 1.0)
 
     def test_active_interference_stops_one_beat_after_launch(self):
         result = breakdown("(120){8}1-5[4:8],,,1,,,,1,E")
         [point] = result.tricky_points
         # Same-position Tap at 0.75 s is active-phase weight 1, not the waiting
         # multiplier 1.5. The later Tap at 1.75 s is beyond launch + one beat.
-        self.assertEqual(point.internal, 1.0)
+        self.assertAlmostEqual(
+            point.internal,
+            point.ordinary_button_speed_factor,
+        )
+
+    def test_speed_factor_is_mild_below_150_bpm_eighths(self):
+        slow = breakdown("(120){8}1-5[1##0.2],2,3,4,5,E").tricky_points[0]
+        boundary = breakdown("(150){8}1-5[8:1],2,3,E").tricky_points[0]
+        expected = (
+            120 / TRICKY_SPEED_REFERENCE_EIGHTH_BPM
+        ) ** TRICKY_SPEED_EXPONENT
+        self.assertAlmostEqual(slow.ordinary_button_speed_factor, expected)
+        self.assertAlmostEqual(slow.internal, 3 * expected)
+        self.assertEqual(slow.launch, 0.5)
+        self.assertEqual(boundary.ordinary_button_speed_factor, 1.0)
 
     def test_touch_groups_are_capped_at_two(self):
         result = breakdown("(120){4}1-5[4##1],A1,B2,C,D3,E")

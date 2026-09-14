@@ -344,7 +344,8 @@ Slide 分为三个独立维度：`slide_tricky` 取五个最高单配置负荷�
 不复用当前 Tricky helper，中文显示为“持续星星压力”；`slide_sequence` 只分析连续阵、
 同拍双押和同头多路径。`slide_tricky` 的 Tap 干扰包含同位、扫键和实际 Slide 头修正，
 Touch 连通组最多计两组，启动拍统一将物件负荷除以二，并只追加启动后一拍以内的运动
-交互。每个外部物件只归属一个最近的相关配置。完整公式见
+交互；普通 Tap/Hold 在低于 150 BPM 等效八分速度时按平方根温和下降。每个外部物件只
+归属一个最近的相关配置。完整公式见
 [分析说明](docs/ANALYSIS.md#slide-压力口径)。
 
 `AnalysisContext` 提供：
