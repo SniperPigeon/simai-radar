@@ -16,8 +16,7 @@ CADENCE_REFERENCE_SECONDS = 0.5
 SIMULTANEOUS_ONSET_SECONDS = 1 / 60
 INTERNAL_GROWTH_ALPHA = 0.35
 TRICKY_REFERENCE_SECONDS = 0.5
-MAX_TIME_DENSITY_FACTOR = 4.0
-TRICKY_FULL_ONSETS = 8
+TRICKY_EFFECTIVE_LENGTH_BASE = 5
 SEQUENCE_FULL_ONSETS = 3
 CONCURRENCY_WEIGHT = 0.5
 TOUCH_INTERFERENCE_WEIGHT = 1.5
@@ -54,11 +53,10 @@ class _WorkloadPoint:
 class _ClusterTricky:
     internal: float
     launch: float
-    time_density_factor: float
 
     @property
     def intensity(self) -> float:
-        return (self.internal + self.launch) * self.time_density_factor
+        return self.internal + self.launch
 
 
 @dataclass(frozen=True)
@@ -69,8 +67,7 @@ class SlideSectionMetrics:
     onset_count: int
     internal_interference: float
     launch_interference: float
-    mean_time_density_factor: float
-    tricky_length_factor: float
+    tricky_effective_length: float
     tricky_intensity: float
     tricky_load: float
     tricky_cluster_values: tuple[float, ...]
@@ -370,20 +367,7 @@ def _cluster_tricky(
         internal += average_marginal * math.fsum(point.weight for point in batch)
         previous_count = next_count
     launch = math.fsum(point.weight for point in launch_points)
-    interval = max(launch_times) - min(
-        group.declaration_time_s for group in cluster.groups
-    )
-    # A quarter of the 0.5-second reference is the minimum effective wait, so
-    # positive micro-waits and zero-wait launch pressure never exceed 4x.
-    time_density = (
-        MAX_TIME_DENSITY_FACTOR
-        if interval <= COMPARISON_TOLERANCE
-        else min(
-            MAX_TIME_DENSITY_FACTOR,
-            TRICKY_REFERENCE_SECONDS / interval,
-        )
-    )
-    return _ClusterTricky(internal, launch, time_density)
+    return _ClusterTricky(internal, launch)
 
 
 def _cadence_factor(section: list[_SlideOnsetCluster]) -> float:
@@ -407,11 +391,17 @@ def _log_length(count: int, full_count: int) -> float:
     return full_count * (1 + math.log1p(excess))
 
 
-def _tricky_length_factor(onset_count: int) -> float:
-    if onset_count <= TRICKY_FULL_ONSETS:
-        return 1.0
-    effective = _log_length(onset_count, TRICKY_FULL_ONSETS)
-    return math.sqrt(effective / TRICKY_FULL_ONSETS)
+def _tricky_effective_length(onset_count: int) -> float:
+    if onset_count <= 0:
+        raise ValueError("A tricky section must contain at least one onset")
+    if onset_count <= TRICKY_EFFECTIVE_LENGTH_BASE:
+        return float(onset_count)
+    scaled = 1 + (
+        onset_count - TRICKY_EFFECTIVE_LENGTH_BASE
+    ) / TRICKY_EFFECTIVE_LENGTH_BASE
+    return TRICKY_EFFECTIVE_LENGTH_BASE * (
+        1 + math.log(scaled, TRICKY_EFFECTIVE_LENGTH_BASE)
+    )
 
 
 def _sequence_length_factor(onset_count: int) -> float:
@@ -440,17 +430,16 @@ def _section_metrics(
     ]
     internal_total = math.fsum(item.internal for item in cluster_tricky)
     launch_total = math.fsum(item.launch for item in cluster_tricky)
-    mean_time_density = math.fsum(
-        item.time_density_factor for item in cluster_tricky
-    ) / len(cluster_tricky)
     onset_count = len(section)
-    tricky_length = _tricky_length_factor(onset_count)
-    tricky_values = tuple(
-        item.intensity * tricky_length for item in cluster_tricky
-    )
+    tricky_values = tuple(item.intensity for item in cluster_tricky)
     slide_count = len(groups)
-    tricky_load = math.fsum(tricky_values)
-    tricky_intensity = tricky_load / onset_count
+    tricky_mean = math.fsum(tricky_values) / onset_count
+    tricky_rms = math.sqrt(
+        math.fsum(value ** 2 for value in tricky_values) / onset_count
+    )
+    tricky_intensity = 0.8 * tricky_mean + 0.2 * tricky_rms
+    tricky_effective_length = _tricky_effective_length(onset_count)
+    tricky_load = tricky_effective_length * tricky_intensity
 
     cadence = _cadence_factor(section)
     concurrency = math.fsum(
@@ -464,8 +453,7 @@ def _section_metrics(
         onset_count=onset_count,
         internal_interference=internal_total,
         launch_interference=launch_total,
-        mean_time_density_factor=mean_time_density,
-        tricky_length_factor=tricky_length,
+        tricky_effective_length=tricky_effective_length,
         tricky_intensity=tricky_intensity,
         tricky_load=tricky_load,
         tricky_cluster_values=tricky_values,

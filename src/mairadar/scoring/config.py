@@ -9,7 +9,7 @@ FEATURE_MAPPERS = {
     "hold": DummyPnMapper(p50=1.0, p100=2.0),
     "note": DummyPnMapper(p50=3.540077197, p100=9.328672541),
     "peak": DummyPnMapper(p50=10.0, p100=20.0),
-    "slide_tricky": DummyPnMapper(p50=0.51, p100=1.38),
+    "slide_tricky": DummyPnMapper(p50=0.36, p100=0.96),
     "slide_sequence": DummyPnMapper(p50=1.3, p100=2.9),
 }
 
@@ -18,7 +18,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-slide-time-density-cap4-20260914-v14",
+            mapping_version="provisional-slide-effective5-20260914-v16",
         )
 
 
