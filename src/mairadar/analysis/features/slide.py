@@ -1,7 +1,7 @@
 """Independent Slide misalignment and sequence-strength features."""
 
 from bisect import bisect_right
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from fractions import Fraction
 import math
@@ -14,14 +14,15 @@ from .note_density import _simultaneous_touch_components
 
 CADENCE_REFERENCE_SECONDS = 0.5
 SIMULTANEOUS_ONSET_SECONDS = 1 / 60
-INTERNAL_GROWTH_ALPHA = 0.35
-TRICKY_REFERENCE_SECONDS = 0.5
-TRICKY_EFFECTIVE_LENGTH_BASE = 5
 SEQUENCE_FULL_ONSETS = 3
 CONCURRENCY_WEIGHT = 0.5
 TRICKY_UNIQUE_COUNT = 5
 TRICKY_LOAD_BUCKET_DECIMALS = 6
 TOUCH_INTERFERENCE_WEIGHT = 1.5
+TOUCH_INTERFERENCE_CAP = 2
+SAME_POSITION_MULTIPLIER = 1.5
+PENDING_SLIDE_HEAD_MULTIPLIER = 2.0
+MULTI_SLIDE_UPLIFT = 0.15
 COMPARISON_TOLERANCE = 1e-9
 
 
@@ -32,6 +33,8 @@ class _SlideGroup:
     declaration_time_s: float
     declaration_beat: Fraction
     launch_time_s: float
+    launch_times_s: tuple[float, ...]
+    active_intervals: tuple[tuple[float, float], ...]
     head_event_id: int | None
     source_start: int
 
@@ -48,18 +51,41 @@ class _WorkloadPoint:
     point_id: tuple
     time_s: float
     weight: float
+    kind: str
+    beat: Fraction | None = None
+    position: str | None = None
     owner_group_key: tuple | None = None
     slide_head_body_weight: float = 0.0
+
+
+@dataclass(frozen=True)
+class _AssignedPoint:
+    point: _WorkloadPoint
+    phase: str
 
 
 @dataclass(frozen=True)
 class _ClusterTricky:
     internal: float
     launch: float
+    configuration_multiplier: float = 1.0
 
     @property
     def intensity(self) -> float:
-        return self.internal + self.launch
+        return (self.internal + self.launch) * self.configuration_multiplier
+
+
+@dataclass(frozen=True)
+class SlideTrickyPoint:
+    """One de-duplicated Slide onset configuration in the burst timeline."""
+
+    time_s: float
+    internal: float
+    launch: float
+    load: float
+    slide_count: int
+    head_count: int = 1
+    configuration_multiplier: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -86,10 +112,9 @@ class SlideFeatureBreakdown:
 
     tricky: float
     tricky_total_load: float
-    tricky_all_load: float
-    tricky_time_units: float
     tricky_unique_loads: tuple[float, ...]
-    cumulate: float
+    tricky_peak_time_s: float | None
+    tricky_points: tuple[SlideTrickyPoint, ...]
     sequence: float
     sections: tuple[SlideSectionMetrics, ...]
 
@@ -136,6 +161,18 @@ def _beat_at_seconds(
     origin_time, origin_beat, bpm = tempo[index]
     delta_s = Fraction(str(time_s)) - Fraction(str(origin_time))
     return origin_beat + delta_s * bpm / 60
+
+
+def _seconds_at_beat(
+    beat: Fraction,
+    tempo: list[tuple[float, Fraction, Fraction]],
+) -> float:
+    beats = [point[1] for point in tempo]
+    index = bisect_right(beats, beat) - 1
+    if index < 0:
+        raise ValueError("Beat precedes the first BPM event")
+    origin_time, origin_beat, bpm = tempo[index]
+    return origin_time + float((beat - origin_beat) * 60 / bpm)
 
 
 def _slide_group_key(event: Event) -> tuple:
@@ -186,12 +223,28 @@ def _build_slide_groups(events: tuple[Event, ...]) -> list[_SlideGroup]:
         )
         if not valid_paths:
             continue
+        active_intervals = []
+        for path in valid_paths:
+            if path.start_beat is None:
+                raise ValueError("Slide path is missing its launch beat")
+            one_beat_end = _seconds_at_beat(
+                Fraction(path.start_beat) + 1,
+                tempo,
+            )
+            active_intervals.append((
+                path.start_time_s,
+                min(path.end_time_s, one_beat_end),
+            ))
         output.append(_SlideGroup(
             key=key,
             events=valid_paths,
             declaration_time_s=declaration_time,
             declaration_beat=declaration_beat,
             launch_time_s=max(path.start_time_s for path in valid_paths),
+            launch_times_s=tuple(sorted({
+                path.start_time_s for path in valid_paths
+            })),
+            active_intervals=tuple(active_intervals),
             head_event_id=head_id,
             source_start=min(path.source_start for path in paths),
         ))
@@ -269,10 +322,15 @@ def _workload_points(
     touches = []
     for event in events:
         if event.kind in {"tap", "hold"}:
+            if event.start_beat is None:
+                raise ValueError("Button event is missing its beat position")
             output.append(_WorkloadPoint(
                 ("event", event.event_id),
                 event.start_time_s,
                 1.0,
+                "button",
+                Fraction(event.start_beat),
+                event.position,
                 head_owners.get(event.event_id),
                 head_body_weights.get(event.event_id, 0.0),
             ))
@@ -287,46 +345,141 @@ def _workload_points(
                 ("touch", component.component_id),
                 component.time_s,
                 TOUCH_INTERFERENCE_WEIGHT,
+                "touch",
             ))
 
     for group in groups:
-        for launch_index, launch_time in enumerate(sorted({
-            event.start_time_s for event in group.events
-        })):
+        launches = defaultdict(int)
+        for event in group.events:
+            launches[event.start_time_s] += 1
+        for launch_index, (launch_time, path_count) in enumerate(
+            sorted(launches.items())
+        ):
             output.append(_WorkloadPoint(
                 ("slide_launch", group.key, launch_index),
                 launch_time,
-                1.0,
-                group.key,
+                float(path_count),
+                "slide_launch",
+                owner_group_key=group.key,
             ))
     return sorted(output, key=lambda point: (point.time_s, point.point_id))
 
 
-def _internal_total(count: int) -> float:
-    if count < 0:
-        raise ValueError("Internal object count cannot be negative")
-    if count == 0:
-        return 0.0
-    return count + INTERNAL_GROWTH_ALPHA * math.lgamma(count + 1) / math.log(2)
+def _adjacent_direction(left: Counter[int], right: Counter[int]) -> int | None:
+    clockwise = Counter({position % 8 + 1: count for position, count in left.items()})
+    if clockwise == right:
+        return 1
+    counterclockwise = Counter({(position - 2) % 8 + 1: count for position, count in left.items()})
+    if counterclockwise == right:
+        return -1
+    return None
 
 
-def _internal_batches(points: list[_WorkloadPoint]) -> list[list[_WorkloadPoint]]:
+def _button_point_weight(
+    point: _WorkloadPoint,
+    target_positions: set[str],
+    same_position_point_ids: set[tuple] | None = None,
+) -> float:
+    weight = point.weight
+    same_position_eligible = (
+        same_position_point_ids is None
+        or point.point_id in same_position_point_ids
+    )
+    if same_position_eligible and point.position in target_positions:
+        weight *= SAME_POSITION_MULTIPLIER
+    # is_slide_head alone also covers display-only star modifiers. Requiring an
+    # attached, valid Slide body keeps those syntax-only stars at Tap weight.
+    if point.slide_head_body_weight > 0:
+        weight *= PENDING_SLIDE_HEAD_MULTIPLIER
+    return weight
+
+
+def _sweep_adjusted_button_total(
+    points: list[_WorkloadPoint],
+    target_positions: set[str],
+    same_position_point_ids: set[tuple] | None = None,
+) -> float:
+    """Sum Tap/Hold load, decaying equal-rhythm one- and two-lane sweeps."""
     if not points:
-        return []
-    batches = [[points[0]]]
-    for point in points[1:]:
-        if _same_time(batches[-1][0].time_s, point.time_s):
-            batches[-1].append(point)
+        return 0.0
+    by_beat = defaultdict(list)
+    for point in points:
+        if point.beat is None or point.position is None:
+            raise ValueError("Button workload point lacks beat or position")
+        by_beat[point.beat].append(point)
+
+    run_length = 0
+    previous_positions = None
+    previous_beat = None
+    interval = None
+    direction = None
+    total = 0.0
+    for beat in sorted(by_beat):
+        batch = by_beat[beat]
+        width = len(batch)
+        batch_weight = math.fsum(
+            _button_point_weight(
+                point,
+                target_positions,
+                same_position_point_ids,
+            )
+            for point in batch
+        )
+        if width not in {1, 2}:
+            total += batch_weight
+            run_length = 0
+            previous_positions = previous_beat = interval = direction = None
+            continue
+
+        positions = Counter(int(point.position) for point in batch)
+        current_interval = beat - previous_beat if previous_beat is not None else None
+        current_direction = (
+            _adjacent_direction(previous_positions, positions)
+            if previous_positions is not None and sum(previous_positions.values()) == width
+            else None
+        )
+        continues = (
+            previous_beat is not None
+            and current_direction is not None
+            and current_interval is not None
+            and current_interval > 0
+            and (
+                run_length == 1
+                or (current_direction == direction and current_interval == interval)
+            )
+        )
+        if continues:
+            run_length += 1
+            if run_length == 2:
+                direction = current_direction
+                interval = current_interval
+        elif (
+            previous_beat is not None
+            and current_direction is not None
+            and current_interval is not None
+            and current_interval > 0
+        ):
+            run_length = 2
+            direction = current_direction
+            interval = current_interval
         else:
-            batches.append([point])
-    return batches
+            run_length = 1
+            direction = interval = None
+
+        # The third timestamp has divisor log2(2)=1; actual attenuation begins
+        # at the fourth, exactly following 1/log2(n-1).
+        divisor = math.log2(max(2, run_length - 1))
+        total += batch_weight / divisor
+        previous_positions = positions
+        previous_beat = beat
+    return total
 
 
 def _assign_points_to_onsets(
     clusters: list[_SlideOnsetCluster],
     points: list[_WorkloadPoint],
-) -> list[list[_WorkloadPoint]]:
-    """Assign each external workload point to at most one pending onset."""
+) -> list[list[_AssignedPoint]]:
+    """Assign each point to one launch, pending, or active configuration."""
     assigned = [[] for _ in clusters]
     for point in points:
         candidates = []
@@ -334,51 +487,133 @@ def _assign_points_to_onsets(
             cluster_keys = {group.key for group in cluster.groups}
             if point.owner_group_key in cluster_keys:
                 continue
-            pending = [
-                group for group in cluster.groups
-                if _time_in_closed_interval(
-                    point.time_s,
-                    group.declaration_time_s,
-                    group.launch_time_s,
-                )
-            ]
-            if pending:
-                distance = min(
-                    max(0.0, group.launch_time_s - point.time_s)
-                    for group in pending
-                )
-                candidates.append((distance, index))
+            launch = any(
+                _same_time(point.time_s, launch_time)
+                for group in cluster.groups
+                for launch_time in group.launch_times_s
+            )
+            waiting = any(
+                point.time_s >= group.declaration_time_s - COMPARISON_TOLERANCE
+                and point.time_s < group.launch_time_s - COMPARISON_TOLERANCE
+                for group in cluster.groups
+            )
+            active = any(
+                point.time_s > start + COMPARISON_TOLERANCE
+                and point.time_s <= end + COMPARISON_TOLERANCE
+                for group in cluster.groups
+                for start, end in group.active_intervals
+            )
+            phase = (
+                "launch" if launch
+                else "waiting" if waiting
+                else "active" if active
+                else None
+            )
+            if phase is not None:
+                if phase == "launch":
+                    priority = 0
+                    distance = 0.0
+                elif phase == "waiting":
+                    priority = 1
+                    distance = min(
+                        group.launch_time_s - point.time_s
+                        for group in cluster.groups
+                        if (
+                            point.time_s
+                            >= group.declaration_time_s - COMPARISON_TOLERANCE
+                            and point.time_s
+                            < group.launch_time_s - COMPARISON_TOLERANCE
+                        )
+                    )
+                else:
+                    priority = 2
+                    distance = min(
+                        point.time_s - start
+                        for group in cluster.groups
+                        for start, end in group.active_intervals
+                        if (
+                            point.time_s > start + COMPARISON_TOLERANCE
+                            and point.time_s <= end + COMPARISON_TOLERANCE
+                        )
+                    )
+                candidates.append((priority, distance, index, phase))
         if candidates:
-            _, index = min(candidates)
-            assigned[index].append(point)
+            _, _, index, phase = min(candidates)
+            assigned[index].append(
+                _AssignedPoint(point=point, phase=phase)
+            )
     return assigned
 
 
 def _cluster_tricky(
     cluster: _SlideOnsetCluster,
-    points: list[_WorkloadPoint],
+    assigned: list[_AssignedPoint],
 ) -> _ClusterTricky:
-    launch_times = [group.launch_time_s for group in cluster.groups]
-    launch_points = [
-        point for point in points
-        if any(_same_time(point.time_s, launch) for launch in launch_times)
+    target_positions = {
+        event.position
+        for group in cluster.groups
+        for event in group.events
+        if event.position is not None
+    }
+    touch_points = [
+        item.point
+        for item in sorted(
+            assigned,
+            key=lambda item: (item.point.time_s, item.point.point_id),
+        )
+        if item.point.kind == "touch"
     ]
-    internal_points = [point for point in points if point not in launch_points]
+    touch_ids = {
+        point.point_id for point in touch_points[:TOUCH_INTERFERENCE_CAP]
+    }
+    counted = [
+        item for item in assigned
+        if item.point.kind != "touch" or item.point.point_id in touch_ids
+    ]
+    launch_points = [
+        item.point for item in counted if item.phase == "launch"
+    ]
+    internal = [
+        item for item in counted if item.phase != "launch"
+    ]
 
-    internal = 0.0
-    previous_count = 0
-    for batch in _internal_batches(internal_points):
-        next_count = previous_count + len(batch)
-        average_marginal = (
-            _internal_total(next_count) - _internal_total(previous_count)
-        ) / len(batch)
-        internal += average_marginal * math.fsum(point.weight for point in batch)
-        previous_count = next_count
+    internal_buttons = [
+        item.point for item in internal if item.point.kind == "button"
+    ]
+    internal_other = [
+        item.point for item in internal if item.point.kind != "button"
+    ]
+    waiting_button_ids = {
+        item.point.point_id
+        for item in internal
+        if item.phase == "waiting" and item.point.kind == "button"
+    }
+    internal_total = _sweep_adjusted_button_total(
+        internal_buttons,
+        target_positions,
+        waiting_button_ids,
+    ) + math.fsum(point.weight for point in internal_other)
+    launch_head_owners = {
+        point.owner_group_key
+        for point in launch_points
+        if point.kind == "button" and point.slide_head_body_weight > 0
+    }
+    deduplicated_launch_points = [
+        point for point in launch_points
+        if not (
+            point.kind == "slide_launch"
+            and point.owner_group_key in launch_head_owners
+        )
+    ]
     launch = math.fsum(
         point.weight + point.slide_head_body_weight
-        for point in launch_points
+        for point in deduplicated_launch_points
     ) / 2
-    return _ClusterTricky(internal, launch)
+    concurrency = math.fsum(
+        math.sqrt(len(group.events)) for group in cluster.groups
+    )
+    multiplier = 1 + MULTI_SLIDE_UPLIFT * max(0.0, concurrency - 1)
+    return _ClusterTricky(internal_total, launch, multiplier)
 
 
 def _cadence_factor(section: list[_SlideOnsetCluster]) -> float:
@@ -402,19 +637,6 @@ def _log_length(count: int, full_count: int) -> float:
     return full_count * (1 + math.log1p(excess))
 
 
-def _tricky_effective_length(onset_count: int) -> float:
-    if onset_count <= 0:
-        raise ValueError("A tricky section must contain at least one onset")
-    if onset_count <= TRICKY_EFFECTIVE_LENGTH_BASE:
-        return float(onset_count)
-    scaled = 1 + (
-        onset_count - TRICKY_EFFECTIVE_LENGTH_BASE
-    ) / TRICKY_EFFECTIVE_LENGTH_BASE
-    return TRICKY_EFFECTIVE_LENGTH_BASE * (
-        1 + math.log(scaled, TRICKY_EFFECTIVE_LENGTH_BASE)
-    )
-
-
 def _sequence_length_factor(onset_count: int) -> float:
     if onset_count <= SEQUENCE_FULL_ONSETS:
         return 1.0
@@ -432,7 +654,7 @@ def _cluster_concurrency(cluster: _SlideOnsetCluster) -> float:
 
 def _section_metrics(
     section: list[_SlideOnsetCluster],
-    assigned_points: dict[int, list[_WorkloadPoint]],
+    assigned_points: dict[int, list[_AssignedPoint]],
 ) -> SlideSectionMetrics:
     groups = [group for cluster in section for group in cluster.groups]
     cluster_tricky = [
@@ -445,12 +667,11 @@ def _section_metrics(
     tricky_values = tuple(item.intensity for item in cluster_tricky)
     slide_count = len(groups)
     tricky_mean = math.fsum(tricky_values) / onset_count
-    tricky_rms = math.sqrt(
-        math.fsum(value ** 2 for value in tricky_values) / onset_count
-    )
-    tricky_intensity = 0.8 * tricky_mean + 0.2 * tricky_rms
-    tricky_effective_length = _tricky_effective_length(onset_count)
-    tricky_load = tricky_effective_length * tricky_intensity
+    # These section fields remain useful diagnostics for Slide sequence output,
+    # but no section boundary or length bonus contributes to slide_tricky.
+    tricky_intensity = tricky_mean
+    tricky_effective_length = float(onset_count)
+    tricky_load = math.fsum(tricky_values)
 
     cadence = _cadence_factor(section)
     concurrency = math.fsum(
@@ -499,10 +720,9 @@ def slide_feature_breakdown(
         return SlideFeatureBreakdown(
             tricky=0.0,
             tricky_total_load=0.0,
-            tricky_all_load=0.0,
-            tricky_time_units=duration_s / TRICKY_REFERENCE_SECONDS,
             tricky_unique_loads=(),
-            cumulate=0.0,
+            tricky_peak_time_s=None,
+            tricky_points=(),
             sequence=0.0,
             sections=(),
         )
@@ -518,13 +738,30 @@ def slide_feature_breakdown(
         for section in _build_sections(clusters)
     )
 
-    section_loads = [section.tricky_load for section in sections]
-    tricky_all_load = math.fsum(section_loads)
-    tricky_unique_loads = _top_unique_tricky_loads(section_loads)
-    tricky_total_load = _top_unique_tricky_load(section_loads)
-    tricky_time_units = duration_s / TRICKY_REFERENCE_SECONDS
-    tricky = tricky_total_load / tricky_time_units
-    cumulate = tricky_all_load / tricky_time_units
+    cluster_tricky = [
+        _cluster_tricky(cluster, assigned_points[id(cluster)])
+        for cluster in clusters
+    ]
+    tricky_points = tuple(
+        SlideTrickyPoint(
+            time_s=max(group.launch_time_s for group in cluster.groups),
+            internal=value.internal,
+            launch=value.launch,
+            load=value.intensity,
+            slide_count=sum(len(group.events) for group in cluster.groups),
+            head_count=len(cluster.groups),
+            configuration_multiplier=value.configuration_multiplier,
+        )
+        for cluster, value in zip(clusters, cluster_tricky)
+    )
+    tricky_unique_loads = _top_unique_tricky_loads(
+        [point.load for point in tricky_points]
+    )
+    peak = max(
+        tricky_points,
+        key=lambda point: (point.load, -point.time_s),
+    )
+    tricky = peak.load
 
     sequence_sections = [
         section for section in sections
@@ -538,34 +775,23 @@ def slide_feature_breakdown(
     )
     return SlideFeatureBreakdown(
         tricky=tricky,
-        tricky_total_load=tricky_total_load,
-        tricky_all_load=tricky_all_load,
-        tricky_time_units=tricky_time_units,
+        tricky_total_load=peak.load,
         tricky_unique_loads=tricky_unique_loads,
-        cumulate=cumulate,
+        tricky_peak_time_s=peak.time_s,
+        tricky_points=tricky_points,
         sequence=sequence,
         sections=sections,
     )
 
 
 class SlideTrickyAnalyzer:
-    """Return Slide-head-to-launch interference intensity."""
+    """Return the strongest single Slide interference configuration."""
 
     def analyze(self, context: AnalysisContext) -> FeatureResult:
         if context.duration_s <= 0:
             return FeatureResult(None, success=False)
         result = slide_feature_breakdown(context.events, context.duration_s)
         return FeatureResult(result.tricky)
-
-
-class SlideCumulateAnalyzer:
-    """Return all Slide tricky section loads per 0.5 seconds of chart time."""
-
-    def analyze(self, context: AnalysisContext) -> FeatureResult:
-        if context.duration_s <= 0:
-            return FeatureResult(None, success=False)
-        result = slide_feature_breakdown(context.events, context.duration_s)
-        return FeatureResult(result.cumulate)
 
 
 class SlideSequenceAnalyzer:

@@ -338,10 +338,13 @@ analyzer = ChartAnalyzer({"note_density": NoteDensityAnalyzer})
 完整公式、Touch 邻接与边界规则见 [分析说明](docs/ANALYSIS.md#整体物量口径)。默认配置以
 `note` 启用它，并使用当前观察批次的中位数与 P99 作临时映射锚点；该映射不代表正式校准。
 
-Slide 分拆为 `slide_tricky` 与 `slide_sequence`：前者把声明至启动的错位物量按段线性
-加总，再除以全谱的 0.5 秒时间单位；
-后者只分析连续阵、同拍双押和同头多路径，不再混入密度或干扰。完整公式和临时映射口径
-见 [Slide 分析说明](docs/ANALYSIS.md#slide-错位与阵强度口径)。
+Slide 分为三个独立维度：`slide_tricky` 取负荷最高的单个 Slide 启动配置；
+`slide_cumulate` 由独立 analyser 按历史确认口径计算，
+不复用当前 Tricky helper，中文显示为“持续星星压力”；`slide_sequence` 只分析连续阵、
+同拍双押和同头多路径。`slide_tricky` 的 Tap 干扰包含同位、扫键和实际 Slide 头修正，
+Touch 连通组最多计两组，启动拍统一将物件负荷除以二，并只追加启动后一拍以内的运动
+交互。每个外部物件只归属一个最近的相关配置。完整公式见
+[分析说明](docs/ANALYSIS.md#slide-压力口径)。
 
 `AnalysisContext` 提供：
 
@@ -359,6 +362,7 @@ FEATURES = {
     "note": NoteDensityAnalyzer,
     "peak": PeakDensityAnalyzer,
     "slide_tricky": SlideTrickyAnalyzer,
+    "slide_cumulate": SlideCumulateAnalyzer,
     "slide_sequence": SlideSequenceAnalyzer,
 }
 ```

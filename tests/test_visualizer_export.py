@@ -125,10 +125,16 @@ class VisualizerExporterTests(unittest.TestCase):
                     "color": "#3a86ff",
                 },
                 {
+                    "key": "slide_cumulate",
+                    "label": "持续星星压力",
+                    "shortLabel": "持续星星",
+                    "color": "#8338ec",
+                },
+                {
                     "key": "slide_sequence",
                     "label": "Slide阵强度",
                     "shortLabel": "Slide阵",
-                    "color": "#8338ec",
+                    "color": "#d1495b",
                 },
             ])
             self.assertEqual(payload["stats"]["songCount"], 1)

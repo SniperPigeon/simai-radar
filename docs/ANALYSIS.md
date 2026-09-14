@@ -140,79 +140,70 @@ adjusted_weight(n) = base_weight / log2(max(2, n - 2))
 
 ## Slide 压力口径
 
-`SlidePressureAnalyzer` 只读取 events-0.3 事件，不重新扫描 Simai。实现、导出列和界面统一
-使用 `slide`，不使用口语化的星星命名。共享同一 `head_event_id` 的路径为一个 Slide 组；
-无头分支按相同来源声明分组。
+三个 Slide 分析器只读取 events-0.3，不重新扫描 Simai。共享同一 `head_event_id` 的路径先
+组成一头多路径组；声明秒时间差不超过 `1/60` 秒的多头组再合成同一启动配置。零持续
+时间路径跳过。一个外部物件始终只归属一个配置：优先归入恰好相同的启动拍，否则归入
+离启动最近的待启动配置，最后才归入最近启动且仍在运动期内的配置。同刻多头已经合为
+同一配置，因此也不会在配置内部重复。
 
-对组 `i` 中每条路径 `p`，令 `L_p` 为全部段的 `bar_count` 之和：
-
-```text
-M_p = sqrt(L_p / 20)
-M_i = sum(M_p for p in group_i)
-```
-
-20 bar 是首版固定参考。自体压力不读取速度，避免 `v=L/T` 再乘长度平方根造成长度实际按
-`L^1.5` 重复贡献。零持续时间路径仍按输入异常直接跳过；同组其他有效分支继续计算，整组
-均无有效路径时跳过整组。不会为这种路径生成任意截断高分，也不会仅因此令整张谱的
-Slide 维失败。
-
-每个 Slide 组的启动干扰使用包含两端的 `[declare_time, latest_launch_time]`。共享头的分支
-可能分别启动，因此窗口保持到最后一个分支启动。排除本组自己的头与启动动作；普通
-Tap/Hold onset 和其他 Slide 启动动作权重为 1，同拍相邻 Touch/TouchHold 连通组权重为
-1.5。Touch 不跨时间合并，避免把恰在启动点的动作移动到窗口之外。启动时刻的其他物件
-明确计入。同一物件若同时干扰多个待启动 Slide，可分别进入各自的 `Q_i`：
+对配置 `j`，在声明到启动之间计算内部干扰 `I_j`。Tap/Hold 基础权重为 1；与本配置任一
+外键头同位时乘 1.5；若该 Tap 确实关联至少一条有效 Slide 路径，再乘 2。只有
+`force_star` 等显示效果而不带路径的 Tap 不乘 2。等拍距、每拍向相邻键同方向移动的单扫
+或双扫，以时间点数 `n` 衰减当前批次：
 
 ```text
-Q_i = sum(weight(e) for declare_i <= time(e) <= launch_i, excluding group_i)
-P_i = M_i + 0.5 * Q_i
+sweep_factor(n) = 1 / log2(max(2, n - 1))
 ```
 
-Slide 按声明拍排序，声明秒时间差不超过 `1/60` 秒的 Slide 先形成同一 onset cluster，
-cluster 内不产生 cadence 边。这会把 `{9999}` 等极细分拍编码的准同时 Slide 视为同一
-次人体动作，避免 `0.5 / delta_time` 在零附近发散。相邻 cluster 只要满足
-`0 < delta_beat <= 1` 就属于同一个最大连续段，因此四分、附点八分、八分、三连音和更快
-间隔都连续；夹杂的非 Slide 物件不打断。声明拍有头时取关联头的 `start_beat`；无头时由
-`slide_declare_time_s` 和 timing/BPM 事件回算，不重新读取原文。
+所以前三个时间点不减，第四个起衰减；双扫的批次基础权重自然为单扫两倍。方向、拍距或
+单/双扫宽度变化会重新起算。Touch/TouchHold 仍先按同拍空间连通组成组，每组权重 1.5，
+但每个启动配置按时间顺序最多计两组。期间启动的其他 Slide 体每条路径权重为 1。
 
-一段 `r` 有 `n_r` 个 Slide 组、`m_r` 个 onset cluster。实际秒间隔而非 BPM 标签确定速度：
+恰在本配置任一启动时刻的物件改计入启动负荷 `L_j`，不再套同位或待启动头乘数：
 
 ```text
-A_r = 1                                                   if m_r == 1
-A_r = mean(0.5 / delta_time_k for adjacent clusters k)   if m_r >= 2
+L_j = sum(tap_weight + attached_slide_path_count) / 2
 ```
 
-`G_r` 是第一至最后声明之间、不属于本段自身且未进入任何启动窗口的剩余夹杂物量。它只
-补充窗口外的段内上下文；已经进入一个或多个 `Q_i` 的物件不再进入 `G_r`：
+普通 Tap 因而为 0.5，Touch 组为 0.75，新按下的一头一路为 `(1+1)/2=1`，一头两路为
+`(1+2)/2=1.5`。本配置自身的头和路径始终排除。令
+`U_j = sum_h sqrt(path_count_h)`，对合并后的多头/多路径配置只作小幅后置提升：
+
+启动后还会计算一段受限的运动期。对每条路径 `p`，范围为
+`(launch_p, min(end_p, launch_p + 1 beat)]`；一拍通过全谱 beat/BPM 映射换算，不是固定
+秒数。同一配置的多路径区间取并集，物件仍只计一次。运动期 Tap 不再使用原头同位 1.5，
+但实际 Slide 头 2 倍、扫键衰减、Touch 权重及最多两组的上限继续适用。启动后一拍以外的
+交互不再归因于该 Slide，避免把玩家已经可以撒手处理的长 Slide 全程计入。
 
 ```text
-C_r = (sum(Q_i for i in r) + G_r) / n_r
-S_r = mean(M_i for i in r) * A_r + 0.5 * C_r
+Q_j = (I_j + L_j) * (1 + 0.15 * max(0, U_j - 1))
 ```
 
-`C_r` 作为加权加项，不再被 cadence 乘算。连续段前 8 个 Slide 完整计数，之后有效长度
-按自然对数增长：
+单头单路径不变，双头双路径提升 15%，单头双路径提升约 6.2%。`slide_tricky` 直接取
+负荷最高的单个启动配置：
 
 ```text
-n_eff_r = n_r                                            if n_r <= 8
-n_eff_r = 8 + 8 * ln(1 + (n_r - 8) / 8)                 if n_r > 8
-R_r = sqrt(n_eff_r) * S_r
+slide_tricky = max_j Q_j
 ```
 
-`S_r` 是单位 Slide 的段强度，`R_r` 是使用 log 软上限后的段压力。全局不取最大段，而把
-每段的平方压力全部纳入：
+`slide_cumulate` 使用独立 analyser，不复用上述当前 Tricky helper。它重新建立 Slide 组、
+onset 与等待窗归属：外部物件全谱只归给最近启动的一个 onset；启动前内部物件使用
+`F(n)=n+0.35*log2(n!)`，启动同拍线性，Touch 组为 1.5，不含同位、扫键、活动期或多头
+uplift。连续段强度为 `0.8*mean + 0.2*RMS`，有效长度前 5 个线性，之后使用底数 5：
 
 ```text
 D = max(chart_end_time_s, last_event_end_s or 0)
-I_slide = sqrt(sum(n_eff_r * S_r**2) / sum(n_eff_r))
-rho_slide_eff = 60 * sum(n_eff_r) / D
-rho_slide_actual = 60 * sum(n_r) / D
-slide_raw = I_slide * sqrt(rho_slide_eff)
-          = sqrt((60 / D) * sum(R_r**2))
+m_eff = m                                                   if m <= 5
+m_eff = 5 + 5 * log5(1 + (m - 5) / 5)                     if m > 5
+I_r = 0.8 * mean(Q_c) + 0.2 * RMS(Q_c)
+L_r = m_eff * I_r
+slide_cumulate = sum(L_r) / (D / 0.5)
 ```
 
-正时长无 Slide 谱面得到 0，零时长不可用。`slide_pressure_breakdown` 可供测试和实验代码
-检查每段的 `M/C/A/S/R`、实际/有效 Slide 数、全局活跃强度与实际/有效每分钟 Slide
-密度；默认 `FeatureResult` 仍只输出 `slide_raw`，不扩展通用结果契约。
+`slide_sequence` 仍独立按声明拍分连续段：相邻启动配置满足 `0 < delta_beat <= 1` 即连续，
+夹杂其他物件不打断。它使用实际秒间隔的 `mean(0.5/delta_time)`、从第四个时间点后增长
+放缓的长度因子，以及 `0.5 * mean(max(0,U_j-1))` 并发加项；全局取非零段强度的 RMS。
+正时长无 Slide 谱面三个维度均为 0，零时长返回失败。
 
 ## 统一 CLI 与模式
 
@@ -320,14 +311,16 @@ FEATURE_MAPPERS = {
     "hold": DummyPnMapper(p50=1.0, p100=2.0),
     "note": DummyPnMapper(p50=3.540077197, p100=9.328672541),
     "peak": DummyPnMapper(p50=10.0, p100=20.0),
-    "slide": DummyPnMapper(p50=4.6, p100=27.0),
+    "slide_tricky": DummyPnMapper(p50=27.5, p100=116.1),
+    "slide_cumulate": DummyPnMapper(p50=0.36, p100=0.96),
+    "slide_sequence": DummyPnMapper(p50=1.3, p100=2.9),
 }
 
 class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-slide-20260913-v8",
+            mapping_version="provisional-standalone-cumulate-20260914-v24",
         )
 
 TRANSFORMER = DefaultScoreTransformer
@@ -335,9 +328,10 @@ TRANSFORMER = DefaultScoreTransformer
 
 p50、p100 是原始指标的数值阈值，要求 `0 < p50 < p100` 且均为有限数值。默认 HOLD 的
 1、2 仅是 dummy 参数；整体物量的 3.540077197、9.328672541 分别来自当前 7512 张观察
-样本的中位数和 P99；Peak 的 10、20 是首轮观察用宽松锚点；Slide 的 4.6、27 来自当前
-7326 张非宴谱的约 4.64 中位数和 26.59 P99 后取整，只用于首轮实现检查。它们都是
-固定的临时配置，后续批次不会自动重新拟合。
+样本的中位数和 P99；Peak 的 10、20 是首轮观察用宽松锚点。当前 1888 张难度索引 5/6
+观察样本中，`slide_tricky` 中位数为 27.5、P99.9 约 116.06，临时取 27.5、116.1；
+`slide_cumulate` 独立复刻版本中位数约 0.363、P99 约 0.960，临时取 0.36、0.96；
+`slide_sequence` 暂取 1.3、2.9。它们都是固定临时配置，后续批次不会自动重新拟合。
 
 DummyPnMapper 使用两段线性变换：
 
@@ -350,8 +344,9 @@ x >= p100:        200
 
 即 0→0、P50→50、P100→200，范围外截断到 0–200，保留浮点分数、不取整。默认 HOLD
 示例：0.5→25、1→50、1.5→125、2→200；整体物量在当前临时映射下
-3.540077197→50、9.328672541→200；Peak 为 10→50、20→200；Slide 为
-4.6→50、27→200。NaN、无穷值及无效阈值明确报错。
+3.540077197→50、9.328672541→200；Peak 为 10→50、20→200；`slide_tricky` 为
+27.5→50、116.1→200；`slide_cumulate` 为 0.36→50、0.96→200。NaN、无穷值及无效
+阈值明确报错。
 
 同一映射器类可以配置不同阈值，也可以替换为其他实现 map 的类。调用方可以直接注入自己的配置：
 
@@ -372,7 +367,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-slide-20260913-v8`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-standalone-cumulate-20260914-v24`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 

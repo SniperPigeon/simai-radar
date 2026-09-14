@@ -149,6 +149,7 @@ class BatchTests(unittest.TestCase):
                     "note": False,
                     "peak": False,
                     "slide_tricky": False,
+                    "slide_cumulate": False,
                     "slide_sequence": False,
                 },
             )

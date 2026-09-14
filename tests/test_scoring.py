@@ -24,23 +24,27 @@ class ScoringTests(unittest.TestCase):
         peak = FEATURE_MAPPERS["peak"]
         self.assertEqual((peak.p50, peak.p100), (10.0, 20.0))
         tricky = FEATURE_MAPPERS["slide_tricky"]
+        cumulate = FEATURE_MAPPERS["slide_cumulate"]
         sequence = FEATURE_MAPPERS["slide_sequence"]
-        self.assertEqual((tricky.p50, tricky.p100), (0.51, 1.38))
+        self.assertEqual((tricky.p50, tricky.p100), (27.5, 116.1))
+        self.assertEqual((cumulate.p50, cumulate.p100), (0.36, 0.96))
         self.assertEqual((sequence.p50, sequence.p100), (1.3, 2.9))
         transformer = TRANSFORMER()
         scores = transformer.transform(AnalysisResult({
             "note": FeatureResult(note.p50),
             "peak": FeatureResult(peak.p50),
             "slide_tricky": FeatureResult(tricky.p50),
+            "slide_cumulate": FeatureResult(cumulate.p50),
             "slide_sequence": FeatureResult(sequence.p50),
         }))
         self.assertEqual(scores.features["note"].value, 50)
         self.assertEqual(scores.features["peak"].value, 50)
         self.assertEqual(scores.features["slide_tricky"].value, 50)
+        self.assertEqual(scores.features["slide_cumulate"].value, 50)
         self.assertEqual(scores.features["slide_sequence"].value, 50)
         self.assertEqual(
             scores.mapping_version,
-            "provisional-slide-time-density-cap4-20260914-v14",
+            "provisional-standalone-cumulate-20260914-v24",
         )
 
     def test_two_segments_anchors_interiors_and_clamping(self):

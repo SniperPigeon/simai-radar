@@ -354,11 +354,12 @@ class PipelineTests(unittest.TestCase):
                     row["note_raw"] and row["note_score"]
                     and row["peak_raw"] and row["peak_score"]
                     and row["slide_tricky_raw"] and row["slide_tricky_score"]
+                    and row["slide_cumulate_raw"] and row["slide_cumulate_score"]
                     and row["slide_sequence_raw"] and row["slide_sequence_score"]
                     for row in rows
                 ))
                 self.assertTrue(all(json.loads(row["diagnostics"])["scoring"]["mapping_version"]
-                                    == "provisional-slide-time-density-cap4-20260914-v14"
+                                    == "provisional-standalone-cumulate-20260914-v24"
                                     for row in rows))
                 self.assertTrue(all((root / mode / row["cover_path"]).is_file() for row in rows))
 
