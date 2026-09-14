@@ -19,8 +19,8 @@ TRICKY_REFERENCE_SECONDS = 0.5
 TRICKY_EFFECTIVE_LENGTH_BASE = 5
 SEQUENCE_FULL_ONSETS = 3
 CONCURRENCY_WEIGHT = 0.5
-SUPPORTED_MAX_WEIGHT = 0.5
-SUPPORTED_SECTION_COUNT = 5
+TRICKY_UNIQUE_COUNT = 5
+TRICKY_LOAD_BUCKET_DECIMALS = 6
 TOUCH_INTERFERENCE_WEIGHT = 1.5
 COMPARISON_TOLERANCE = 1e-9
 
@@ -86,12 +86,9 @@ class SlideFeatureBreakdown:
 
     tricky: float
     tricky_total_load: float
+    tricky_all_load: float
     tricky_time_units: float
-    tricky_mean_load: float
-    tricky_max_load: float
-    tricky_max_support: float
-    tricky_supported_load: float
-    tricky_section_density: float
+    tricky_unique_loads: tuple[float, ...]
     sequence: float
     sections: tuple[SlideSectionMetrics, ...]
 
@@ -477,22 +474,16 @@ def _section_metrics(
     )
 
 
-def _supported_max_components(
-    loads: list[float],
-) -> tuple[float, float, float, float]:
-    if not loads:
-        return 0.0, 0.0, 0.0, 0.0
-    ordered = sorted(loads, reverse=True)
-    mean = math.fsum(ordered) / len(ordered)
-    maximum = ordered[0]
-    support = (
-        math.fsum(ordered[1:SUPPORTED_SECTION_COUNT])
-        / ((SUPPORTED_SECTION_COUNT - 1) * maximum)
-        if maximum > 0 else 0.0
-    )
-    support = min(1.0, support)
-    supported = mean + SUPPORTED_MAX_WEIGHT * support * (maximum - mean)
-    return mean, maximum, support, supported
+def _top_unique_tricky_loads(loads: list[float]) -> tuple[float, ...]:
+    buckets = {}
+    for load in loads:
+        key = round(load, TRICKY_LOAD_BUCKET_DECIMALS)
+        buckets[key] = max(load, buckets.get(key, 0.0))
+    return tuple(sorted(buckets.values(), reverse=True)[:TRICKY_UNIQUE_COUNT])
+
+
+def _top_unique_tricky_load(loads: list[float]) -> float:
+    return math.fsum(_top_unique_tricky_loads(loads))
 
 
 def slide_feature_breakdown(
@@ -507,12 +498,9 @@ def slide_feature_breakdown(
         return SlideFeatureBreakdown(
             tricky=0.0,
             tricky_total_load=0.0,
+            tricky_all_load=0.0,
             tricky_time_units=duration_s / TRICKY_REFERENCE_SECONDS,
-            tricky_mean_load=0.0,
-            tricky_max_load=0.0,
-            tricky_max_support=0.0,
-            tricky_supported_load=0.0,
-            tricky_section_density=0.0,
+            tricky_unique_loads=(),
             sequence=0.0,
             sections=(),
         )
@@ -529,16 +517,11 @@ def slide_feature_breakdown(
     )
 
     section_loads = [section.tricky_load for section in sections]
-    tricky_total_load = math.fsum(section_loads)
+    tricky_all_load = math.fsum(section_loads)
+    tricky_unique_loads = _top_unique_tricky_loads(section_loads)
+    tricky_total_load = _top_unique_tricky_load(section_loads)
     tricky_time_units = duration_s / TRICKY_REFERENCE_SECONDS
-    tricky_mean_load, tricky_max_load, tricky_max_support, tricky_supported_load = (
-        _supported_max_components(section_loads)
-    )
-    tricky_section_density = min(
-        len(sections),
-        SUPPORTED_SECTION_COUNT,
-    ) / tricky_time_units
-    tricky = tricky_supported_load * tricky_section_density
+    tricky = tricky_total_load / tricky_time_units
 
     sequence_sections = [
         section for section in sections
@@ -553,12 +536,9 @@ def slide_feature_breakdown(
     return SlideFeatureBreakdown(
         tricky=tricky,
         tricky_total_load=tricky_total_load,
+        tricky_all_load=tricky_all_load,
         tricky_time_units=tricky_time_units,
-        tricky_mean_load=tricky_mean_load,
-        tricky_max_load=tricky_max_load,
-        tricky_max_support=tricky_max_support,
-        tricky_supported_load=tricky_supported_load,
-        tricky_section_density=tricky_section_density,
+        tricky_unique_loads=tricky_unique_loads,
         sequence=sequence,
         sections=sections,
     )
