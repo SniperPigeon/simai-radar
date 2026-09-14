@@ -16,7 +16,8 @@ CADENCE_REFERENCE_SECONDS = 0.5
 SIMULTANEOUS_ONSET_SECONDS = 1 / 60
 INTERNAL_GROWTH_ALPHA = 0.35
 TRICKY_REFERENCE_SECONDS = 0.5
-TRICKY_EFFECTIVE_LENGTH_BASE = 5
+TRICKY_FULL_RANKS = 5
+TRICKY_MAX_RANKS = 20
 SEQUENCE_FULL_ONSETS = 3
 CONCURRENCY_WEIGHT = 0.5
 TOUCH_INTERFERENCE_WEIGHT = 1.5
@@ -67,7 +68,6 @@ class SlideSectionMetrics:
     onset_count: int
     internal_interference: float
     launch_interference: float
-    tricky_effective_length: float
     tricky_intensity: float
     tricky_load: float
     tricky_cluster_values: tuple[float, ...]
@@ -83,6 +83,7 @@ class SlideFeatureBreakdown:
 
     tricky: float
     tricky_total_load: float
+    tricky_all_load: float
     tricky_time_units: float
     sequence: float
     sections: tuple[SlideSectionMetrics, ...]
@@ -391,19 +392,6 @@ def _log_length(count: int, full_count: int) -> float:
     return full_count * (1 + math.log1p(excess))
 
 
-def _tricky_effective_length(onset_count: int) -> float:
-    if onset_count <= 0:
-        raise ValueError("A tricky section must contain at least one onset")
-    if onset_count <= TRICKY_EFFECTIVE_LENGTH_BASE:
-        return float(onset_count)
-    scaled = 1 + (
-        onset_count - TRICKY_EFFECTIVE_LENGTH_BASE
-    ) / TRICKY_EFFECTIVE_LENGTH_BASE
-    return TRICKY_EFFECTIVE_LENGTH_BASE * (
-        1 + math.log(scaled, TRICKY_EFFECTIVE_LENGTH_BASE)
-    )
-
-
 def _sequence_length_factor(onset_count: int) -> float:
     if onset_count <= SEQUENCE_FULL_ONSETS:
         return 1.0
@@ -433,13 +421,8 @@ def _section_metrics(
     onset_count = len(section)
     tricky_values = tuple(item.intensity for item in cluster_tricky)
     slide_count = len(groups)
-    tricky_mean = math.fsum(tricky_values) / onset_count
-    tricky_rms = math.sqrt(
-        math.fsum(value ** 2 for value in tricky_values) / onset_count
-    )
-    tricky_intensity = 0.8 * tricky_mean + 0.2 * tricky_rms
-    tricky_effective_length = _tricky_effective_length(onset_count)
-    tricky_load = tricky_effective_length * tricky_intensity
+    tricky_load = math.fsum(tricky_values)
+    tricky_intensity = tricky_load / onset_count
 
     cadence = _cadence_factor(section)
     concurrency = math.fsum(
@@ -453,7 +436,6 @@ def _section_metrics(
         onset_count=onset_count,
         internal_interference=internal_total,
         launch_interference=launch_total,
-        tricky_effective_length=tricky_effective_length,
         tricky_intensity=tricky_intensity,
         tricky_load=tricky_load,
         tricky_cluster_values=tricky_values,
@@ -461,6 +443,24 @@ def _section_metrics(
         concurrency_pressure=concurrency,
         sequence_length_factor=sequence_length,
         sequence_intensity=sequence_intensity,
+    )
+
+
+def _tricky_rank_weight(rank: int) -> float:
+    if rank <= 0:
+        raise ValueError("Tricky rank must be positive")
+    if rank <= TRICKY_FULL_RANKS:
+        return 1.0
+    if rank <= TRICKY_MAX_RANKS:
+        return 1 / math.log2(rank - TRICKY_FULL_RANKS + 1)
+    return 0.0
+
+
+def _ranked_tricky_load(values: list[float]) -> float:
+    return math.fsum(
+        value * _tricky_rank_weight(rank)
+        for rank, value in enumerate(sorted(values, reverse=True), 1)
+        if rank <= TRICKY_MAX_RANKS
     )
 
 
@@ -476,6 +476,7 @@ def slide_feature_breakdown(
         return SlideFeatureBreakdown(
             tricky=0.0,
             tricky_total_load=0.0,
+            tricky_all_load=0.0,
             tricky_time_units=duration_s / TRICKY_REFERENCE_SECONDS,
             sequence=0.0,
             sections=(),
@@ -492,7 +493,13 @@ def slide_feature_breakdown(
         for section in _build_sections(clusters)
     )
 
-    tricky_total_load = math.fsum(section.tricky_load for section in sections)
+    tricky_values = [
+        value
+        for section in sections
+        for value in section.tricky_cluster_values
+    ]
+    tricky_all_load = math.fsum(tricky_values)
+    tricky_total_load = _ranked_tricky_load(tricky_values)
     tricky_time_units = duration_s / TRICKY_REFERENCE_SECONDS
     tricky = tricky_total_load / tricky_time_units
 
@@ -509,6 +516,7 @@ def slide_feature_breakdown(
     return SlideFeatureBreakdown(
         tricky=tricky,
         tricky_total_load=tricky_total_load,
+        tricky_all_load=tricky_all_load,
         tricky_time_units=tricky_time_units,
         sequence=sequence,
         sections=sections,
