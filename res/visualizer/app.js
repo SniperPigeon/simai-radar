@@ -1,6 +1,9 @@
 "use strict";
 
 const DEFAULT_DISTRIBUTION_PERCENTILES = Object.freeze([30, 67, 85, 99]);
+const PERCENTILE_PRECISION = 3;
+const PERCENTILE_STEP = 10 ** -PERCENTILE_PRECISION;
+const MAX_DISTRIBUTION_PERCENTILE = 100 - PERCENTILE_STEP;
 
 const state = {
   data: null,
@@ -124,6 +127,13 @@ function rawValueText(value) {
   return number.toFixed(4);
 }
 
+function percentileText(value) {
+  return Number(value)
+    .toFixed(PERCENTILE_PRECISION)
+    .replace(/\.0+$/, "")
+    .replace(/(\.\d*?)0+$/, "$1");
+}
+
 function distributionEntries() {
   return state.charts.filter(({ chart }) => {
     const rawValue = chart.rawScores?.[state.distributionDimension];
@@ -167,8 +177,8 @@ function renderThresholdControls() {
             <span>P<output data-threshold-percent-output="${index}">${value}</output></span>
           </span>
           <span class="threshold-control-inputs">
-            <input type="range" min="1" max="99.9" step="0.1" value="${value}" data-threshold-index="${index}" />
-            <input type="number" min="1" max="99.9" step="0.1" value="${value}" data-threshold-index="${index}" />
+            <input type="range" min="1" max="${MAX_DISTRIBUTION_PERCENTILE}" step="${PERCENTILE_STEP}" value="${value}" data-threshold-index="${index}" />
+            <input type="number" min="1" max="${MAX_DISTRIBUTION_PERCENTILE}" step="${PERCENTILE_STEP}" value="${value}" data-threshold-index="${index}" />
           </span>
           <span class="threshold-raw">raw <output data-threshold-raw="${index}">--</output></span>
         </label>`,
@@ -183,7 +193,7 @@ function syncThresholdControls(values) {
     });
     const percentOutput = document.querySelector(`[data-threshold-percent-output="${index}"]`);
     const rawOutput = document.querySelector(`[data-threshold-raw="${index}"]`);
-    if (percentOutput) percentOutput.textContent = Number(percent).toFixed(1).replace(/\.0$/, "");
+    if (percentOutput) percentOutput.textContent = percentileText(percent);
     if (rawOutput) rawOutput.textContent = rawValueText(percentile(values, percent));
   });
 }
@@ -191,11 +201,12 @@ function syncThresholdControls(values) {
 function setDistributionPercentile(index, rawValue) {
   const value = Number(rawValue);
   if (!Number.isFinite(value)) return;
-  const lower = index === 0 ? 1 : state.distributionPercentiles[index - 1] + 0.1;
+  const lower = index === 0 ? 1 : state.distributionPercentiles[index - 1] + PERCENTILE_STEP;
   const upper = index === state.distributionPercentiles.length - 1
-    ? 99.9
-    : state.distributionPercentiles[index + 1] - 0.1;
-  state.distributionPercentiles[index] = Math.min(upper, Math.max(lower, value));
+    ? MAX_DISTRIBUTION_PERCENTILE
+    : state.distributionPercentiles[index + 1] - PERCENTILE_STEP;
+  const clamped = Math.min(upper, Math.max(lower, value));
+  state.distributionPercentiles[index] = Number(clamped.toFixed(PERCENTILE_PRECISION));
   renderDistributionResults();
 }
 
@@ -272,7 +283,7 @@ function renderDistributionChart(values, dimension) {
           ({ percent, value, index }) => `
             <line class="threshold-line threshold-${index + 1}" x1="${xScale(percent)}" y1="${margin.top}" x2="${xScale(percent)}" y2="${curveBottom}" />
             <circle class="threshold-point threshold-${index + 1}" cx="${xScale(percent)}" cy="${yScale(value)}" r="5" />
-            <text class="threshold-label threshold-${index + 1}" x="${xScale(percent)}" y="${Math.max(margin.top + 13, yScale(value) - 10)}" text-anchor="middle">P${Number(percent).toFixed(1).replace(/\.0$/, "")} · ${rawValueText(value)}</text>`,
+            <text class="threshold-label threshold-${index + 1}" x="${xScale(percent)}" y="${Math.max(margin.top + 13, yScale(value) - 10)}" text-anchor="middle">P${percentileText(percent)} · ${rawValueText(value)}</text>`,
         )
         .join("")}
       <text class="distribution-axis-title" transform="translate(18 ${margin.top + (curveBottom - margin.top) / 2}) rotate(-90)" text-anchor="middle">原始值</text>
@@ -351,7 +362,7 @@ function renderDistributionResults() {
       const samplePosition = values.length
         ? Math.round(((values.length - 1) * percent) / 100) + 1
         : 0;
-      return `<tr><td>T${index + 1} · P${Number(percent).toFixed(1).replace(/\.0$/, "")}</td><td>${rawValueText(percentile(values, percent))}</td><td>${samplePosition.toLocaleString("zh-CN")} / ${values.length.toLocaleString("zh-CN")}</td></tr>`;
+      return `<tr><td>T${index + 1} · P${percentileText(percent)}</td><td>${rawValueText(percentile(values, percent))}</td><td>${samplePosition.toLocaleString("zh-CN")} / ${values.length.toLocaleString("zh-CN")}</td></tr>`;
     })
     .join("");
   syncThresholdControls(values);

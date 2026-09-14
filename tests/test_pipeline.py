@@ -353,11 +353,13 @@ class PipelineTests(unittest.TestCase):
                 self.assertTrue(all(
                     row["note_raw"] and row["note_score"]
                     and row["peak_raw"] and row["peak_score"]
-                    and row["slide_raw"] and row["slide_score"]
+                    and row["slide_tricky_raw"] and row["slide_tricky_score"]
+                    and row["slide_sequence_raw"] and row["slide_sequence_score"]
                     for row in rows
                 ))
                 self.assertTrue(all(json.loads(row["diagnostics"])["scoring"]["mapping_version"]
-                                    == "provisional-slide-20260913-v8" for row in rows))
+                                    == "provisional-slide-time-density-cap4-20260914-v14"
+                                    for row in rows))
                 self.assertTrue(all((root / mode / row["cover_path"]).is_file() for row in rows))
 
 

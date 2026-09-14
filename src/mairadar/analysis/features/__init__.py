@@ -3,11 +3,12 @@
 from .hold import HoldFrequencyAnalyzer
 from .note_density import NoteDensityAnalyzer
 from .peak import PeakDensityAnalyzer
-from .slide import SlidePressureAnalyzer
+from .slide import SlideSequenceAnalyzer, SlideTrickyAnalyzer
 
 __all__ = [
     "HoldFrequencyAnalyzer",
     "NoteDensityAnalyzer",
     "PeakDensityAnalyzer",
-    "SlidePressureAnalyzer",
+    "SlideSequenceAnalyzer",
+    "SlideTrickyAnalyzer",
 ]

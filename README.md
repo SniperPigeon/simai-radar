@@ -338,10 +338,10 @@ analyzer = ChartAnalyzer({"note_density": NoteDensityAnalyzer})
 完整公式、Touch 邻接与边界规则见 [分析说明](docs/ANALYSIS.md#整体物量口径)。默认配置以
 `note` 启用它，并使用当前观察批次的中位数与 P99 作临时映射锚点；该映射不代表正式校准。
 
-默认 `slide` 维度按 Slide 路径长度平方根、声明至启动的闭区间干扰，以及相邻声明
-不超过一个四分音符的连续段计算全谱压力；连续段前 8 个完整计数，之后按 log 有效长度
-软上限聚合。完整公式和临时映射口径见
-[Slide 压力说明](docs/ANALYSIS.md#slide-压力口径)。
+Slide 分拆为 `slide_tricky` 与 `slide_sequence`：前者把声明至启动的错位物量按段线性
+加总，再除以全谱的 0.5 秒时间单位；
+后者只分析连续阵、同拍双押和同头多路径，不再混入密度或干扰。完整公式和临时映射口径
+见 [Slide 分析说明](docs/ANALYSIS.md#slide-错位与阵强度口径)。
 
 `AnalysisContext` 提供：
 
@@ -358,7 +358,8 @@ FEATURES = {
     "hold": HoldFrequencyAnalyzer,
     "note": NoteDensityAnalyzer,
     "peak": PeakDensityAnalyzer,
-    "slide": SlidePressureAnalyzer,
+    "slide_tricky": SlideTrickyAnalyzer,
+    "slide_sequence": SlideSequenceAnalyzer,
 }
 ```
 

@@ -38,7 +38,8 @@ DIMENSION_PRESENTATION = {
     "hold": DimensionPresentation("Hold频率", "Hold"),
     "note": DimensionPresentation("总体物量", "Note"),
     "peak": DimensionPresentation("Peak爆发", "Peak"),
-    "slide": DimensionPresentation("Slide压力", "Slide"),
+    "slide_tricky": DimensionPresentation("Slide错位", "错位"),
+    "slide_sequence": DimensionPresentation("Slide阵强度", "Slide阵"),
 }
 
 

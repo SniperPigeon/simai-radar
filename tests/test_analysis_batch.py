@@ -144,7 +144,13 @@ class BatchTests(unittest.TestCase):
             self.assertTrue(all(row["cover_path"] == "" for row in rows))
             self.assertEqual(
                 json.loads(rows[1]["diagnostics"])["features"],
-                {"hold": False, "note": False, "peak": False, "slide": False},
+                {
+                    "hold": False,
+                    "note": False,
+                    "peak": False,
+                    "slide_tricky": False,
+                    "slide_sequence": False,
+                },
             )
             self.assertEqual(json.loads(rows[-1]["diagnostics"])["source"], "broken")
             self.assertEqual(report.failed_records, 2)

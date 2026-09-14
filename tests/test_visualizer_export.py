@@ -91,6 +91,11 @@ class VisualizerExporterTests(unittest.TestCase):
             self.assertTrue(all((root / "site" / name).is_file() for name in (
                 "index.html", "app.js", "styles.css", "data/songs.json",
             )))
+            app_source = (root / "site" / "app.js").read_text()
+            self.assertIn("const PERCENTILE_PRECISION = 3;", app_source)
+            self.assertIn('step="${PERCENTILE_STEP}"', app_source)
+            self.assertIn("MAX_DISTRIBUTION_PERCENTILE", app_source)
+            self.assertNotIn('step="0.1"', app_source)
             payload = json.loads(report.data_path.read_text())
             self.assertEqual(payload["schemaVersion"], "mairadar-visualizer-1")
             self.assertEqual(payload["mappingVersions"], ["visualizer-test-v1"])
@@ -114,10 +119,16 @@ class VisualizerExporterTests(unittest.TestCase):
                     "color": "#2a9d8f",
                 },
                 {
-                    "key": "slide",
-                    "label": "Slide压力",
-                    "shortLabel": "Slide",
+                    "key": "slide_tricky",
+                    "label": "Slide错位",
+                    "shortLabel": "错位",
                     "color": "#3a86ff",
+                },
+                {
+                    "key": "slide_sequence",
+                    "label": "Slide阵强度",
+                    "shortLabel": "Slide阵",
+                    "color": "#8338ec",
                 },
             ])
             self.assertEqual(payload["stats"]["songCount"], 1)
