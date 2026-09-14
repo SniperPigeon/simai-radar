@@ -16,8 +16,8 @@ CADENCE_REFERENCE_SECONDS = 0.5
 SIMULTANEOUS_ONSET_SECONDS = 1 / 60
 INTERNAL_GROWTH_ALPHA = 0.35
 TRICKY_REFERENCE_SECONDS = 0.5
-TRICKY_FULL_RANKS = 5
-TRICKY_MAX_RANKS = 20
+TRICKY_UNIQUE_COUNT = 5
+TRICKY_VALUE_DECIMALS = 6
 SEQUENCE_FULL_ONSETS = 3
 CONCURRENCY_WEIGHT = 0.5
 TOUCH_INTERFERENCE_WEIGHT = 1.5
@@ -446,22 +446,13 @@ def _section_metrics(
     )
 
 
-def _tricky_rank_weight(rank: int) -> float:
-    if rank <= 0:
-        raise ValueError("Tricky rank must be positive")
-    if rank <= TRICKY_FULL_RANKS:
-        return 1.0
-    if rank <= TRICKY_MAX_RANKS:
-        return 1 / math.log2(rank - TRICKY_FULL_RANKS + 1)
-    return 0.0
-
-
-def _ranked_tricky_load(values: list[float]) -> float:
-    return math.fsum(
-        value * _tricky_rank_weight(rank)
-        for rank, value in enumerate(sorted(values, reverse=True), 1)
-        if rank <= TRICKY_MAX_RANKS
-    )
+def _top_unique_tricky_load(values: list[float]) -> float:
+    """Sum the five highest stable value classes; missing slots are zero."""
+    by_value = {}
+    for value in values:
+        key = round(value, TRICKY_VALUE_DECIMALS)
+        by_value[key] = max(value, by_value.get(key, value))
+    return math.fsum(sorted(by_value.values(), reverse=True)[:TRICKY_UNIQUE_COUNT])
 
 
 def slide_feature_breakdown(
@@ -499,7 +490,7 @@ def slide_feature_breakdown(
         for value in section.tricky_cluster_values
     ]
     tricky_all_load = math.fsum(tricky_values)
-    tricky_total_load = _ranked_tricky_load(tricky_values)
+    tricky_total_load = _top_unique_tricky_load(tricky_values)
     tricky_time_units = duration_s / TRICKY_REFERENCE_SECONDS
     tricky = tricky_total_load / tricky_time_units
 
