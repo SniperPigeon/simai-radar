@@ -117,7 +117,7 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(rows[0]["designer"], "谱师")
             self.assertEqual(rows[0]["difficulty_index"], "5")
             self.assertEqual(rows[0]["chart_type"], "dx")
-            self.assertEqual(float(rows[0]["first_raw"]), 2)
+            self.assertEqual(float(rows[0]["first_raw"]), 2.6)
             self.assertEqual(
                 json.loads(rows[0]["diagnostics"])["features"], {"second": True, "first": True},
             )
@@ -140,7 +140,7 @@ class BatchTests(unittest.TestCase):
             _, rows = read_rows(report.csv_path)
             self.assertEqual(len(rows), 3)
             self.assertEqual([row["status"] for row in rows], ["ok", "error", "error"])
-            self.assertEqual([row["jack_raw"] for row in rows], ["2.0", "", ""])
+            self.assertEqual([row["jack_raw"] for row in rows], ["2.6", "", ""])
             self.assertTrue(all(row["cover_path"] == "" for row in rows))
             self.assertEqual(
                 json.loads(rows[1]["diagnostics"])["features"],
@@ -168,7 +168,7 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(len(rows), 2)
             self.assertEqual(len(list((root / "report" / "covers").iterdir())), 1)
             self.assertEqual([row["status"] for row in rows], ["ok", "ok"])
-            self.assertEqual(rows[1]["jack_raw"], "2.0")
+            self.assertEqual(rows[1]["jack_raw"], "2.6")
             self.assertEqual(rows[1]["cover_path"], rows[0]["cover_path"])
             self.assertEqual(report.exit_code, 0)
             self.assertEqual(batch.exit_code, 0)  # Export errors do not mutate core results.
@@ -209,7 +209,7 @@ class BatchTests(unittest.TestCase):
                 report = CsvExporter().export(batch.records, root / "report", feature_names=batch.feature_names)
             _, rows = read_rows(report.csv_path)
             self.assertEqual([row["status"] for row in rows], ["ok", "ok"])
-            self.assertEqual(rows[0]["jack_raw"], "2.0")
+            self.assertEqual(rows[0]["jack_raw"], "2.6")
             self.assertEqual(rows[0]["cover_path"], "")
             self.assertEqual(len(list((root / "report" / "covers").iterdir())), 1)
 
@@ -242,7 +242,7 @@ class BatchTests(unittest.TestCase):
             process = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(process.returncode, 0, process.stderr)
             self.assertEqual(json.loads(process.stdout)["analysis"]["features"]["jack"],
-                             {"data": 2.0, "success": True})
+                             {"data": 2.6, "success": True})
             self.assertFalse((root / "report").exists())
             (root / "input" / "bad").mkdir()
             process = subprocess.run(command, capture_output=True, text=True)

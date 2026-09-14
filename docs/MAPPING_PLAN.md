@@ -55,12 +55,14 @@ ScoreTransformer.transform(result: AnalysisResult) -> ScoreResult
 时间点后才允许飞键，每次飞键可在多个连续时间点包含最多四个异键普通 Tap，且从首个
 异键到返回主键不超过八分音符。回到主键后又需两个主键时间点才能再次飞出；每次飞键
 独立应用数量和时间上限。主键权重为 1，打断权重为 1.5，速度相对 180 BPM 等效八分
-作平方根加权。
+作 1.5 次方加权。
 
 ```text
 sequence_strength = anchor_count + 1.5 * interrupting_tap_count
-speed_factor = sqrt(equivalent_eighth_bpm / 180)
-jack_raw = sum(sequence_strength_(x) * speed_factor_(x) / log2(x + 1),
+speed_factor = (equivalent_eighth_bpm / 180) ^ 1.5
+rank_weight_(1) = 1.3
+rank_weight_(x) = 1 / log2(x + 1), x=2..5
+jack_raw = sum(sequence_strength_(x) * speed_factor_(x) * rank_weight_(x),
                x=1..min(5, sequence_count))
 ```
 

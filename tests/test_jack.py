@@ -36,13 +36,13 @@ class JackSequenceTests(unittest.TestCase):
         self.assertEqual((sequence.anchor_count, sequence.interrupting_tap_count), (3, 0))
         self.assertEqual(sequence.interrupting_span_beats, 0)
         self.assertEqual(sequence.equivalent_eighth_bpm, 120)
-        self.assertAlmostEqual(sequence.speed_factor, math.sqrt(120 / 180))
-        self.assertEqual(
+        self.assertAlmostEqual(sequence.speed_factor, (120 / 180) ** 1.5)
+        self.assertAlmostEqual(
             jack_score(
                 events("(120){8}1,1h[4:1],1,E"),
                 speed_reference_eighth_bpm=120,
             ),
-            3,
+            3.9,
         )
 
     def test_short_off_button_tap_after_two_main_notes_receives_weight(self):
@@ -111,9 +111,9 @@ class JackSequenceTests(unittest.TestCase):
         self.assertEqual(sequences[0].interrupting_tap_count, 1)
 
     def test_eighth_note_boundary_is_inclusive_and_slower_gap_splits(self):
-        self.assertEqual(
+        self.assertAlmostEqual(
             jack_score(events("(120){8}1,1,E"), speed_reference_eighth_bpm=120),
-            2,
+            2.6,
         )
         self.assertEqual(jack_score(events("(120){4}1,1,E")), 0)
 
@@ -127,17 +127,17 @@ class JackSequenceTests(unittest.TestCase):
                 events("(120){16}1,A1,1,E"),
                 speed_reference_eighth_bpm=120,
             ),
-            2,
+            2.6,
         )
 
     def test_simultaneous_duplicates_are_counted_but_need_two_onset_times(self):
         self.assertEqual(jack_score(events("(120){16}1/1,E")), 0)
-        self.assertEqual(
+        self.assertAlmostEqual(
             jack_score(
                 events("(120){16}1/1,1,E"),
                 speed_reference_eighth_bpm=240,
             ),
-            3,
+            3.9,
         )
 
     def test_top_k_uses_one_based_logarithmic_rank_decay(self):
@@ -153,15 +153,25 @@ class JackSequenceTests(unittest.TestCase):
                 max_interrupting_taps=0,
                 speed_reference_eighth_bpm=240,
             ),
-            3 / math.log2(2) + 2 / math.log2(3),
+            1.3 * 3 / math.log2(2) + 2 / math.log2(3),
         )
 
     def test_actual_main_button_speed_weights_sequence_strength(self):
         eighth = events("(120){8}1,1,1,E")
         sixteenth = events("(120){16}1,1,1,E")
-        self.assertAlmostEqual(jack_score(eighth), 3 * math.sqrt(120 / 180))
-        self.assertAlmostEqual(jack_score(sixteenth), 3 * math.sqrt(240 / 180))
+        self.assertAlmostEqual(jack_score(eighth), 1.3 * 3 * (120 / 180) ** 1.5)
+        self.assertAlmostEqual(jack_score(sixteenth), 1.3 * 3 * (240 / 180) ** 1.5)
         self.assertGreater(jack_score(sixteenth), jack_score(eighth))
+
+    def test_top_one_has_about_forty_percent_of_equal_sequence_rank_weight(self):
+        weights = [
+            1.3,
+            1 / math.log2(3),
+            1 / math.log2(4),
+            1 / math.log2(5),
+            1 / math.log2(6),
+        ]
+        self.assertAlmostEqual(weights[0] / sum(weights), 0.4, places=3)
 
     def test_analyzer_zero_and_invalid_duration_contract(self):
         analyzer = JackSequenceAnalyzer()

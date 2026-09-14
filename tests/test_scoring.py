@@ -48,7 +48,7 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(scores.features["slide_sequence"].value, 50)
         self.assertEqual(
             scores.mapping_version,
-            "provisional-jack-tricky-identity-20260915-v26",
+            "provisional-jack-tricky-identity-20260915-v27",
         )
 
     def test_identity_mapper_validates_and_preserves_finite_values(self):

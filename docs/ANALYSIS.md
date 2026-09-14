@@ -13,7 +13,7 @@ from mairadar.analysis import ChartAnalyzer
 
 parsed = parse_chart("(180){8}1h[4:1],1,E")
 result = ChartAnalyzer().analyze(parsed)
-assert result.features["jack"].data == 2.0
+assert result.features["jack"].data == 2.6
 ```
 
 调用不需要歌曲 metadata、路径、音频或曲绘，不加载文件读写、评分模块或 GUI。输入沿用 ParseResult 的完整性和时间字段，保留 parser 的原文诊断。不会重新解析 Simai。
@@ -41,9 +41,12 @@ FeatureResult 仅包含 data 和 success 两个字段，不携带单位、中间
 ```text
 sequence_strength = 主键 Tap/Hold 数 + 1.5 * 有效打断 Tap 数
 equivalent_eighth_bpm = 30 * (主键时间点数 - 1) / (末次主键秒数 - 首次主键秒数)
-speed_factor = sqrt(equivalent_eighth_bpm / 180)
+speed_factor = (equivalent_eighth_bpm / 180) ^ 1.5
 weighted_strength = sequence_strength * speed_factor
-jack_raw = sum(weighted_strength_(x) / log2(x + 1), x=1..min(5, sequence_count))
+rank_weight_(1) = 1.3
+rank_weight_(x) = 1 / log2(x + 1), x=2..5
+jack_raw = sum(weighted_strength_(x) * rank_weight_(x),
+               x=1..min(5, sequence_count))
 ```
 
 `JackSequenceAnalyzer` 只读取 1–8 外键的 Tap/Hold 声明时间，不使用 Hold 持续尾部，
@@ -62,12 +65,13 @@ jack_raw = sum(weighted_strength_(x) / log2(x + 1), x=1..min(5, sequence_count))
   主键时间点之间，不计打断权重。
 
 速度使用主键不同时间点的实际秒数计算，因此自然包含 BPM 变化；同时重复声明增加主键
-物件权重，但不增加速度采样点。180 BPM 等效八分的系数为 1，快慢两侧均以平方根变化。
+物件权重，但不增加速度采样点。180 BPM 等效八分的系数为 1，快慢两侧均按 1.5 次方
+变化，使速度影响高于线性。
 
 每个键位按上述规则切成若干不可继续延伸的最大候选；候选先按 `sequence_strength` 从高
-到低排序，同强度时速度快者优先，再取前五条并应用速度和名次权重。名次 `x` 从 1 开始，
-因此第一条名次权重为 1，第二条为 `1/log2(3)`，依次衰减；不足五条不补零也不做均值
-归一化。正常完整谱面没有纵连时为 0；零时长谱面返回
+到低排序，同强度时速度快者优先，再取前五条并应用速度和名次权重。Top‑1 名次权重为
+1.3，第二条起继续使用 `1/log2(x+1)`；五条等强候选时 Top‑1 约占全部名次权重的 40%。
+不足五条不补零也不做均值归一化。正常完整谱面没有纵连时为 0；零时长谱面返回
 `FeatureResult(None, success=False)`。
 
 解析不完整或模型校验失败时，不执行子分析器和映射器，各维结果均标记失败，主分析器
@@ -386,7 +390,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-jack-tricky-identity-20260915-v26",
+            mapping_version="provisional-jack-tricky-identity-20260915-v27",
         )
 
 TRANSFORMER = DefaultScoreTransformer
@@ -434,7 +438,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-jack-tricky-identity-20260915-v26`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-jack-tricky-identity-20260915-v27`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 

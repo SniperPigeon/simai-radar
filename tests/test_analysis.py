@@ -35,14 +35,14 @@ class AnalysisTests(unittest.TestCase):
         result = ChartAnalyzer().analyze(parsed)
         self.assertEqual(result.status, "ok")
         jack = result.features["jack"]
-        self.assertEqual(jack.data, 3)
+        self.assertAlmostEqual(jack.data, 3.9)
         self.assertTrue(jack.success)
         self.assertEqual(parsed, original)
 
     def test_tempo_change_and_redundant_declaration(self):
         first = ChartAnalyzer().analyze(parse_chart("(180){8}1,1,(180)2,2,E"))
         repeated = ChartAnalyzer().analyze(parse_chart("(180)(180){8}1,1,(180)(180)2,2,E"))
-        self.assertAlmostEqual(first.features["jack"].data, 2 + 2 / math.log2(3))
+        self.assertAlmostEqual(first.features["jack"].data, 2.6 + 2 / math.log2(3))
         self.assertEqual(first.features, repeated.features)
 
     def test_no_jack_is_zero_but_zero_time_is_unavailable(self):
@@ -76,7 +76,7 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(tuple(result.features), ("broken", "nan", "JACK"))
         self.assertEqual(engine.feature_names, tuple(result.features))
         self.assertEqual(result.status, "partial")
-        self.assertEqual(result.features["JACK"].data, 2)
+        self.assertEqual(result.features["JACK"].data, 2.6)
         for name in ("broken", "nan"):
             self.assertIsNone(result.features[name].data)
             self.assertFalse(result.features[name].success)
@@ -88,7 +88,7 @@ class AnalysisTests(unittest.TestCase):
         engine = ChartAnalyzer({"mutates": MutatingAnalyzer, "jack": JackSequenceAnalyzer})
         for _ in range(2):
             result = engine.analyze(parsed)
-            self.assertEqual(result.features["jack"].data, 2)
+            self.assertEqual(result.features["jack"].data, 2.6)
             self.assertEqual(parsed, original)
 
     def test_invalid_configuration_fails_early(self):

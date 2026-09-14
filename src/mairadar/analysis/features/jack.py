@@ -14,7 +14,8 @@ DEFAULT_TOP_K = 5
 DEFAULT_MAX_INTERRUPTING_TAPS = 4
 INTERRUPTING_TAP_WEIGHT = 1.5
 DEFAULT_SPEED_REFERENCE_EIGHTH_BPM = 180.0
-DEFAULT_SPEED_EXPONENT = 0.5
+DEFAULT_SPEED_EXPONENT = 1.5
+TOP_ONE_RANK_MULTIPLIER = 1.3
 
 
 @dataclass(frozen=True)
@@ -224,7 +225,9 @@ def jack_score(
         speed_exponent=speed_exponent,
     )
     return math.fsum(
-        sequence.weighted_strength / math.log2(rank + 1)
+        sequence.weighted_strength
+        * (TOP_ONE_RANK_MULTIPLIER if rank == 1 else 1.0)
+        / math.log2(rank + 1)
         for rank, sequence in enumerate(sequences[:top_k], start=1)
     )
 
