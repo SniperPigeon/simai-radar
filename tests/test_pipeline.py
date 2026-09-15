@@ -359,12 +359,11 @@ class PipelineTests(unittest.TestCase):
                     and row["sweep_raw"] and row["sweep_score"]
                     and row["peak_raw"] and row["peak_score"]
                     and row["slide_tricky_raw"] and row["slide_tricky_score"]
-                    and row["slide_cumulate_raw"] and row["slide_cumulate_score"]
                     and row["slide_sequence_raw"] and row["slide_sequence_score"]
                     for row in rows
                 ))
                 self.assertTrue(all(json.loads(row["diagnostics"])["scoring"]["mapping_version"]
-                                    == "provisional-jack-sweep-tricky-identity-20260915-v30"
+                                    == "provisional-jack-sweep-tricky-identity-20260915-v31"
                                     for row in rows))
                 self.assertTrue(all((root / mode / row["cover_path"]).is_file() for row in rows))
 

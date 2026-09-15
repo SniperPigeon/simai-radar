@@ -28,7 +28,8 @@ metadata + 原始指标 + 可选标准分数 + 外围曲绘引用 → 总表导�
 ## 核心分析接口
 
 使用代码显式配置 `FeatureName: 分析器类`，按配置顺序收集结果和生成导出列。默认配置
-显式列出 `jack`、`sweep`、`note`、`peak` 和三个 Slide 维度，不创建动态插件发现机制。
+按 `note`、`peak`、`sweep`、`slide_tricky`、`slide_sequence`、`jack` 的顺序显式列出六个
+默认维度，不创建动态插件发现机制；`slide_cumulate` 实现保留但不注册到默认链路。
 
 拟定接口：
 

@@ -100,6 +100,11 @@ class VisualizerExporterTests(unittest.TestCase):
                 app_source,
             )
             self.assertIn("function mapRawScore(rawValue, rawThresholds)", app_source)
+            self.assertIn("function orderedRadarDimensions(dimensions)", app_source)
+            self.assertIn(
+                "dimensions[1], dimensions[2], dimensions[5]",
+                app_source,
+            )
             self.assertIn("state.clientMappedDimensions.add(state.distributionDimension)", app_source)
             self.assertNotIn('step="0.1"', app_source)
             index_source = (root / "site" / "index.html").read_text()
@@ -110,46 +115,40 @@ class VisualizerExporterTests(unittest.TestCase):
             self.assertEqual(payload["mappingVersions"], ["visualizer-test-v1"])
             self.assertEqual(payload["dimensions"], [
                 {
-                    "key": "jack",
-                    "label": "纵连",
-                    "shortLabel": "纵连",
+                    "key": "note",
+                    "label": "Note",
+                    "shortLabel": "Note",
                     "color": "#ef476f",
                 },
                 {
-                    "key": "sweep",
-                    "label": "扫键强度",
-                    "shortLabel": "扫键",
+                    "key": "peak",
+                    "label": "Peak",
+                    "shortLabel": "Peak",
                     "color": "#ff9f1c",
                 },
                 {
-                    "key": "note",
-                    "label": "总体物量",
-                    "shortLabel": "Note",
+                    "key": "sweep",
+                    "label": "扫键",
+                    "shortLabel": "扫键",
                     "color": "#2a9d8f",
                 },
                 {
-                    "key": "peak",
-                    "label": "Peak爆发",
-                    "shortLabel": "Peak",
+                    "key": "slide_tricky",
+                    "label": "错位压力",
+                    "shortLabel": "错位压力",
                     "color": "#3a86ff",
                 },
                 {
-                    "key": "slide_tricky",
-                    "label": "Slide错位",
-                    "shortLabel": "错位",
+                    "key": "slide_sequence",
+                    "label": "星星阵",
+                    "shortLabel": "星星阵",
                     "color": "#8338ec",
                 },
                 {
-                    "key": "slide_cumulate",
-                    "label": "持续星星压力",
-                    "shortLabel": "持续星星",
+                    "key": "jack",
+                    "label": "纵连",
+                    "shortLabel": "纵连",
                     "color": "#d1495b",
-                },
-                {
-                    "key": "slide_sequence",
-                    "label": "Slide阵强度",
-                    "shortLabel": "Slide阵",
-                    "color": "#00a6a6",
                 },
             ])
             self.assertEqual(payload["stats"]["songCount"], 1)

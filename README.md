@@ -358,12 +358,12 @@ Tap，允许分布在多个连续时间点；每次从首个异键到返回主�
 识别只读取 parser 事件，不重新扫描 Simai；完整公式见
 [分析说明](docs/ANALYSIS.md#扫键口径)。
 
-Slide 分为三个独立维度：`slide_tricky` 取五个最高单配置负荷，按 `1/log₂(k+1)`
+Slide 当前默认启用两个维度：`slide_tricky` 取五个最高单配置负荷，按 `1/log₂(k+1)`
 作归一化加权平均（不足五项补零），每个配置
 最多按 16 个逻辑干扰物件计；
 Tricky 按全谱正等待时长的 0.05 秒众数桶建立基准，排除等待严格超过基准四倍的路径；
-`slide_cumulate` 由独立 analyser 按历史确认口径计算，
-不复用当前 Tricky helper，中文显示为“持续星星压力”；`slide_sequence` 只分析连续阵、
+`slide_cumulate` 的独立 analyser 仍按历史确认口径保留，但已从默认分析和评分链路注释停用；
+`slide_sequence` 只分析连续阵、
 同拍双押和同头多路径。`slide_tricky` 的 Tap 干扰包含同位、扫键和实际 Slide 头修正，
 Touch 连通组最多计两组，启动拍统一将物件负荷除以二，并只追加启动后一拍以内的运动
 交互；普通 Tap/Hold 以 180 BPM 等效八分为中性点，更慢时按平方根下降，更快时线性提升
@@ -382,13 +382,13 @@ Touch 连通组最多计两组，启动拍统一将物件负荷除以二，并�
 
 ```python
 FEATURES = {
-    "jack": JackSequenceAnalyzer,
-    "sweep": SweepAnalyzer,
     "note": NoteDensityAnalyzer,
     "peak": PeakDensityAnalyzer,
+    "sweep": SweepAnalyzer,
     "slide_tricky": SlideTrickyAnalyzer,
-    "slide_cumulate": SlideCumulateAnalyzer,
     "slide_sequence": SlideSequenceAnalyzer,
+    "jack": JackSequenceAnalyzer,
+    # "slide_cumulate": SlideCumulateAnalyzer,
 }
 ```
 

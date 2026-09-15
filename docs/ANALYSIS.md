@@ -1,9 +1,10 @@
 # 谱面分析 MVP
 
-核心按显式配置调用独立维度分析器，返回原始指标；当前默认配置包含纵连、扫键、整体物量、
-Peak 爆发和 Slide 压力。评分层按 feature 独立配置映射器：纵连、扫键和 Slide Tricky 暂时
+核心按显式配置调用独立维度分析器，返回原始指标；当前默认六维依次为 Note、Peak、扫键、
+错位压力、星星阵和纵连。评分层按 feature 独立配置映射器：纵连、扫键和 Slide Tricky 暂时
 identity 直通，整体物量暂用 2026-09-13 观察批次的中位数与 P99，Peak 使用宽松的探索
-锚点，其他 Slide 维度使用有限普通谱抽样的取整探索锚点；这些都不代表官方校准。
+锚点，Slide Sequence 使用有限普通谱抽样的取整探索锚点；这些都不代表官方校准。
+`slide_cumulate` 的实现与测试仍保留，但默认分析和评分注册已注释停用。
 
 ## 直接调用
 
@@ -427,20 +428,20 @@ from mairadar.scoring import DummyPnMapper, IdentityMapper
 
 
 FEATURE_MAPPERS = {
-    "jack": IdentityMapper(),
-    "sweep": IdentityMapper(),
     "note": DummyPnMapper(p50=3.540077197, p100=9.328672541),
     "peak": DummyPnMapper(p50=10.0, p100=20.0),
+    "sweep": IdentityMapper(),
     "slide_tricky": IdentityMapper(),
-    "slide_cumulate": DummyPnMapper(p50=0.36, p100=0.96),
     "slide_sequence": DummyPnMapper(p50=1.3, p100=2.9),
+    "jack": IdentityMapper(),
+    # "slide_cumulate": DummyPnMapper(p50=0.36, p100=0.96),
 }
 
 class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-jack-sweep-tricky-identity-20260915-v30",
+            mapping_version="provisional-jack-sweep-tricky-identity-20260915-v31",
         )
 
 TRANSFORMER = DefaultScoreTransformer
@@ -452,7 +453,7 @@ p50、p100 是 `DummyPnMapper` 的原始指标阈值，要求 `0 < p50 < p100` �
 样本的中位数和 P99；Peak 的 10、20 是首轮观察用宽松锚点。当前 1888 张难度索引 5/6
 观察样本中，`slide_tricky` 曾使用中位数 27.5、P99.9 约 116.06 作为临时锚点；当前默认
 改用 `IdentityMapper`，使 `slide_tricky_score` 原样等于 analyser 的 raw 值；
-`slide_cumulate` 独立复刻版本中位数约 0.363、P99 约 0.960，临时取 0.36、0.96；
+已停用的 `slide_cumulate` 独立复刻版本曾取 0.36、0.96；
 `slide_sequence` 暂取 1.3、2.9。它们都是固定临时配置，后续批次不会自动重新拟合。
 
 DummyPnMapper 使用两段线性变换：
@@ -465,8 +466,7 @@ x >= p100:        200
 ```
 
 即 0→0、P50→50、P100→200，范围外截断到 0–200，保留浮点分数、不取整。整体物量在当前临时映射下
-3.540077197→50、9.328672541→200；Peak 为 10→50、20→200；`slide_cumulate` 为
-0.36→50、0.96→200。NaN、无穷值及无效
+3.540077197→50、9.328672541→200；Peak 为 10→50、20→200。NaN、无穷值及无效
 阈值明确报错。
 
 同一映射器类可以配置不同阈值，也可以替换为其他实现 map 的类。调用方可以直接注入自己的配置：
@@ -488,7 +488,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-jack-sweep-tricky-identity-20260915-v30`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-jack-sweep-tricky-identity-20260915-v31`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 

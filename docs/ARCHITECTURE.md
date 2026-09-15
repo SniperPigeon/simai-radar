@@ -18,8 +18,8 @@ model.py 定义 Event、Diagnostic、ParseResult、Chart、ChartBundle；validat
 
 io.py 读取文件、保存 CSV、解码 JSON 单元格，并可原样复制曲绘为包内附件。曲绘只通过 manifest 和外围 read_cover_path 暴露，不加入 Event、ParseResult 或解析必需参数。source_name 只在 metadata 中用于展示。导出目录 `<title>-<difficulty_index>-dx/sd` 不含 hash，不维护歌曲注册表、输入缓存或去重索引。CSV hash 只校验文件完整性；不属于解析 API。目录替换是外围文件写入事务，不能扩展成歌曲管理逻辑。
 
-analysis 读取 ParseResult 的事件与时间字段，按显式配置调用纵连、扫键、整体物量、Peak 和 Slide
-压力等独立维度分析器；不重新扫描 Simai 来计数。每个维度使用独立实例和事件快照，失败
+analysis 读取 ParseResult 的事件与时间字段，按显式配置调用 Note、Peak、扫键、错位压力、
+星星阵和纵连六个独立维度分析器；不重新扫描 Simai 来计数。每个维度使用独立实例和事件快照，失败
 后继续其他维度。baseline、难度权重和映射算法不进入 parser；scoring 提供
 ScoreTransformer 接口与按 feature 分发的 FeatureScoreTransformer；每个 feature 独立配置
 映射器实例及其参数。

@@ -653,8 +653,17 @@ function polygonPoints(points) {
   return points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
 }
 
+function orderedRadarDimensions(dimensions) {
+  if (dimensions.length !== 6) return dimensions;
+  // Export order is top-left → top → top-right, then bottom-left → bottom → bottom-right.
+  return [
+    dimensions[1], dimensions[2], dimensions[5],
+    dimensions[4], dimensions[3], dimensions[0],
+  ];
+}
+
 function renderRadar(chart) {
-  const dimensions = state.data.dimensions;
+  const dimensions = orderedRadarDimensions(state.data.dimensions);
   if (dimensions.length < 3) {
     elements.radarChart.innerHTML = `<div class="empty-state">当前为 ${dimensions.length} 个评分维度；至少 3 个维度时显示雷达图</div>`;
     return;
