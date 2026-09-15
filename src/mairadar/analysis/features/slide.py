@@ -2,7 +2,7 @@
 
 from bisect import bisect_right
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from fractions import Fraction
 import math
 from statistics import median
@@ -19,6 +19,9 @@ SEQUENCE_FULL_ONSETS = 3
 CONCURRENCY_WEIGHT = 0.5
 TRICKY_OBJECT_CAP = 16
 TRICKY_TOP_COUNT = 5
+TRICKY_TOP_WEIGHTS = tuple(1 / math.log2(k + 1) for k in range(1, TRICKY_TOP_COUNT + 1))
+TRICKY_WAIT_BUCKET_SECONDS = 0.05
+TRICKY_MAX_WAIT_MODE_RATIO = 4.0
 TRICKY_SPEED_REFERENCE_EIGHTH_BPM = 180.0
 TRICKY_SPEED_EXPONENT = 0.5
 TRICKY_SPEED_MAX_FACTOR = 1.5
@@ -786,6 +789,64 @@ def _top_unique_tricky_load(loads: list[float]) -> float:
     return math.fsum(_top_unique_tricky_loads(loads))
 
 
+def _top_tricky_load(loads: list[float]) -> float:
+    """Zero-pad missing loads, retaining the fixed five-rank weight denominator."""
+    top = sorted(loads, reverse=True)[:TRICKY_TOP_COUNT]
+    return math.fsum(q * w for q, w in zip(top, TRICKY_TOP_WEIGHTS)) / math.fsum(TRICKY_TOP_WEIGHTS)
+
+
+def _modal_slide_wait_s(groups: list[_SlideGroup]) -> float | None:
+    """Mode of positive path waits; ties favor the longer 50-ms bucket."""
+    buckets = defaultdict(list)
+    for group in groups:
+        for event in group.events:
+            wait = event.start_time_s - group.declaration_time_s
+            if wait > COMPARISON_TOLERANCE:
+                bucket = math.floor(
+                    (wait + COMPARISON_TOLERANCE) / TRICKY_WAIT_BUCKET_SECONDS + 0.5
+                )
+                buckets[bucket].append(wait)
+    if not buckets:
+        return None
+    winner = max(buckets, key=lambda key: (len(buckets[key]), key))
+    # Actual values preserve the strict fourfold boundary after coarse bucketing.
+    return median(buckets[winner])
+
+
+def _filter_tricky_cluster(
+    cluster: _SlideOnsetCluster,
+    mode_wait_s: float | None,
+) -> _SlideOnsetCluster | None:
+    """Remove anomalous target paths, preserving canonical events and other features."""
+    if mode_wait_s is None:
+        return cluster
+    threshold = mode_wait_s * TRICKY_MAX_WAIT_MODE_RATIO
+    kept_groups = []
+    changed = False
+    for group in cluster.groups:
+        paths, intervals = [], []
+        for path, interval in zip(group.events, group.active_intervals):
+            wait = path.start_time_s - group.declaration_time_s
+            if wait > threshold and not math.isclose(
+                wait, threshold, rel_tol=1e-9, abs_tol=COMPARISON_TOLERANCE,
+            ):
+                changed = True
+                continue
+            paths.append(path)
+            intervals.append(interval)
+        if len(paths) == len(group.events):
+            kept_groups.append(group)
+        elif paths:
+            kept_groups.append(replace(
+                group, events=tuple(paths), active_intervals=tuple(intervals),
+                launch_time_s=max(path.start_time_s for path in paths),
+                launch_times_s=tuple(sorted({path.start_time_s for path in paths})),
+            ))
+    if not changed:
+        return cluster
+    return replace(cluster, groups=tuple(kept_groups)) if kept_groups else None
+
+
 def slide_feature_breakdown(
     events: tuple[Event, ...],
     duration_s: float,
@@ -816,10 +877,19 @@ def slide_feature_breakdown(
         for section in _build_sections(clusters)
     )
 
-    cluster_tricky = [
-        _cluster_tricky(cluster, assigned_points[id(cluster)])
-        for cluster in clusters
-    ]
+    mode_wait_s = _modal_slide_wait_s(groups)
+    tricky_configurations = []
+    for cluster, cluster_points in zip(clusters, assigned):
+        filtered = _filter_tricky_cluster(cluster, mode_wait_s)
+        if filtered is None:
+            continue
+        if filtered is not cluster:
+            # Retest only this target's original points against its remaining
+            # paths. Discarded points must not flow into neighboring targets.
+            cluster_points = _assign_points_to_onsets(
+                [filtered], [item.point for item in cluster_points],
+            )[0]
+        tricky_configurations.append((filtered, _cluster_tricky(filtered, cluster_points)))
     tricky_points = tuple(
         SlideTrickyPoint(
             time_s=max(group.launch_time_s for group in cluster.groups),
@@ -833,7 +903,7 @@ def slide_feature_breakdown(
             ordinary_button_speed_factor=value.ordinary_button_speed_factor,
             configuration_multiplier=value.configuration_multiplier,
         )
-        for cluster, value in zip(clusters, cluster_tricky)
+        for cluster, value in tricky_configurations
     )
     tricky_unique_loads = _top_unique_tricky_loads(
         [point.load for point in tricky_points]
@@ -841,13 +911,14 @@ def slide_feature_breakdown(
     peak = max(
         tricky_points,
         key=lambda point: (point.load, -point.time_s),
+        default=None,
     )
     top_loads = sorted(
         (point.load for point in tricky_points),
         reverse=True,
     )[:TRICKY_TOP_COUNT]
     tricky_total_load = math.fsum(top_loads)
-    tricky = tricky_total_load / TRICKY_TOP_COUNT
+    tricky = _top_tricky_load(top_loads)
 
     sequence_sections = [
         section for section in sections
@@ -863,7 +934,7 @@ def slide_feature_breakdown(
         tricky=tricky,
         tricky_total_load=tricky_total_load,
         tricky_unique_loads=tricky_unique_loads,
-        tricky_peak_time_s=peak.time_s,
+        tricky_peak_time_s=peak.time_s if peak is not None else None,
         tricky_points=tricky_points,
         sequence=sequence,
         sections=sections,
@@ -871,7 +942,7 @@ def slide_feature_breakdown(
 
 
 class SlideTrickyAnalyzer:
-    """Return the zero-padded mean of the five strongest Slide configurations."""
+    """Return the normalized log-weighted top five Slide configurations."""
 
     def analyze(self, context: AnalysisContext) -> FeatureResult:
         if context.duration_s <= 0:

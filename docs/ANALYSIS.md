@@ -1,7 +1,7 @@
 # 谱面分析 MVP
 
-核心按显式配置调用独立维度分析器，返回原始指标；当前默认配置包含纵连、整体物量、
-Peak 爆发和 Slide 压力。评分层按 feature 独立配置映射器：纵连和 Slide Tricky 暂时
+核心按显式配置调用独立维度分析器，返回原始指标；当前默认配置包含纵连、扫键、整体物量、
+Peak 爆发和 Slide 压力。评分层按 feature 独立配置映射器：纵连、扫键和 Slide Tricky 暂时
 identity 直通，整体物量暂用 2026-09-13 观察批次的中位数与 P99，Peak 使用宽松的探索
 锚点，其他 Slide 维度使用有限普通谱抽样的取整探索锚点；这些都不代表官方校准。
 
@@ -76,6 +76,53 @@ jack_raw = sum(weighted_strength_(x) * rank_weight_(x),
 解析不完整或模型校验失败时，不执行子分析器和映射器，各维结果均标记失败，主分析器
 分别记录 PARSE_INCOMPLETE 或 INVALID_INPUT。该指标直接使用 parser 提供的全局拍轴，
 不重新扫描原始 Simai，也不受 BPM 变速或重复同值 BPM 声明影响。
+
+## 扫键口径
+
+`SweepAnalyzer` 在全谱外键 Tap/Hold 起按中识别相邻键扫键。显式 Slide 头已经由 parser
+表示成独立 Tap，因此会进入识别；Slide 体、无头 Slide、Touch 和 TouchHold 不进入。
+同拍同键的重复声明在识别图中形成一个物理起按，但保留其全部事件 ID，不删除或修改
+原事件；scorer 的物件数 `N` 按物理起按数计算。
+
+候选的相邻键按 1–8 环形连接，每步拍长必须为正且不超过一拍。连接两个相邻键时，中间
+最多允许出现一个其他外键起按；如果同键重复先于目标相邻键出现，则不能跳过该重复制造
+扫键。首个步长固定候选周期，后续步长与它的误差最多为 `1/16 beat`。候选至少覆盖三个
+不同键位；每段同方向运行至少包含两步，满足这一条件后允许折返。先移除被更长候选完整
+包含的前后缀，再选择互斥候选；不同组只有在共享物件同时是两组最后一个起按时才允许
+重叠。选择目标依次为组数最多、总物理起按数最多，完全并列时确定性选择字典序较早者。
+
+识别直接使用 `events-0.3` 的精确有理拍轴，不使用 detector 原实现重新编译 Simai 的固定
+1 ms 伪 EACH 偏移；因此伪 EACH 遵循本项目固定上游语义的 `1/32 beat`。候选枚举和组
+选择各有 100,000 状态上限，超过时整项失败，不返回看似完整的部分结果。
+
+对每个选中组，`N` 为物理起按数，平均键间秒数与基础权重为：
+
+```text
+interval_g = (end_seconds_g - start_seconds_g) / (N_g - 1)
+speed_g = (0.1 / interval_g) ^ 1.0
+base_g = N_g * speed_g
+```
+
+随后检查其他扫键组。时间间隔使用当前组自己的 `interval_g` 作为单位；起始键距离取
+1–8 环上的最短距离。符合多项时只使用最大倍率，并以更早的 follower 起点和组 ID 打破
+并列：
+
+- follower 在当前组结束后 0–1 个单位内：起始键距离不超过 1 时为 4 倍，否则为 2 倍；
+- 若同时恰好首尾相接且起始键距离不超过 1，则为 8 倍；
+- follower 在 2–4 个单位内为 1.2 倍；严格位于 1–2 个单位之间不加成；
+- 多个组在同一秒时刻开始时为 1.6 倍；连续倍率与同起点倍率只取较大者，不相乘。
+
+将加成后的组权重从高到低排列，第 `k` 组乘 `k^-0.5`，全部组求和。默认 analyser 使用
+完整谱面有效时长作 per-second 归一化：
+
+```text
+boosted_g = base_g * max(continuation_multiplier_g, simultaneous_multiplier_g)
+sweep_weighted_total = sum(boosted_(k) * k^-0.5)
+sweep_raw = sweep_weighted_total / max(chart_end_time_s, last_event_end_s or 0)
+```
+
+正时长无扫键谱面为 0；零时长返回 `FeatureResult(None, success=False)`。当前 raw 公式对应
+`sweep_weighted_v5_per_second`，默认评分映射暂用 identity，等待观察分布后再校准。
 
 ## 整体物量口径
 
@@ -381,6 +428,7 @@ from mairadar.scoring import DummyPnMapper, IdentityMapper
 
 FEATURE_MAPPERS = {
     "jack": IdentityMapper(),
+    "sweep": IdentityMapper(),
     "note": DummyPnMapper(p50=3.540077197, p100=9.328672541),
     "peak": DummyPnMapper(p50=10.0, p100=20.0),
     "slide_tricky": IdentityMapper(),
@@ -392,14 +440,14 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-jack-tricky-identity-20260915-v29",
+            mapping_version="provisional-jack-sweep-tricky-identity-20260915-v30",
         )
 
 TRANSFORMER = DefaultScoreTransformer
 ```
 
-p50、p100 是 `DummyPnMapper` 的原始指标阈值，要求 `0 < p50 < p100` 且均为有限数值。纵连
-目前用 `IdentityMapper`，不沿用已删除 Hold 频率占位项的 1、2 锚点；整体物量的
+p50、p100 是 `DummyPnMapper` 的原始指标阈值，要求 `0 < p50 < p100` 且均为有限数值。纵连和扫键
+目前用 `IdentityMapper`；纵连不沿用已删除 Hold 频率占位项的 1、2 锚点，扫键等待观察分布；整体物量的
 3.540077197、9.328672541 分别来自当前 7512 张观察
 样本的中位数和 P99；Peak 的 10、20 是首轮观察用宽松锚点。当前 1888 张难度索引 5/6
 观察样本中，`slide_tricky` 曾使用中位数 27.5、P99.9 约 116.06 作为临时锚点；当前默认
