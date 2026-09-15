@@ -1,6 +1,8 @@
-"""Maximal sweep recognition and numeric aggregation."""
+"""Variable-width sweep-family recognition and numeric aggregation."""
 
+from dataclasses import replace
 from fractions import Fraction
+import math
 import unittest
 
 from mairadar.analysis import AnalysisContext
@@ -14,6 +16,7 @@ from mairadar.analysis.features.sweep import (
     sweep_score,
     sweep_sequences,
 )
+from mairadar.model import Event
 from mairadar.parser import parse_chart
 
 
@@ -21,136 +24,278 @@ def events(text):
     return tuple(parse_chart(text).events)
 
 
-def sequence(group_id, lanes, start_s, end_s):
-    return SweepSequence(
-        lanes=tuple(lanes),
-        event_ids_by_attack=tuple(
-            (group_id * 10 + index,) for index in range(len(lanes))
-        ),
-        start_beat=Fraction(str(start_s)),
-        end_beat=Fraction(str(end_s)),
-        start_time_s=start_s,
-        end_time_s=end_s,
-        gaps_beats=tuple(Fraction(1) for _ in range(len(lanes) - 1)),
-        period_beats=Fraction(1),
-        turn_note_indexes=(),
-    )
+PERMISSIVE_CONFIG = SweepScoringConfig(
+    chord_note_multiplier=1.0,
+    minimum_family_attack_count=3,
+)
 
 
 class SweepTests(unittest.TestCase):
-    def test_three_adjacent_sixteenths_use_point_one_second_reference(self):
+    def test_half_percent_speed_tolerance_ignores_conversion_jitter(self):
+        times = (0.0, 1 / 12, 1 / 12 + (1 / 12) * 1.004, 3 / 12 + (1 / 12) * 0.004)
+        chart = tuple(
+            Event(
+                event_id=index,
+                kind="tap",
+                start_time_s=time_s,
+                end_time_s=time_s,
+                start_beat=str(Fraction(index - 1, 4)),
+                end_beat=str(Fraction(index - 1, 4)),
+                position=str(index),
+                is_slide_head=False,
+                is_break=False,
+                is_ex=False,
+                is_mine=False,
+                flags_json={},
+            )
+            for index, time_s in enumerate(times, start=1)
+        )
+        [tolerant] = sweep_sequences(chart)
+        [strict] = sweep_sequences(chart, speed_relative_tolerance=0)
+        self.assertFalse(tolerant.speed_switch_indexes)
+        self.assertTrue(strict.speed_switch_indexes)
+
+    def test_reference_speed_is_180_bpm_sixteenths_with_sqrt_scaling(self):
         chart = events("(180){16}1,2,3,E")
         [sequence] = sweep_sequences(chart)
         self.assertIsInstance(sequence, SweepSequence)
-        self.assertEqual(sequence.lanes, (1, 2, 3))
-        self.assertEqual(sequence.gaps_beats, (Fraction(1, 4), Fraction(1, 4)))
+        self.assertEqual(sequence.lanes_by_batch, ((1,), (2,), (3,)))
+        self.assertEqual(sequence.unit_intervals_beats, (Fraction(1, 4),) * 2)
         self.assertAlmostEqual(sequence.interval_seconds, 1 / 12)
-        self.assertAlmostEqual(sweep_score(chart), 3.6)
+        self.assertAlmostEqual(
+            sweep_score(chart, config=PERMISSIVE_CONFIG), 18
+        )
+        self.assertAlmostEqual(
+            sweep_score(events("(90){16}1,2,3,E"), config=PERMISSIVE_CONFIG),
+            9 * math.sqrt(0.5),
+        )
 
-    def test_hold_and_slide_head_are_attacks_but_headless_slide_is_not(self):
-        chart = events("(180){16}1,2h[4:1],3-5[4:1],4?-6[4:1],E")
+    def test_full_two_hand_loop_is_one_double_sweep(self):
+        [sequence] = sweep_sequences(events(
+            "(180){16}73,84,15,26,37,48,51,26,37,E"
+        ))
+        self.assertEqual(sequence.widths, (2,) * 9)
+        self.assertEqual(sequence.attack_count, 18)
+        self.assertEqual(len(sequence.strands), 1)
+        self.assertIn(
+            sequence.strands[0].lanes,
+            {
+                (3, 4, 5, 6, 7, 8, 1, 2, 3),
+                (7, 8, 1, 2, 3, 4, 5, 6, 7),
+            },
+        )
+
+    def test_single_sweep_can_expand_into_opposed_double_sweep(self):
+        [sequence] = sweep_sequences(events(
+            "(180){16}5,6,7,8,1,27,36,45,E"
+        ))
+        self.assertEqual(sequence.widths, (1, 1, 1, 1, 1, 2, 2, 2))
+        self.assertEqual(sequence.width_switch_indexes, (5,))
+        self.assertEqual(sequence.attack_count, 11)
+        self.assertEqual(len(sequence.strands), 1)
+        self.assertEqual(sequence.strands[0].lanes, (5, 6, 7, 8, 1, 2, 3, 4))
+
+    def test_nested_single_double_fold_remains_one_family(self):
+        [sequence] = sweep_sequences(events(
+            "(180){16}1,28,37,46,5,46,37,28,1,E"
+        ))
+        self.assertEqual(sequence.widths, (1, 2, 2, 2, 1, 2, 2, 2, 1))
+        self.assertEqual(sequence.attack_count, 15)
+        self.assertEqual(sequence.width_switch_indexes, (1, 4, 5, 8))
+        self.assertEqual(sequence.start_beat, 0)
+        self.assertEqual(sequence.end_beat, 2)
+
+    def test_previous_single_double_transition_examples_are_not_split(self):
+        expanded = sweep_sequences(events("(180){16}1,2,3,4,51,26,37,E"))
+        contracted = sweep_sequences(events("(180){16}18,27,36,45,6,7,8,E"))
+        self.assertEqual(len(expanded), 1)
+        self.assertEqual(expanded[0].widths, (1, 1, 1, 1, 2, 2, 2))
+        self.assertEqual(len(contracted), 1)
+        self.assertEqual(contracted[0].widths, (2, 2, 2, 2, 1, 1, 1))
+        self.assertTrue(contracted[0].direction_switch_indexes)
+
+    def test_stable_internal_chord_notes_are_attached_but_not_used_for_speed(self):
+        [sequence] = sweep_sequences(events("(180){16}1,2,3/7,4,5,E"))
+        self.assertEqual(sequence.lanes_by_batch, ((1,), (2,), (3, 7), (4,), (5,)))
+        self.assertEqual(sequence.attack_count, 6)
+        self.assertEqual([len(ids) for ids in sequence.extra_event_ids_by_batch], [0, 0, 1, 0, 0])
+        self.assertEqual(sequence.interval_seconds, 1 / 12)
+        self.assertAlmostEqual(
+            sweep_score(
+                events("(180){16}1,2,3/7,4,5,E"),
+                config=PERMISSIVE_CONFIG,
+            ),
+            18,
+        )
+
+    def test_short_hold_and_slide_head_are_attacks_but_long_hold_is_occupancy(self):
+        chart = events("(180){16}1,2h[16:1],3-5[4:1],4h[4:1],E")
         attacks = button_attacks(chart)
         self.assertTrue(all(isinstance(attack, ButtonAttack) for attack in attacks))
         self.assertEqual([attack.lane for attack in attacks], [1, 2, 3])
         self.assertEqual([attack.kinds for attack in attacks], [
             ("tap",), ("hold",), ("slide_head",),
         ])
-        self.assertEqual(sweep_sequences(chart)[0].lanes, (1, 2, 3))
+        self.assertEqual(sweep_sequences(chart)[0].lanes_by_batch, ((1,), (2,), (3,)))
 
-    def test_duplicate_declarations_share_an_attack_but_keep_their_weight(self):
-        chart = events("(180){16}1/1,2,3,E")
+    def test_long_hold_can_bridge_exactly_two_lanes_at_twice_the_interval(self):
+        bridged = events("(180){16}1/2h[4:1],,3,4,E")
+        unoccupied = events("(180){16}1,,3,4,E")
+        [sequence] = sweep_sequences(bridged)
+        self.assertEqual(sequence.lanes_by_batch, ((1,), (3,), (4,)))
+        self.assertEqual(sequence.unit_intervals_beats, (Fraction(1, 4), Fraction(1, 4)))
+        self.assertFalse(sweep_sequences(unoccupied))
+
+    def test_duplicate_and_ex_declarations_keep_individual_weights(self):
+        chart = events("(180){16}1/1x,2x,3,E")
         attacks = button_attacks(chart)
         self.assertEqual(len(attacks), 3)
-        self.assertEqual(len(attacks[0].event_ids), 2)
+        self.assertEqual(
+            (attacks[0].normal_declaration_count, attacks[0].protected_declaration_count),
+            (1, 1),
+        )
         [sequence] = sweep_sequences(chart)
         self.assertEqual(sequence.attack_count, 3)
         self.assertEqual(sequence.declaration_count, 4)
-        self.assertEqual(sequence.strength, 3)
-        self.assertAlmostEqual(sweep_score(chart), 3.6)
-
-    def test_uses_parser_pseudo_each_beats_instead_of_rebuilding_timing(self):
-        chart = events("(120){4}1`2`3,E")
-        [sequence] = sweep_sequences(chart)
-        self.assertEqual(sequence.gaps_beats, (Fraction(1, 32), Fraction(1, 32)))
-        self.assertEqual(sequence.period_beats, Fraction(1, 32))
-
-    def test_one_intervening_attack_is_allowed_but_two_stop_the_link(self):
-        one = sweep_sequences(events("(180){16}1,8,2,,3,E"))
-        two = sweep_sequences(events("(180){16}1,7,8,2,,,3,E"))
-        self.assertTrue(any(sequence.lanes == (1, 2, 3) for sequence in one))
-        self.assertFalse(any(sequence.lanes == (1, 2, 3) for sequence in two))
-
-    def test_direction_reversal_requires_two_steps_on_each_side(self):
-        [sequence] = sweep_sequences(events("(180){16}1,2,3,2,1,E"))
-        self.assertEqual(sequence.lanes, (1, 2, 3, 2, 1))
-        self.assertEqual(sequence.turn_note_indexes, (2,))
-        incomplete_turn = sweep_sequences(events("(180){16}1,2,3,2,E"))
-        self.assertEqual(incomplete_turn[0].lanes, (1, 2, 3))
-
-    def test_no_sweep_is_zero_and_zero_duration_is_unavailable(self):
-        analyzer = SweepAnalyzer()
-        context = AnalysisContext(
-            events("(180){16}1,3,5,E"),
-            chart_end_time_s=1,
-            last_event_end_s=0.5,
+        self.assertAlmostEqual(
+            sweep_score(chart, config=PERMISSIVE_CONFIG),
+            (1 + 0.3 + 0.3 + 1) * 6,
         )
-        self.assertEqual(analyzer.analyze(context).data, 0)
+
+    def test_twelve_note_gate_and_deceleration_only_eighth_exception(self):
+        self.assertTrue(sweep_sequences(events("(180){12}1,2,3,E")))
+        self.assertFalse(sweep_sequences(events("(180){8}1,2,3,E")))
+        self.assertFalse(sweep_sequences(events("(180){4}1,2,3,E")))
+        decelerating = sweep_sequences(events(
+            "(180){16}1,2,3,4,{8}5,6,7,E"
+        ))
+        self.assertEqual(len(decelerating), 1)
+        self.assertEqual(decelerating[0].speed_switch_indexes, (5,))
+        self.assertEqual(decelerating[0].unit_intervals_beats[-2:], (Fraction(1, 2),) * 2)
+
+    def test_direction_reversal_weights_the_pivot_with_the_following_run(self):
+        chart = events("(180){16}1,2,3,4,5,4,3,2,E")
+        [sequence] = sweep_sequences(chart)
+        self.assertEqual(sequence.direction_switch_indexes, (4,))
+        # Four attacks at 1.0, then pivot and four-note reverse section at 1.2.
+        self.assertAlmostEqual(
+            sweep_score(chart, config=PERMISSIVE_CONFIG),
+            (4 + 4 * 1.2) / (7 / 12),
+        )
+
+    def test_directionless_single_connection_stays_in_family_without_bonus(self):
+        chart = events("(180){16}1,2,3,8,7,6,E")
+        sequences = sweep_sequences(chart)
+        self.assertEqual(len(sequences), 2)
+        result = score_sweep_sequences(sequences, config=PERMISSIVE_CONFIG)
+        self.assertEqual(result.groups[1].parent_group_id, 1)
+        self.assertEqual(result.groups[1].connection_increment, 0)
+        self.assertEqual(result.groups[1].family_multiplier, 1)
+        self.assertAlmostEqual(result.value, 6 / (5 / 12))
+
+    def test_near_start_same_direction_single_connection_gets_point_three(self):
+        chart = events("(180){16}1,2,3,4,2,3,4,E")
+        result = score_sweep_sequences(
+            sweep_sequences(chart), config=PERMISSIVE_CONFIG
+        )
+        self.assertAlmostEqual(result.groups[1].connection_increment, 0.3)
+        self.assertAlmostEqual(result.groups[1].family_multiplier, 1.3)
+
+    def test_double_handoff_keeps_family_without_bonus(self):
+        parent = sweep_sequences(events("(180){16}1,2,3,E"))[0]
+        child = sweep_sequences(events("(180){16}5,6,7,E"))[0]
+        child = replace(
+            child,
+            times_s=tuple(time_s + parent.end_time_s for time_s in child.times_s),
+        )
+        result = score_sweep_sequences(
+            (parent, child), config=PERMISSIVE_CONFIG
+        )
+        self.assertEqual(result.groups[1].connection_increment, 0)
+        self.assertEqual(result.groups[1].family_multiplier, 1)
+
+    def test_only_top_five_family_densities_use_inverse_sqrt_rank(self):
+        body = ",,,,,".join(("1,2,3", "5,6,7") * 3)
+        sequences = sweep_sequences(events(f"(180){{16}}{body},E"))
+        result = score_sweep_sequences(sequences, config=PERMISSIVE_CONFIG)
+        self.assertEqual(len(result.families), 6)
+        self.assertEqual(sum(family.discount > 0 for family in result.families), 5)
+        self.assertAlmostEqual(
+            result.value,
+            18 * sum(rank ** -0.5 for rank in range(1, 6)),
+        )
+
+    def test_pseudo_each_uses_parser_timing_and_zero_duration_is_unavailable(self):
+        [sequence] = sweep_sequences(events("(120){4}1`2`3,E"))
+        self.assertEqual(sequence.unit_intervals_beats, (Fraction(1, 32),) * 2)
         zeroth = AnalysisContext((), chart_end_time_s=0, last_event_end_s=None)
-        self.assertFalse(analyzer.analyze(zeroth).success)
+        self.assertFalse(SweepAnalyzer().analyze(zeroth).success)
 
-    def test_faster_sweep_has_larger_numeric_value(self):
-        slow = sweep_score(events("(90){16}1,2,3,E"))
-        reference = sweep_score(events("(180){16}1,2,3,E"))
-        self.assertAlmostEqual(slow, 1.8)
-        self.assertGreater(reference, slow)
+    def test_analyzer_blends_all_family_mean_with_eligible_top_five_peak(self):
+        short = parse_chart("(180){16}1,2,3,E")
+        short_context = AnalysisContext(
+            tuple(short.events), short.chart_end_time_s, short.last_event_end_s,
+        )
+        short_details = score_sweep_sequences(
+            sweep_sequences(tuple(short.events)),
+            duration_s=short_context.duration_s,
+        )
+        self.assertEqual(short_details.family_mean, 18)
+        self.assertAlmostEqual(
+            short_details.duration_factor,
+            math.sqrt(short_context.duration_s / 150),
+        )
+        self.assertAlmostEqual(
+            SweepAnalyzer().analyze(short_context).data,
+            0.6 * 18 * math.sqrt(short_context.duration_s / 150),
+        )
 
-    def test_continuation_bonus_rank_discount_and_duration_normalization(self):
-        first = sequence(1, (1, 2, 3), 0.0, 0.2)
-        second = sequence(2, (1, 8, 7), 0.2, 0.4)
-        result = score_sweep_sequences((first, second), duration_s=2.0)
-        self.assertEqual(result.groups[0].continuation_multiplier, 8)
-        self.assertEqual(result.groups[0].follower_group_id, 2)
-        self.assertEqual(result.groups[0].boosted_weight, 24)
-        self.assertEqual(result.groups[1].count_discount, 2 ** -0.5)
-        expected_total = 24 + 3 * 2 ** -0.5
-        self.assertAlmostEqual(result.weighted_total, expected_total)
-        self.assertAlmostEqual(result.value, expected_total / 2)
-
-    def test_simultaneous_groups_use_one_point_six_without_multiplying(self):
-        first = sequence(1, (1, 2, 3), 0.0, 0.2)
-        second = sequence(2, (5, 6, 7), 0.0, 0.2)
-        result = score_sweep_sequences((first, second))
-        self.assertEqual(result.groups[0].simultaneous_group_ids, (2,))
-        self.assertEqual(result.groups[1].simultaneous_group_ids, (1,))
-        self.assertTrue(all(group.total_multiplier == 1.6 for group in result.groups))
-        self.assertAlmostEqual(result.value, 4.8 + 4.8 / 2 ** 0.5)
-
-    def test_continuation_gap_multiplier_boundaries(self):
-        current = sequence(1, (1, 2, 3), 0.0, 0.2)
-        for follower_start, expected in ((0.35, 1.0), (0.4, 1.2), (0.6, 1.2)):
-            with self.subTest(follower_start=follower_start):
-                follower = sequence(2, (4, 5, 6), follower_start, follower_start + 0.2)
-                result = score_sweep_sequences((current, follower))
-                self.assertEqual(result.groups[0].continuation_multiplier, expected)
-
-    def test_analyzer_returns_per_second_intensity(self):
-        parsed = parse_chart("(180){16}1,2,3,E")
+        parsed = parse_chart("(150){16}1,2,3,4,5,6,7,8,1,E")
         context = AnalysisContext(
             tuple(parsed.events), parsed.chart_end_time_s, parsed.last_event_end_s,
         )
-        self.assertAlmostEqual(SweepAnalyzer().analyze(context).data, 14.4)
+        stretched = replace(context, chart_end_time_s=context.chart_end_time_s + 100)
+        original = SweepAnalyzer().analyze(context).data
+        extended = SweepAnalyzer().analyze(stretched).data
+        self.assertGreater(extended, original)
+        self.assertGreater(extended, 0)
+
+        details = score_sweep_sequences(
+            sweep_sequences(tuple(parsed.events)),
+            duration_s=context.duration_s,
+        )
+        self.assertAlmostEqual(
+            details.value,
+            0.6 * details.mean_load + 0.4 * details.peak_score,
+        )
+
+    def test_chord_objects_receive_local_one_point_three_multiplier(self):
+        chart = events("(180){16}1,2/6,3,4,E")
+        [sequence] = sweep_sequences(chart)
+        plain = replace(PERMISSIVE_CONFIG, chord_note_multiplier=1.0)
+        boosted = replace(PERMISSIVE_CONFIG, chord_note_multiplier=1.3)
+        self.assertAlmostEqual(score_sweep_sequences((sequence,), config=plain).value, 20)
+        self.assertAlmostEqual(score_sweep_sequences((sequence,), config=boosted).value, 22.4)
+
+    def test_default_family_threshold_is_inclusive_at_nine_attacks(self):
+        eight = events("(120){12}1,2,3,4,5,6,7,8,E")
+        nine = events("(180){16}1,2,3,4,5,6,7,8,1,E")
+        self.assertEqual(sweep_score(eight), 0)
+        self.assertGreater(sweep_score(nine), 0)
 
     def test_configuration_and_resource_limits_validate(self):
         for kwargs in (
             {"max_states": 0},
             {"reference_interval_seconds": 0},
             {"speed_exponent": True},
-            {"count_discount_exponent": float("inf")},
+            {"protected_note_weight": float("inf")},
+            {"mean_weight": 0.7},
+            {"duration_reference_seconds": 0},
         ):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 SweepAnalyzer(**kwargs)
         with self.assertRaises(ValueError):
-            SweepScoringConfig(reference_interval_seconds=-1).validate()
+            SweepScoringConfig(single_connection_increment=-1).validate()
         with self.assertRaises(ValueError):
             sweep_sequences(events("(180){16}1,2,3,E"), max_states=1)
 

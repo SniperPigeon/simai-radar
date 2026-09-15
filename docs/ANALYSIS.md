@@ -80,50 +80,70 @@ jack_raw = sum(weighted_strength_(x) * rank_weight_(x),
 
 ## 扫键口径
 
-`SweepAnalyzer` 在全谱外键 Tap/Hold 起按中识别相邻键扫键。显式 Slide 头已经由 parser
-表示成独立 Tap，因此会进入识别；Slide 体、无头 Slide、Touch 和 TouchHold 不进入。
-同拍同键的重复声明在识别图中形成一个物理起按，但保留其全部事件 ID，不删除或修改
-原事件；scorer 的物件数 `N` 按物理起按数计算。
+`SweepAnalyzer` 按全局拍轴把外键攻击组成时间批次，再用动态规划选择一条最长合法主干。
+同一时间批次的其他一至两个物件直接作为辅助物件附在主干上；它们与第二条扫键 Strand
+计分等价，因此不再枚举左右手匹配。到达相同末键、方向、速度和连续步数的历史状态只
+保留主干更长、变速及折返更少、事件序更早的解释。候选最终按事件覆盖最大、组数最少
+选择，不重复计数。
 
-候选的相邻键按 1–8 环形连接，每步拍长必须为正且不超过一拍。连接两个相邻键时，中间
-最多允许出现一个其他外键起按；如果同键重复先于目标相邻键出现，则不能跳过该重复制造
-扫键。首个步长固定候选周期，后续步长与它的误差最多为 `1/16 beat`。候选至少覆盖三个
-不同键位；每段同方向运行至少包含两步，满足这一条件后允许折返。先移除被更长候选完整
-包含的前后缀，再选择互斥候选；不同组只有在共享物件同时是两组最后一个起按时才允许
-重叠。选择目标依次为组数最多、总物理起按数最多，完全并列时确定性选择字典序较早者。
+普通 Tap 和不超过十六分音符（`end_beat-start_beat <= 1/4`）的 Hold 进入攻击流；显式
+Slide 头已经是 Tap，也会进入。长 Hold 不作攻击，但保留占位区间：若中间键在整个空隙
+内被长 Hold 占据，允许同方向跨两个键且用时恰好两个单位间隔。Slide 体、无头 Slide、
+Touch 和 TouchHold 不进入。每个普通声明权重为 1，每个 EX 声明权重为 0.3；同拍同键
+只形成一个物理速度点，但所有重复声明及其权重都保留。
 
-识别直接使用 `events-0.3` 的精确有理拍轴，不使用 detector 原实现重新编译 Simai 的固定
-1 ms 伪 EACH 偏移；因此伪 EACH 遵循本项目固定上游语义的 `1/32 beat`。候选枚举和组
-选择各有 100,000 状态上限，超过时整项失败，不返回看似完整的部分结果。
+基础识别门槛是十二分或更快，即每单位键距 `unit_gap_beats <= 1/3`。独立八分扫不识别；
+只有已有合法扫键减速至 `1/2 beat` 时，八分段才可进入，并可继续保持八分。单位间隔按
+实际键距归一化，因此 Hold 跨键的两键移动使用 `gap/2`。实际秒速度一旦变化立即记录
+变速切换；加速、普通减速和减速至八分均增加 0.2。相邻单位秒间隔使用 0.5% 相对容差
+（并保留 `1e-9` 秒绝对容差），避免换算抖动伪造反复变速；十二/十六/二十四分等真实
+节奏档位差异远大于该容差。
 
-对每个选中组，`N` 为物理起按数，平均键间秒数与基础权重为：
+每个时间批次包含一个主干键和最多两个辅助物件；辅助物件参与普通/EX 物件权重，但不
+参与速度或方向计算。同向、异向双扫及单双扫切换只要存在贯穿的合法最长主干就不会中断；
+批次宽度仍保留作审计，但自然扩张、收束及双押交棒都不额外增加权重。双扫批次本身已按
+两个物件贡献基础负荷，不再因第二 Strand 或宽度变化重复奖励。
+折返只有前一方向已完成至少两步时才成立，最后一段也必须完成两步；转向轴心的 0.2 从
+轴心批次开始生效。
 
-```text
-interval_g = (end_seconds_g - start_seconds_g) / (N_g - 1)
-speed_g = (0.1 / interval_g) ^ 1.0
-base_g = N_g * speed_g
-```
-
-随后检查其他扫键组。时间间隔使用当前组自己的 `interval_g` 作为单位；起始键距离取
-1–8 环上的最短距离。符合多项时只使用最大倍率，并以更早的 follower 起点和组 ID 打破
-并列：
-
-- follower 在当前组结束后 0–1 个单位内：起始键距离不超过 1 时为 4 倍，否则为 2 倍；
-- 若同时恰好首尾相接且起始键距离不超过 1，则为 8 倍；
-- follower 在 2–4 个单位内为 1.2 倍；严格位于 1–2 个单位之间不加成；
-- 多个组在同一秒时刻开始时为 1.6 倍；连续倍率与同起点倍率只取较大者，不相乘。
-
-将加成后的组权重从高到低排列，第 `k` 组乘 `k^-0.5`，全部组求和。默认 analyser 使用
-完整谱面有效时长作 per-second 归一化：
+速度以 180 BPM 十六分的 `1/12` 秒为单位，使用平方根系数：
 
 ```text
-boosted_g = base_g * max(continuation_multiplier_g, simultaneous_multiplier_g)
-sweep_weighted_total = sum(boosted_(k) * k^-0.5)
-sweep_raw = sweep_weighted_total / max(chart_end_time_s, last_event_end_s or 0)
+speed_factor = sqrt((1/12 second) / unit_interval_seconds)
+batch_note_weight = normal_declarations + 0.3 * ex_declarations
+if physical_button_count >= 2: batch_note_weight *= 1.3
+batch_base = batch_note_weight * speed_factor
 ```
 
-正时长无扫键谱面为 0；零时长返回 `FeatureResult(None, success=False)`。当前 raw 公式对应
-`sweep_weighted_v5_per_second`，默认评分映射暂用 identity，等待观察分布后再校准。
+同一候选内的变速和折返按发生顺序累加倍率，不作音符尾部衰减。不能直接延长
+成同一候选、但在上一组一个单位间隔内开始的组仍可组成 family。单押接续若没有同向近
+起点或合法折返，只维持 family 关系而不加权；满足方向条件时基础增加 0.2。同拍双押
+交棒只维持 family 而不加权。同向且两组起点环形距离不超过一键时再增加 0.1，合法折返仍增加 0.2；
+实际变速另增加 0.2。多个前驱可用时取能产生最大线性倍率的前驱，避免乘算次幂爆炸。
+
+```text
+multiplier_child = multiplier_parent + connection_increment
+family_load = sum(batch_base * current_additive_multiplier)
+family_duration = family_end_seconds - family_start_seconds
+family_density = family_load / family_duration
+eligible = physical_attack_count > 8
+family_mean = mean(all_family_density)
+duration_factor = sqrt(max(chart_end_time_s, last_event_end_s or 0) / 150 seconds)
+mean_load = family_mean * duration_factor
+peak = sum(eligible_family_density_(k) / sqrt(k), k=1..min(5, eligible_count))
+sweep_raw = 0.6 * mean_load + 0.4 * peak
+```
+
+识别只读取 `events-0.3`，伪 EACH 因而沿用 parser 的精确 `1/32 beat`。动态规划状态和
+最终候选选择各有 100,000 状态上限，超限时整项失败而不返回部分分数。正时长无扫键为 0；零时长不可用。
+每个 family 只用自身首尾覆盖时长归一化，不使用谱面总长度；所有 family 按密度从高到低
+排序。物理攻击数不超过 8 的 family 在排名前排除；边界恰好 9 个攻击时
+保留，不另设持续时间门槛。Peak 只取合格 family 前五并使用 `1/sqrt(k)` 名次衰减；Mean
+则对所有已识别 family（包括物量不超过 8 的短 family）的 density 取算术平均，再乘
+`sqrt(chart_duration / 150 seconds)` 作温和总时长补正。最终按
+`0.6 * Mean + 0.4 * Peak` 混合。当前公式版本为
+`sweep_family_blend_v7_family_mean_duration_sqrt`，识别版本为
+`main_spine_v1_speed_tolerance`，默认映射暂用 identity。
 
 ## 整体物量口径
 
@@ -441,7 +461,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-jack-sweep-tricky-identity-20260915-v31",
+            mapping_version="provisional-jack-sweep-tricky-identity-20260915-v42",
         )
 
 TRANSFORMER = DefaultScoreTransformer
@@ -488,7 +508,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-jack-sweep-tricky-identity-20260915-v31`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-jack-sweep-tricky-identity-20260915-v42`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 

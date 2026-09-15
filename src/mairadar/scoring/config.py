@@ -23,7 +23,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-jack-sweep-tricky-identity-20260915-v31",
+            mapping_version="provisional-jack-sweep-tricky-identity-20260915-v42",
         )
 
 
