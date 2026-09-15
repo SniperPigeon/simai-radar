@@ -30,9 +30,18 @@ class FeatureMapper(Protocol):
 
 
 from .linear import DummyPnMapper, IdentityMapper  # noqa: E402
+from .profile import (  # noqa: E402
+    MAXIMUM_SCORE,
+    PROFILE_SCHEMA_VERSION,
+    SCORE_ANCHORS,
+    OpenSetPiecewiseMapper,
+    load_mapping_profile,
+)
 from .transformer import FeatureScoreTransformer  # noqa: E402
 
 __all__ = [
     "FeatureMapper", "FeatureScore", "ScoreResult", "ScoreTransformer",
     "DummyPnMapper", "IdentityMapper", "FeatureScoreTransformer",
+    "MAXIMUM_SCORE", "PROFILE_SCHEMA_VERSION", "SCORE_ANCHORS",
+    "OpenSetPiecewiseMapper", "load_mapping_profile",
 ]

@@ -116,6 +116,21 @@ python scripts/mairadar.py \
   --output outputs/visualizer-new
 ```
 
+在 visualizer 的“原始值分布”页调好各维 T1–T4 后，可以导出
+`mapping_profile.json`。该文件冻结的是校准集 raw 锚点，而不是让新数据集重新计算百分位：
+
+```bash
+python scripts/mairadar.py \
+  --mode analysis_score \
+  --mapping-profile mapping_profile.json \
+  --input data/test-parsed \
+  --output outputs/test-scored
+```
+
+profile 将 T1/T2/T3/T4 映射到 50/100/150/200，并记录校准集最大 raw 值
+`T4_max`。T4 到 T4_max 保持 200；开放集 raw 超过 T4_max 后，以 T3→T4
+的斜率起步并渐近到 220，不会在新测试集上重新拟合。
+
 若只想检查 analyser 的原始指标，不执行评分映射或生成报告：
 
 ```bash

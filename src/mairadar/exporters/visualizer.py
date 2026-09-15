@@ -233,7 +233,7 @@ class VisualizerExporter:
             "generatedAt": datetime.now(timezone.utc).isoformat(),
             "mappingVersions": mapping_versions,
             "scoreScale": 100,
-            "displayRange": [0, 200],
+            "displayRange": [0, 220],
             "dimensions": self._dimensions(names),
             "stats": {
                 "songCount": len(songs),

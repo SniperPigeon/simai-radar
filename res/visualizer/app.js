@@ -65,6 +65,7 @@ const elements = {
   distributionLevelFilter: document.querySelector("#distributionLevelFilter"),
   distributionDimensionTabs: document.querySelector("#distributionDimensionTabs"),
   distributionStats: document.querySelector("#distributionStats"),
+  exportMappingProfile: document.querySelector("#exportMappingProfile"),
   resetDistributionThresholds: document.querySelector("#resetDistributionThresholds"),
   thresholdControls: document.querySelector("#thresholdControls"),
   thresholdRows: document.querySelector("#thresholdRows"),
@@ -136,9 +137,9 @@ function percentileText(value) {
     .replace(/(\.\d*?)0+$/, "$1");
 }
 
-function distributionEntries() {
+function distributionEntriesForDimension(dimensionKey) {
   return state.charts.filter(({ chart }) => {
-    const rawValue = chart.rawScores?.[state.distributionDimension];
+    const rawValue = chart.rawScores?.[dimensionKey];
     return (
       Number.isFinite(rawValue) &&
       chartMatches(chart, state.distributionKind, state.distributionDifficulty) &&
@@ -147,10 +148,18 @@ function distributionEntries() {
   });
 }
 
-function distributionValues() {
-  return distributionEntries()
-    .map(({ chart }) => chart.rawScores[state.distributionDimension])
+function distributionEntries() {
+  return distributionEntriesForDimension(state.distributionDimension);
+}
+
+function distributionValuesForDimension(dimensionKey) {
+  return distributionEntriesForDimension(dimensionKey)
+    .map(({ chart }) => chart.rawScores[dimensionKey])
     .sort((left, right) => left - right);
+}
+
+function distributionValues() {
+  return distributionValuesForDimension(state.distributionDimension);
 }
 
 function currentDistributionPercentiles() {
@@ -261,6 +270,59 @@ function setDistributionPercentile(index, rawValue) {
   state.distributionPercentilesByDimension[state.distributionDimension] = percentiles;
   state.clientMappedDimensions.add(state.distributionDimension);
   renderDistributionResults();
+}
+
+function buildMappingProfile() {
+  const generatedAt = new Date().toISOString();
+  const dimensions = Object.fromEntries(state.data.dimensions.map((dimension) => {
+    const values = distributionValuesForDimension(dimension.key);
+    if (!values.length) throw new Error(`${dimension.label} 在当前筛选下没有 raw 数据`);
+    const percentiles = state.distributionPercentilesByDimension[dimension.key];
+    const rawAnchors = percentiles.map((percent) => percentile(values, percent));
+    if (
+      rawAnchors[0] <= 0
+      || rawAnchors.some((value, index) => index > 0 && value <= rawAnchors[index - 1])
+    ) {
+      throw new Error(`${dimension.label} 的 T1–T4 raw 值必须严格递增且大于 0`);
+    }
+    return [dimension.key, {
+      label: dimension.label,
+      percentiles,
+      rawAnchors,
+      t4Max: values.at(-1),
+      sampleCount: values.length,
+    }];
+  }));
+  return {
+    schemaVersion: "mairadar-mapping-profile-1",
+    mappingVersion: `mapping-profile-${generatedAt.replaceAll(/[:.]/g, "-")}`,
+    generatedAt,
+    scoreAnchors: [...DISTRIBUTION_SCORE_ANCHORS],
+    maximumScore: 220,
+    calibrationFilters: {
+      chartType: state.distributionKind,
+      difficulty: state.distributionDifficulty,
+      level: state.distributionLevel,
+    },
+    dimensions,
+  };
+}
+
+function exportMappingProfile() {
+  try {
+    const profile = buildMappingProfile();
+    const blob = new Blob([`${JSON.stringify(profile, null, 2)}\n`], {
+      type: "application/json;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "mapping_profile.json";
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    window.alert(`无法导出 mapping_profile：${error.message}`);
+  }
 }
 
 function distributionCurvePath(values, xScale, yScale) {
@@ -418,7 +480,11 @@ function renderDistributionResults() {
         : 0;
       return `<tr><td>T${index + 1} · P${percentileText(percent)}</td><td>${rawValueText(percentile(values, percent))}</td><td>${DISTRIBUTION_SCORE_ANCHORS[index]}</td><td>${samplePosition.toLocaleString("zh-CN")} / ${values.length.toLocaleString("zh-CN")}</td></tr>`;
     })
-    .join("");
+    .join("") + (
+      values.length
+        ? `<tr><td>T4_max</td><td>${rawValueText(values.at(-1))}</td><td>200</td><td>${values.length.toLocaleString("zh-CN")} / ${values.length.toLocaleString("zh-CN")}</td></tr>`
+        : ""
+    );
   syncThresholdControls(values);
   renderDistributionChart(values, dimension);
   renderRangeShare(values);
@@ -968,6 +1034,7 @@ function bindEvents() {
     if (!input) return;
     setDistributionPercentile(Number(input.dataset.thresholdIndex), input.value);
   });
+  elements.exportMappingProfile.addEventListener("click", exportMappingProfile);
   elements.resetDistributionThresholds.addEventListener("click", () => {
     state.distributionPercentilesByDimension[state.distributionDimension] = [
       ...DEFAULT_DISTRIBUTION_PERCENTILES,

@@ -96,7 +96,7 @@
               <p class="section-kicker">SCORE DIMENSIONS</p>
               <h2 id="radarTitle">维度图</h2>
             </div>
-            <p class="scale-label">100 为主框 · 最高 200</p>
+            <p class="scale-label">100 为主框 · 开放集上限 220</p>
           </div>
 
           <div class="radar-layout">
@@ -189,9 +189,12 @@
               <div>
                 <p class="section-kicker">BREAKPOINTS</p>
                 <h2>百分位分割点</h2>
-                <p class="mapping-note">拖动后按 T1/T2/T3/T4 → 50/100/150/200 分重算当前维度</p>
+                <p class="mapping-note">T1/T2/T3/T4 → 50/100/150/200；T4 至 T4_max 保持 200，超出后渐近至 220</p>
               </div>
-              <button id="resetDistributionThresholds" class="reset-curve-button" type="button">恢复 P30/67/85/99</button>
+              <div class="threshold-actions">
+                <button id="exportMappingProfile" class="reset-curve-button" type="button">导出 mapping_profile</button>
+                <button id="resetDistributionThresholds" class="reset-curve-button" type="button">恢复 P30/67/85/99</button>
+              </div>
             </div>
             <div id="thresholdControls" class="threshold-controls"></div>
             <div class="threshold-table-wrap">

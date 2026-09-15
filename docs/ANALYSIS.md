@@ -494,6 +494,31 @@ ScoreResult 独立存储标准分数与 mapping_version。默认版本为
 
 pipeline 将评分输出附在 AnalysisRecord.scores 上，导出器追加 `<feature>_score` 并保留映射诊断和版本。映射全部失败时仍保留分数列，以空值表示失败。直接调用导出组件输出原始分析时，可省略评分结果及标准分数列。
 
+### 冻结 mapping profile 并用于开放集
+
+visualizer 的分布页可以导出 `mapping_profile.json`。导出时，对每个默认维度记录当前筛选
+范围内 T1–T4 对应的 raw 值、百分位、样本数和最大 raw 值 `t4Max`；profile 顶层记录
+`mappingVersion`、固定目标分 `[50, 100, 150, 200]` 与开放集上限 220。所有 raw 锚点
+必须严格递增且 T1 大于 0，否则页面会拒绝导出，避免产生有歧义的分段。
+
+```bash
+mairadar --mode analysis_score \
+  --mapping-profile mapping_profile.json \
+  --input data/test-parsed \
+  --output outputs/test-scored
+```
+
+CLI 校验 profile 后构造 `OpenSetPiecewiseMapper`。设 T3→T4 的斜率
+`s = 50 / (T4 - T3)`，则 T4 到 `T4_max`（含端点）统一为 200；超过
+`T4_max` 时使用：
+
+```text
+score(x) = 200 + 20 * (1 - exp(-s * (x - T4_max) / 20))
+```
+
+因此开放集尾部在 `T4_max` 右侧的初始斜率仍为 `s`，随后连续衰减并渐近 220。
+新测试集只应用冻结的 raw 锚点，不使用自身分布重新拟合；这也避免测试数据泄漏到校准过程。
+
 ## 验证
 
 ```bash

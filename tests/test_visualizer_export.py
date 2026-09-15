@@ -100,6 +100,9 @@ class VisualizerExporterTests(unittest.TestCase):
                 app_source,
             )
             self.assertIn("function mapRawScore(rawValue, rawThresholds)", app_source)
+            self.assertIn("function buildMappingProfile()", app_source)
+            self.assertIn('link.download = "mapping_profile.json"', app_source)
+            self.assertIn("t4Max: values.at(-1)", app_source)
             self.assertIn("function orderedRadarDimensions(dimensions)", app_source)
             self.assertIn(
                 "dimensions[1], dimensions[2], dimensions[5]",
@@ -108,11 +111,13 @@ class VisualizerExporterTests(unittest.TestCase):
             self.assertIn("state.clientMappedDimensions.add(state.distributionDimension)", app_source)
             self.assertNotIn('step="0.1"', app_source)
             index_source = (root / "site" / "index.html").read_text()
-            self.assertIn("T1/T2/T3/T4 → 50/100/150/200 分", index_source)
+            self.assertIn("T1/T2/T3/T4 → 50/100/150/200", index_source)
+            self.assertIn("导出 mapping_profile", index_source)
             self.assertIn("<th>目标分</th>", index_source)
             payload = json.loads(report.data_path.read_text())
             self.assertEqual(payload["schemaVersion"], "mairadar-visualizer-1")
             self.assertEqual(payload["mappingVersions"], ["visualizer-test-v1"])
+            self.assertEqual(payload["displayRange"], [0, 220])
             self.assertEqual(payload["dimensions"], [
                 {
                     "key": "note",

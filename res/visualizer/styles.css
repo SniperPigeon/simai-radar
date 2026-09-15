@@ -977,6 +977,12 @@ a:focus-visible {
   line-height: 1.45;
 }
 
+.threshold-actions {
+  display: grid;
+  gap: 7px;
+  flex: 0 0 auto;
+}
+
 .reset-curve-button {
   min-height: 34px;
   padding: 0 10px;

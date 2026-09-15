@@ -53,6 +53,44 @@ def read_csv(report):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_cli_loads_frozen_mapping_profile_for_scoring(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fixtures(root)
+            profile = root / "mapping_profile.json"
+            profile.write_text(json.dumps({
+                "schemaVersion": "mairadar-mapping-profile-1",
+                "mappingVersion": "cli-profile-v1",
+                "scoreAnchors": [50, 100, 150, 200],
+                "maximumScore": 220,
+                "dimensions": {
+                    name: {"rawAnchors": [1, 2, 3, 4], "t4Max": 5}
+                    for name in (
+                        "note", "peak", "sweep", "slide_tricky", "slide_sequence", "jack",
+                    )
+                },
+            }), encoding="utf-8")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                code = main([
+                    "--mode", "analysis_score",
+                    "--input", str(root / "bundles"),
+                    "--output", str(root / "profile-scored"),
+                    "--mapping-profile", str(profile),
+                ])
+
+            self.assertEqual(code, 0, stderr.getvalue())
+            with (root / "profile-scored" / "charts.csv").open(
+                encoding="utf-8-sig", newline="",
+            ) as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual(len(rows), 2)
+            self.assertTrue(all(
+                json.loads(row["diagnostics"])["scoring"]["mapping_version"]
+                == "cli-profile-v1"
+                for row in rows
+            ))
+
     def test_parse_only_writes_bundles_without_analysis_mapping_or_report_export(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

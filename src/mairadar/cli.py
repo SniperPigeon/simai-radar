@@ -51,6 +51,10 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
         help="scoring output format (default: csv)",
     )
     parser.add_argument(
+        "--mapping-profile", type=Path,
+        help="frozen mapping_profile.json exported by the visualizer",
+    )
+    parser.add_argument(
         "--difficulty", "-d", type=_difficulty, nargs="+",
         help="chart indexes; analysis defaults to Master/5 and Re:Master/6",
     )
@@ -74,7 +78,14 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
             if args.input is None:
                 print("Folder selection cancelled", file=sys.stderr)
                 return 1
-        if args.mode in SCORING_MODES and transformer is None:
+        if args.mapping_profile is not None:
+            if args.mode not in SCORING_MODES:
+                raise ValueError("--mapping-profile is only available in scoring modes")
+            if transformer is not None:
+                raise ValueError("--mapping-profile cannot be combined with an injected transformer")
+            from .scoring import load_mapping_profile
+            transformer = load_mapping_profile(args.mapping_profile)
+        elif args.mode in SCORING_MODES and transformer is None:
             from .scoring.config import TRANSFORMER
             if TRANSFORMER is not None:
                 transformer = TRANSFORMER()
