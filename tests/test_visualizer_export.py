@@ -95,15 +95,24 @@ class VisualizerExporterTests(unittest.TestCase):
             self.assertIn("const PERCENTILE_PRECISION = 3;", app_source)
             self.assertIn('step="${PERCENTILE_STEP}"', app_source)
             self.assertIn("MAX_DISTRIBUTION_PERCENTILE", app_source)
+            self.assertIn(
+                "const DISTRIBUTION_SCORE_ANCHORS = Object.freeze([50, 100, 150, 200]);",
+                app_source,
+            )
+            self.assertIn("function mapRawScore(rawValue, rawThresholds)", app_source)
+            self.assertIn("state.clientMappedDimensions.add(state.distributionDimension)", app_source)
             self.assertNotIn('step="0.1"', app_source)
+            index_source = (root / "site" / "index.html").read_text()
+            self.assertIn("T1/T2/T3/T4 → 50/100/150/200 分", index_source)
+            self.assertIn("<th>目标分</th>", index_source)
             payload = json.loads(report.data_path.read_text())
             self.assertEqual(payload["schemaVersion"], "mairadar-visualizer-1")
             self.assertEqual(payload["mappingVersions"], ["visualizer-test-v1"])
             self.assertEqual(payload["dimensions"], [
                 {
-                    "key": "hold",
-                    "label": "Hold频率",
-                    "shortLabel": "Hold",
+                    "key": "jack",
+                    "label": "纵连",
+                    "shortLabel": "纵连",
                     "color": "#ef476f",
                 },
                 {
@@ -125,10 +134,16 @@ class VisualizerExporterTests(unittest.TestCase):
                     "color": "#3a86ff",
                 },
                 {
+                    "key": "slide_cumulate",
+                    "label": "持续星星压力",
+                    "shortLabel": "持续星星",
+                    "color": "#8338ec",
+                },
+                {
                     "key": "slide_sequence",
                     "label": "Slide阵强度",
                     "shortLabel": "Slide阵",
-                    "color": "#8338ec",
+                    "color": "#d1495b",
                 },
             ])
             self.assertEqual(payload["stats"]["songCount"], 1)

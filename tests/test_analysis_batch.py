@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import patch
 
 from mairadar.analysis import ChartAnalyzer
-from mairadar.analysis.features import HoldFrequencyAnalyzer
+from mairadar.analysis.features import JackSequenceAnalyzer
 from mairadar.cli import main
 from mairadar.batch import analyze_directory, analyze_source
 from mairadar.exporters import CsvExporter
@@ -23,7 +23,7 @@ from mairadar.parser import parse_text
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def bundle(root, title="曲名", *, text="(120){4}1h[4:1],E", cover=True, offset=0):
+def bundle(root, title="曲名", *, text="(180){8}1h[4:1],1,E", cover=True, offset=0):
     parsed = parse_text(
         f"&title={title}\n&artist=曲师\n&des_5=谱师\n&cabinet=DX\n"
         f"&lv_5=13\n&first={offset}\n&inote_5={text}"
@@ -106,7 +106,7 @@ class BatchTests(unittest.TestCase):
             root = Path(temp)
             source = bundle(root, title='曲名,"quoted"', offset=10)
             before = (source / "events.csv").read_bytes()
-            analyzer = ChartAnalyzer({"second": HoldFrequencyAnalyzer, "first": HoldFrequencyAnalyzer})
+            analyzer = ChartAnalyzer({"second": JackSequenceAnalyzer, "first": JackSequenceAnalyzer})
             batch = analyze_directory(root / "input", analyzer=analyzer)
             report = CsvExporter().export(batch.records, root / "report", feature_names=batch.feature_names)
             columns, rows = read_rows(report.csv_path)
@@ -117,7 +117,7 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(rows[0]["designer"], "谱师")
             self.assertEqual(rows[0]["difficulty_index"], "5")
             self.assertEqual(rows[0]["chart_type"], "dx")
-            self.assertEqual(float(rows[0]["first_raw"]), 2)
+            self.assertEqual(float(rows[0]["first_raw"]), 2.6)
             self.assertEqual(
                 json.loads(rows[0]["diagnostics"])["features"], {"second": True, "first": True},
             )
@@ -140,15 +140,16 @@ class BatchTests(unittest.TestCase):
             _, rows = read_rows(report.csv_path)
             self.assertEqual(len(rows), 3)
             self.assertEqual([row["status"] for row in rows], ["ok", "error", "error"])
-            self.assertEqual([row["hold_raw"] for row in rows], ["2.0", "", ""])
+            self.assertEqual([row["jack_raw"] for row in rows], ["2.6", "", ""])
             self.assertTrue(all(row["cover_path"] == "" for row in rows))
             self.assertEqual(
                 json.loads(rows[1]["diagnostics"])["features"],
                 {
-                    "hold": False,
+                    "jack": False,
                     "note": False,
                     "peak": False,
                     "slide_tricky": False,
+                    "slide_cumulate": False,
                     "slide_sequence": False,
                 },
             )
@@ -167,7 +168,7 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(len(rows), 2)
             self.assertEqual(len(list((root / "report" / "covers").iterdir())), 1)
             self.assertEqual([row["status"] for row in rows], ["ok", "ok"])
-            self.assertEqual(rows[1]["hold_raw"], "2.0")
+            self.assertEqual(rows[1]["jack_raw"], "2.6")
             self.assertEqual(rows[1]["cover_path"], rows[0]["cover_path"])
             self.assertEqual(report.exit_code, 0)
             self.assertEqual(batch.exit_code, 0)  # Export errors do not mutate core results.
@@ -208,7 +209,7 @@ class BatchTests(unittest.TestCase):
                 report = CsvExporter().export(batch.records, root / "report", feature_names=batch.feature_names)
             _, rows = read_rows(report.csv_path)
             self.assertEqual([row["status"] for row in rows], ["ok", "ok"])
-            self.assertEqual(rows[0]["hold_raw"], "2.0")
+            self.assertEqual(rows[0]["jack_raw"], "2.6")
             self.assertEqual(rows[0]["cover_path"], "")
             self.assertEqual(len(list((root / "report" / "covers").iterdir())), 1)
 
@@ -240,8 +241,8 @@ class BatchTests(unittest.TestCase):
                        "--input", str(root / "input")]
             process = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(process.returncode, 0, process.stderr)
-            self.assertEqual(json.loads(process.stdout)["analysis"]["features"]["hold"],
-                             {"data": 2.0, "success": True})
+            self.assertEqual(json.loads(process.stdout)["analysis"]["features"]["jack"],
+                             {"data": 2.6, "success": True})
             self.assertFalse((root / "report").exists())
             (root / "input" / "bad").mkdir()
             process = subprocess.run(command, capture_output=True, text=True)

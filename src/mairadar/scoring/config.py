@@ -1,17 +1,19 @@
 """Per-feature mapper instances and explicitly versioned provisional parameters."""
 
-from . import DummyPnMapper, FeatureScoreTransformer, ScoreTransformer
+from . import DummyPnMapper, FeatureScoreTransformer, IdentityMapper, ScoreTransformer
 
-# HOLD remains an MVP placeholder. NOTE uses the 2026-09-13 observation batch's
-# median and P99. PEAK starts with broad exploratory anchors. The two SLIDE
-# features use rounded Master/Re:Master observation anchors. SLIDE_TRICKY uses
-# P99.9 for its upper anchor so the unique Top-5 tail does not saturate at P99.
+# JACK and SLIDE_TRICKY are intentionally passed through so the visualizer
+# receives their analyzer values without applying stale calibration. NOTE uses
+# the 2026-09-13 observation batch's median and P99. PEAK starts with broad
+# exploratory anchors. The other SLIDE features use rounded Master/Re:Master
+# observation anchors.
 # None is official.
 FEATURE_MAPPERS = {
-    "hold": DummyPnMapper(p50=1.0, p100=2.0),
+    "jack": IdentityMapper(),
     "note": DummyPnMapper(p50=3.540077197, p100=9.328672541),
     "peak": DummyPnMapper(p50=10.0, p100=20.0),
-    "slide_tricky": DummyPnMapper(p50=0.043, p100=0.33),
+    "slide_tricky": IdentityMapper(),
+    "slide_cumulate": DummyPnMapper(p50=0.36, p100=0.96),
     "slide_sequence": DummyPnMapper(p50=1.3, p100=2.9),
 }
 
@@ -20,7 +22,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-slide-unique-top5-20260914-v20",
+            mapping_version="provisional-jack-tricky-identity-20260915-v28",
         )
 
 

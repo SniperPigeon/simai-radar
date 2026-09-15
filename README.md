@@ -2,7 +2,9 @@
 
 simai-radar 是一个面向 maimai 谱面雷达图评分研究的数据分析 codebase。项目将**谱面解析与特征分析**、**原始特征到标准化分数的映射**、**数据导出**拆成彼此独立的层，既方便离线批量实验，也为未来接入 MajdataPlay、提供实时雷达图分析保留了纯内存调用路径。
 
-当前版本已经打通完整管线，但还没有定义最终雷达维度，也没有完成官方数据校准。仓库内置的 `hold` 特征和 dummy Pn 映射只用于演示、测试接口与验证数据流，不应被当作正式评分标准。
+当前版本已经打通完整管线，但还没有完成官方数据校准。`jack` 已替换早期的 Hold 频率
+占位维度；新指标与 `slide_tricky` 暂时使用 identity 映射，便于先观察 raw 分布，其余临时
+映射也不应被当作正式评分标准。
 
 ## 管线如何构成
 
@@ -305,7 +307,8 @@ python3 -m http.server 4173 --bind 127.0.0.1
 ```
 
 visualizer exporter 与 CSV exporter 并列，只消费已经完成的 `AnalysisRecord`；它不读取
-原始 Simai、不运行 parser/analyzer，也不参与分数映射。模板固定保存在
+原始 Simai、不运行 parser/analyzer，也不在导出时修改分数。生成页面的分布工作台允许
+用户按 raw 百分位在浏览器内试算当前维度的分数。模板固定保存在
 `res/visualizer/`，CLI 不接受外部模板参数。维度由当前分析配置顺序生成，未知维度使用
 可读的字段名和循环配色；需要自定义显示名时，可在代码调用中传入展示配置：
 
@@ -338,10 +341,25 @@ analyzer = ChartAnalyzer({"note_density": NoteDensityAnalyzer})
 完整公式、Touch 邻接与边界规则见 [分析说明](docs/ANALYSIS.md#整体物量口径)。默认配置以
 `note` 启用它，并使用当前观察批次的中位数与 P99 作临时映射锚点；该映射不代表正式校准。
 
-Slide 分拆为 `slide_tricky` 与 `slide_sequence`：前者把声明至启动的错位物量按段线性
-加总，再除以全谱的 0.5 秒时间单位；
-后者只分析连续阵、同拍双押和同头多路径，不再混入密度或干扰。完整公式和临时映射口径
-见 [Slide 分析说明](docs/ANALYSIS.md#slide-错位与阵强度口径)。
+`JackSequenceAnalyzer` 分键位寻找由 Tap/Hold 构成的快速纵连。相邻外键时间点不超过
+八分音符；形成至少两个主键时间点后才允许飞键，每次飞键可包含同拍最多四个异键普通
+Tap，允许分布在多个连续时间点；每次从首个异键到返回主键的跨度不超过八分音符。
+回到主键后又要累计两个主键时间点才能再次飞出，下一次飞键重新获得独立的数量和时间
+预算。主键物件权重为 1，打断 Tap 权重为 1.5；序列再按实际主键速度相对
+180 BPM 等效八分的 1.5 次方加权。候选按速度加权后的强度取前五，名次权重为
+`1.3 × 0.645^(x−1)`；五条等强候选时 Top‑1 约占全部名次权重的 40%，后排按几何级数
+快速衰减。完整边界规则见
+[分析说明](docs/ANALYSIS.md#纵连口径)。
+
+Slide 分为三个独立维度：`slide_tricky` 取五个最高单配置负荷的补零算术平均，每个配置
+最多按 16 个逻辑干扰物件计；
+`slide_cumulate` 由独立 analyser 按历史确认口径计算，
+不复用当前 Tricky helper，中文显示为“持续星星压力”；`slide_sequence` 只分析连续阵、
+同拍双押和同头多路径。`slide_tricky` 的 Tap 干扰包含同位、扫键和实际 Slide 头修正，
+Touch 连通组最多计两组，启动拍统一将物件负荷除以二，并只追加启动后一拍以内的运动
+交互；普通 Tap/Hold 以 180 BPM 等效八分为中性点，更慢时按平方根下降，更快时线性提升
+并在 1.5 封顶。每个外部物件只归属一个最近的相关配置。完整公式见
+[分析说明](docs/ANALYSIS.md#slide-压力口径)。
 
 `AnalysisContext` 提供：
 
@@ -355,10 +373,11 @@ Slide 分拆为 `slide_tricky` 与 `slide_sequence`：前者把声明至启动�
 
 ```python
 FEATURES = {
-    "hold": HoldFrequencyAnalyzer,
+    "jack": JackSequenceAnalyzer,
     "note": NoteDensityAnalyzer,
     "peak": PeakDensityAnalyzer,
     "slide_tricky": SlideTrickyAnalyzer,
+    "slide_cumulate": SlideCumulateAnalyzer,
     "slide_sequence": SlideSequenceAnalyzer,
 }
 ```
@@ -393,7 +412,7 @@ transformer = FeatureScoreTransformer(
 
 ```python
 FEATURE_MAPPERS = {
-    "hold": DummyPnMapper(p50=1.0, p100=2.0),
+    "jack": IdentityMapper(),
     "note_density": CappedLinearMapper(scale=25.0),
 }
 
@@ -406,7 +425,13 @@ class RadarTransformer(FeatureScoreTransformer):
 TRANSFORMER = RadarTransformer
 ```
 
-仓库提供的 `DummyPnMapper` 使用预先给定的 `p50`、`p100` 做两段线性映射：`0 → 0`、`P50 → 50`、`P100 → 200`，范围外截断；锚点可以由离线观察确定，但运行时不会从当前输入批次自动重新计算。
+仓库提供的 `DummyPnMapper` 使用预先给定的 `p50`、`p100` 做两段线性映射：`0 → 0`、`P50 → 50`、`P100 → 200`，范围外截断；锚点可以由离线观察确定，但运行时不会从当前输入批次自动重新计算。`IdentityMapper` 只校验有限数值并原样传递。默认配置暂时对 `jack` 和 `slide_tricky` 使用 identity，避免在 GUI 查看 raw 分布之前先套用旧锚点；其他维度仍使用各自的 dummy Pn。
+
+GUI 分布页的百分位滑块始终从 `rawScores` 计算阈值。首次拖动某个维度后，页面按
+`0 → 0、T1 → 50、T2 → 100、T3 → 150、T4 → 200` 分段线性重算该维度，并同步更新
+详情、雷达图、主导维度和排行；每个维度单独保存自己的百分位设置。没有动过的维度仍
+显示导出时的分数。默认导出里 `slide_tricky_score == slide_tricky_raw`，因此调整前直接显示
+analyser 结果。
 
 也可以完全替换整体 `ScoreTransformer.transform(AnalysisResult) -> ScoreResult`，或只在调用时注入实验配置：
 
