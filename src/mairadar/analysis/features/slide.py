@@ -112,7 +112,6 @@ class SlideSectionMetrics:
     onset_count: int
     internal_interference: float
     launch_interference: float
-    tricky_effective_length: float
     tricky_intensity: float
     tricky_load: float
     tricky_cluster_values: tuple[float, ...]
@@ -765,7 +764,6 @@ def _section_metrics(
         onset_count=onset_count,
         internal_interference=internal_total,
         launch_interference=launch_total,
-        tricky_effective_length=tricky_effective_length,
         tricky_intensity=tricky_intensity,
         tricky_load=tricky_load,
         tricky_cluster_values=tricky_values,
