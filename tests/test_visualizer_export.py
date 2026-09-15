@@ -116,34 +116,40 @@ class VisualizerExporterTests(unittest.TestCase):
                     "color": "#ef476f",
                 },
                 {
+                    "key": "sweep",
+                    "label": "扫键强度",
+                    "shortLabel": "扫键",
+                    "color": "#ff9f1c",
+                },
+                {
                     "key": "note",
                     "label": "总体物量",
                     "shortLabel": "Note",
-                    "color": "#ff9f1c",
+                    "color": "#2a9d8f",
                 },
                 {
                     "key": "peak",
                     "label": "Peak爆发",
                     "shortLabel": "Peak",
-                    "color": "#2a9d8f",
+                    "color": "#3a86ff",
                 },
                 {
                     "key": "slide_tricky",
                     "label": "Slide错位",
                     "shortLabel": "错位",
-                    "color": "#3a86ff",
+                    "color": "#8338ec",
                 },
                 {
                     "key": "slide_cumulate",
                     "label": "持续星星压力",
                     "shortLabel": "持续星星",
-                    "color": "#8338ec",
+                    "color": "#d1495b",
                 },
                 {
                     "key": "slide_sequence",
                     "label": "Slide阵强度",
                     "shortLabel": "Slide阵",
-                    "color": "#d1495b",
+                    "color": "#00a6a6",
                 },
             ])
             self.assertEqual(payload["stats"]["songCount"], 1)

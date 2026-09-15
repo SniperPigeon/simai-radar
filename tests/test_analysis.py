@@ -29,7 +29,7 @@ class NonFiniteAnalyzer:
 
 class AnalysisTests(unittest.TestCase):
     def test_default_configuration_uses_jack_sequence_metric(self):
-        parsed = parse_chart("(180){8},1h[4:1]/1h[4:1]/Ch[4:1],1,,E")
+        parsed = parse_chart("(180){16},1h[4:1]/1h[4:1]/Ch[4:1],1,,E")
         original = deepcopy(parsed)
         result = ChartAnalyzer().analyze(parsed)
         self.assertEqual(result.status, "ok")
@@ -39,8 +39,8 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(parsed, original)
 
     def test_tempo_change_and_redundant_declaration(self):
-        first = ChartAnalyzer().analyze(parse_chart("(180){8}1,1,(180)2,2,E"))
-        repeated = ChartAnalyzer().analyze(parse_chart("(180)(180){8}1,1,(180)(180)2,2,E"))
+        first = ChartAnalyzer().analyze(parse_chart("(180){16}1,1,(180)2,2,E"))
+        repeated = ChartAnalyzer().analyze(parse_chart("(180)(180){16}1,1,(180)(180)2,2,E"))
         self.assertAlmostEqual(first.features["jack"].data, 2.6 + 2 * 1.3 * 0.645)
         self.assertEqual(first.features, repeated.features)
 
@@ -71,7 +71,7 @@ class AnalysisTests(unittest.TestCase):
         engine = ChartAnalyzer({
             "broken": FailingAnalyzer, "nan": NonFiniteAnalyzer, "JACK": JackSequenceAnalyzer,
         })
-        result = engine.analyze(parse_chart("(180){8}1,1,E"))
+        result = engine.analyze(parse_chart("(180){16}1,1,E"))
         self.assertEqual(tuple(result.features), ("broken", "nan", "JACK"))
         self.assertEqual(engine.feature_names, tuple(result.features))
         self.assertEqual(result.status, "partial")
@@ -82,7 +82,7 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual([issue.feature for issue in result.diagnostics], ["broken", "nan"])
 
     def test_feature_mutation_does_not_leak_to_other_features_or_caller(self):
-        parsed = parse_chart("(180){8}1,1,E")
+        parsed = parse_chart("(180){16}1,1,E")
         original = deepcopy(parsed)
         engine = ChartAnalyzer({"mutates": MutatingAnalyzer, "jack": JackSequenceAnalyzer})
         for _ in range(2):

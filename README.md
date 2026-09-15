@@ -3,7 +3,7 @@
 simai-radar 是一个面向 maimai 谱面雷达图评分研究的数据分析 codebase。项目将**谱面解析与特征分析**、**原始特征到标准化分数的映射**、**数据导出**拆成彼此独立的层，既方便离线批量实验，也为未来接入 MajdataPlay、提供实时雷达图分析保留了纯内存调用路径。
 
 当前版本已经打通完整管线，但还没有完成官方数据校准。`jack` 已替换早期的 Hold 频率
-占位维度；新指标与 `slide_tricky` 暂时使用 identity 映射，便于先观察 raw 分布，其余临时
+占位维度；`jack`、`sweep` 与 `slide_tricky` 暂时使用 identity 映射，便于先观察 raw 分布，其余临时
 映射也不应被当作正式评分标准。
 
 ## 管线如何构成
@@ -351,6 +351,13 @@ Tap，允许分布在多个连续时间点；每次从首个异键到返回主�
 快速衰减。完整边界规则见
 [分析说明](docs/ANALYSIS.md#纵连口径)。
 
+`SweepAnalyzer` 从 Tap/Hold 起按（包含显式 Slide 头）识别至少三个不同相邻外键组成的
+最大扫键；允许最多一个中间攻击、`1/16 beat` 周期误差，以及每段至少两步后的折返。
+每组按物理起按数与平均键间秒数计算速度权重，再应用连续组最高 8 倍、同起点组 1.6 倍
+加成；全部组按 `rank^-0.5` 衰减求和，最后除以谱面有效秒数，输出每秒扫键强度。
+识别只读取 parser 事件，不重新扫描 Simai；完整公式见
+[分析说明](docs/ANALYSIS.md#扫键口径)。
+
 Slide 分为三个独立维度：`slide_tricky` 取五个最高单配置负荷，按 `1/log₂(k+1)`
 作归一化加权平均（不足五项补零），每个配置
 最多按 16 个逻辑干扰物件计；
@@ -376,6 +383,7 @@ Touch 连通组最多计两组，启动拍统一将物件负荷除以二，并�
 ```python
 FEATURES = {
     "jack": JackSequenceAnalyzer,
+    "sweep": SweepAnalyzer,
     "note": NoteDensityAnalyzer,
     "peak": PeakDensityAnalyzer,
     "slide_tricky": SlideTrickyAnalyzer,
@@ -427,7 +435,7 @@ class RadarTransformer(FeatureScoreTransformer):
 TRANSFORMER = RadarTransformer
 ```
 
-仓库提供的 `DummyPnMapper` 使用预先给定的 `p50`、`p100` 做两段线性映射：`0 → 0`、`P50 → 50`、`P100 → 200`，范围外截断；锚点可以由离线观察确定，但运行时不会从当前输入批次自动重新计算。`IdentityMapper` 只校验有限数值并原样传递。默认配置暂时对 `jack` 和 `slide_tricky` 使用 identity，避免在 GUI 查看 raw 分布之前先套用旧锚点；其他维度仍使用各自的 dummy Pn。
+仓库提供的 `DummyPnMapper` 使用预先给定的 `p50`、`p100` 做两段线性映射：`0 → 0`、`P50 → 50`、`P100 → 200`，范围外截断；锚点可以由离线观察确定，但运行时不会从当前输入批次自动重新计算。`IdentityMapper` 只校验有限数值并原样传递。默认配置暂时对 `jack`、`sweep` 和 `slide_tricky` 使用 identity，避免在 GUI 查看 raw 分布之前先套用未校准锚点；其他维度仍使用各自的 dummy Pn。
 
 GUI 分布页的百分位滑块始终从 `rawScores` 计算阈值。首次拖动某个维度后，页面按
 `0 → 0、T1 → 50、T2 → 100、T3 → 150、T4 → 200` 分段线性重算该维度，并同步更新

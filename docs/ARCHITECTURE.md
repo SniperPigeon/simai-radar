@@ -18,7 +18,7 @@ model.py 定义 Event、Diagnostic、ParseResult、Chart、ChartBundle；validat
 
 io.py 读取文件、保存 CSV、解码 JSON 单元格，并可原样复制曲绘为包内附件。曲绘只通过 manifest 和外围 read_cover_path 暴露，不加入 Event、ParseResult 或解析必需参数。source_name 只在 metadata 中用于展示。导出目录 `<title>-<difficulty_index>-dx/sd` 不含 hash，不维护歌曲注册表、输入缓存或去重索引。CSV hash 只校验文件完整性；不属于解析 API。目录替换是外围文件写入事务，不能扩展成歌曲管理逻辑。
 
-analysis 读取 ParseResult 的事件与时间字段，按显式配置调用 HOLD、整体物量、Peak 和 Slide
+analysis 读取 ParseResult 的事件与时间字段，按显式配置调用纵连、扫键、整体物量、Peak 和 Slide
 压力等独立维度分析器；不重新扫描 Simai 来计数。每个维度使用独立实例和事件快照，失败
 后继续其他维度。baseline、难度权重和映射算法不进入 parser；scoring 提供
 ScoreTransformer 接口与按 feature 分发的 FeatureScoreTransformer；每个 feature 独立配置
@@ -31,7 +31,7 @@ pipeline 按 full、parse_only、analysis、analysis_score 组合各层，允许
 parse_export 适配器完成原始文件发现和事件 bundle 写入，不构造 analyzer、mapper 或报告
 exporter。cli 是唯一参数与文件夹选择入口，纯解析及事件 bundle 导出仍保留为库 API。
 映射模式默认按 feature 显式配置 mapper；多数维度使用 dummy Pn，将 0/P50/P100 原始阈值
-映射到 0/50/200，`slide_tricky` 暂时 identity 直通。阈值不从本批次计算；官方校准尚未
+映射到 0/50/200，`jack`、`sweep` 与 `slide_tricky` 暂时 identity 直通。阈值不从本批次计算；官方校准尚未
 进行。核心普通导入不加载这些外围组件，具体接口见
 [分析调用说明](ANALYSIS.md)。
 

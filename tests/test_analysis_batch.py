@@ -23,7 +23,7 @@ from mairadar.parser import parse_text
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def bundle(root, title="曲名", *, text="(180){8}1h[4:1],1,E", cover=True, offset=0):
+def bundle(root, title="曲名", *, text="(180){16}1h[4:1],1,E", cover=True, offset=0):
     parsed = parse_text(
         f"&title={title}\n&artist=曲师\n&des_5=谱师\n&cabinet=DX\n"
         f"&lv_5=13\n&first={offset}\n&inote_5={text}"
@@ -146,6 +146,7 @@ class BatchTests(unittest.TestCase):
                 json.loads(rows[1]["diagnostics"])["features"],
                 {
                     "jack": False,
+                    "sweep": False,
                     "note": False,
                     "peak": False,
                     "slide_tricky": False,

@@ -488,7 +488,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-jack-tricky-identity-20260915-v29`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-jack-sweep-tricky-identity-20260915-v30`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 
@@ -500,4 +500,4 @@ pipeline 将评分输出附在 AnalysisRecord.scores 上，导出器追加 `<fea
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-合成测试覆盖纵连的八分边界、每次飞键的四打断与独立时间上限、重复声明、Top-K 衰减、变速、无效时长、维度失败隔离、批量部分失败、曲绘相对路径、冲突及发布失败。模式测试注入仅用于测试的映射器，验证 full 与 analysis_score 等价、analysis 不映射不导出、full 不读写中间 bundle，以及映射失败继续处理。另用自定义分析器和内存导出替身验证各层可替换。dummy Pn 另有锚点、区间插值、截断、独立参数和错误隔离测试，identity 另有直通与非法值测试，并通过真实 CLI 对合成输入运行 full / analysis_score 验证完整输出；不代表已完成官方校准。文件夹选择的选择、取消、不可用分支通过 mock 验证，不代表已进行原生窗口人工验收。
+合成测试覆盖纵连的八分边界、每次飞键的四打断与独立时间上限、重复声明、Top-K 衰减、变速，以及扫键的相邻键、折返、中间攻击、伪 EACH、速度、连续倍率、名次衰减与每秒归一化。另覆盖无效时长、维度失败隔离、批量部分失败、曲绘相对路径、冲突及发布失败。模式测试注入仅用于测试的映射器，验证 full 与 analysis_score 等价、analysis 不映射不导出、full 不读写中间 bundle，以及映射失败继续处理。另用自定义分析器和内存导出替身验证各层可替换。dummy Pn 另有锚点、区间插值、截断、独立参数和错误隔离测试，identity 另有直通与非法值测试，并通过真实 CLI 对合成输入运行 full / analysis_score 验证完整输出；不代表已完成官方校准。文件夹选择的选择、取消、不可用分支通过 mock 验证，不代表已进行原生窗口人工验收。

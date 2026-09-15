@@ -36,6 +36,7 @@ class DimensionPresentation:
 # Unlisted keys are exported unchanged so a newly added feature remains visible.
 DIMENSION_PRESENTATION = {
     "jack": DimensionPresentation("纵连", "纵连"),
+    "sweep": DimensionPresentation("扫键强度", "扫键"),
     "note": DimensionPresentation("总体物量", "Note"),
     "peak": DimensionPresentation("Peak爆发", "Peak"),
     "slide_tricky": DimensionPresentation("Slide错位", "错位"),
