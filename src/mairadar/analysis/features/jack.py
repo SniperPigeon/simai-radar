@@ -16,6 +16,7 @@ INTERRUPTING_TAP_WEIGHT = 1.5
 DEFAULT_SPEED_REFERENCE_EIGHTH_BPM = 180.0
 DEFAULT_SPEED_EXPONENT = 1.5
 TOP_ONE_RANK_MULTIPLIER = 1.3
+TOP_RANK_DECAY = 0.645
 
 
 @dataclass(frozen=True)
@@ -198,8 +199,8 @@ def jack_sequences(
     return tuple(sorted(
         sequences,
         key=lambda sequence: (
+            -sequence.weighted_strength,
             -sequence.strength,
-            -sequence.speed_factor,
             -sequence.anchor_count,
             sequence.start_beat,
             int(sequence.position),
@@ -215,7 +216,7 @@ def jack_score(
     speed_reference_eighth_bpm: float = DEFAULT_SPEED_REFERENCE_EIGHTH_BPM,
     speed_exponent: float = DEFAULT_SPEED_EXPONENT,
 ) -> float:
-    """Sum the strongest K sequences with logarithmic rank decay."""
+    """Sum the strongest K sequences with geometric rank decay."""
     if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k <= 0:
         raise ValueError("top_k must be a positive integer")
     sequences = jack_sequences(
@@ -226,8 +227,8 @@ def jack_score(
     )
     return math.fsum(
         sequence.weighted_strength
-        * (TOP_ONE_RANK_MULTIPLIER if rank == 1 else 1.0)
-        / math.log2(rank + 1)
+        * TOP_ONE_RANK_MULTIPLIER
+        * TOP_RANK_DECAY ** (rank - 1)
         for rank, sequence in enumerate(sequences[:top_k], start=1)
     )
 

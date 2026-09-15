@@ -1,7 +1,6 @@
 """MVP metrics and independent in-memory analyzer dispatch."""
 
 from copy import deepcopy
-import math
 import subprocess
 import sys
 import unittest
@@ -42,7 +41,7 @@ class AnalysisTests(unittest.TestCase):
     def test_tempo_change_and_redundant_declaration(self):
         first = ChartAnalyzer().analyze(parse_chart("(180){8}1,1,(180)2,2,E"))
         repeated = ChartAnalyzer().analyze(parse_chart("(180)(180){8}1,1,(180)(180)2,2,E"))
-        self.assertAlmostEqual(first.features["jack"].data, 2.6 + 2 / math.log2(3))
+        self.assertAlmostEqual(first.features["jack"].data, 2.6 + 2 * 1.3 * 0.645)
         self.assertEqual(first.features, repeated.features)
 
     def test_no_jack_is_zero_but_zero_time_is_unavailable(self):

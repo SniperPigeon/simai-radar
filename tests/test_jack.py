@@ -1,6 +1,5 @@
-"""Same-button sequence extraction and logarithmic Top-K aggregation."""
+"""Same-button sequence extraction and geometric Top-K aggregation."""
 
-import math
 import unittest
 from fractions import Fraction
 
@@ -15,12 +14,12 @@ def events(text):
     return tuple(parse_chart(text).events)
 
 
-def button(event_id, beat, position, kind="tap"):
+def button(event_id, beat, position, kind="tap", time_s=None):
     beat = Fraction(beat)
     return Event(
         event_id=event_id,
         kind=kind,
-        start_time_s=float(beat) / 2,
+        start_time_s=float(beat) / 2 if time_s is None else time_s,
         start_beat=str(beat),
         position=str(position),
     )
@@ -140,7 +139,7 @@ class JackSequenceTests(unittest.TestCase):
             3.9,
         )
 
-    def test_top_k_uses_one_based_logarithmic_rank_decay(self):
+    def test_top_k_uses_one_based_geometric_rank_decay(self):
         chart = (
             button(1, 0, 1), button(2, "1/4", 1), button(3, "1/2", 1),
             button(4, 2, 2), button(5, "9/4", 2),
@@ -153,8 +152,20 @@ class JackSequenceTests(unittest.TestCase):
                 max_interrupting_taps=0,
                 speed_reference_eighth_bpm=240,
             ),
-            1.3 * 3 / math.log2(2) + 2 / math.log2(3),
+            1.3 * 3 + 1.3 * 0.645 * 2,
         )
+
+    def test_speed_weighted_strength_determines_rank_before_decay(self):
+        chart = (
+            button(1, 0, 1, time_s=0.0),
+            button(2, "1/2", 1, time_s=1 / 6),
+            button(3, 1, 1, time_s=1 / 3),
+            button(4, 2, 2, time_s=1.0),
+            button(5, "9/4", 2, time_s=25 / 24),
+        )
+        sequences = jack_sequences(chart)
+        self.assertEqual([sequence.position for sequence in sequences], ["2", "1"])
+        self.assertGreater(sequences[0].weighted_strength, sequences[1].weighted_strength)
 
     def test_actual_main_button_speed_weights_sequence_strength(self):
         eighth = events("(120){8}1,1,1,E")
@@ -165,11 +176,8 @@ class JackSequenceTests(unittest.TestCase):
 
     def test_top_one_has_about_forty_percent_of_equal_sequence_rank_weight(self):
         weights = [
-            1.3,
-            1 / math.log2(3),
-            1 / math.log2(4),
-            1 / math.log2(5),
-            1 / math.log2(6),
+            1.3 * 0.645 ** index
+            for index in range(5)
         ]
         self.assertAlmostEqual(weights[0] / sum(weights), 0.4, places=3)
 

@@ -60,8 +60,7 @@ ScoreTransformer.transform(result: AnalysisResult) -> ScoreResult
 ```text
 sequence_strength = anchor_count + 1.5 * interrupting_tap_count
 speed_factor = (equivalent_eighth_bpm / 180) ^ 1.5
-rank_weight_(1) = 1.3
-rank_weight_(x) = 1 / log2(x + 1), x=2..5
+rank_weight_(x) = 1.3 * 0.645 ^ (x - 1), x=1..5
 jack_raw = sum(sequence_strength_(x) * speed_factor_(x) * rank_weight_(x),
                x=1..min(5, sequence_count))
 ```
