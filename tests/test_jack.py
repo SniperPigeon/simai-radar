@@ -34,12 +34,12 @@ class JackSequenceTests(unittest.TestCase):
         self.assertEqual((sequence.start_beat, sequence.end_beat), (0, 1))
         self.assertEqual((sequence.anchor_count, sequence.interrupting_tap_count), (3, 0))
         self.assertEqual(sequence.interrupting_span_beats, 0)
-        self.assertEqual(sequence.equivalent_eighth_bpm, 120)
-        self.assertAlmostEqual(sequence.speed_factor, (120 / 180) ** 1.5)
+        self.assertEqual(sequence.equivalent_sixteenth_bpm, 60)
+        self.assertAlmostEqual(sequence.speed_factor, (60 / 180) ** 1.5)
         self.assertAlmostEqual(
             jack_score(
                 events("(120){8}1,1h[4:1],1,E"),
-                speed_reference_eighth_bpm=120,
+                speed_reference_sixteenth_bpm=60,
             ),
             3.9,
         )
@@ -111,7 +111,7 @@ class JackSequenceTests(unittest.TestCase):
 
     def test_eighth_note_boundary_is_inclusive_and_slower_gap_splits(self):
         self.assertAlmostEqual(
-            jack_score(events("(120){8}1,1,E"), speed_reference_eighth_bpm=120),
+            jack_score(events("(120){8}1,1,E"), speed_reference_sixteenth_bpm=60),
             2.6,
         )
         self.assertEqual(jack_score(events("(120){4}1,1,E")), 0)
@@ -124,7 +124,7 @@ class JackSequenceTests(unittest.TestCase):
         self.assertEqual(
             jack_score(
                 events("(120){16}1,A1,1,E"),
-                speed_reference_eighth_bpm=120,
+                speed_reference_sixteenth_bpm=60,
             ),
             2.6,
         )
@@ -134,7 +134,7 @@ class JackSequenceTests(unittest.TestCase):
         self.assertAlmostEqual(
             jack_score(
                 events("(120){16}1/1,1,E"),
-                speed_reference_eighth_bpm=240,
+                speed_reference_sixteenth_bpm=120,
             ),
             3.9,
         )
@@ -150,7 +150,7 @@ class JackSequenceTests(unittest.TestCase):
                 chart,
                 top_k=2,
                 max_interrupting_taps=0,
-                speed_reference_eighth_bpm=240,
+                speed_reference_sixteenth_bpm=120,
             ),
             1.3 * 3 + 1.3 * 0.645 * 2,
         )
@@ -170,8 +170,8 @@ class JackSequenceTests(unittest.TestCase):
     def test_actual_main_button_speed_weights_sequence_strength(self):
         eighth = events("(120){8}1,1,1,E")
         sixteenth = events("(120){16}1,1,1,E")
-        self.assertAlmostEqual(jack_score(eighth), 1.3 * 3 * (120 / 180) ** 1.5)
-        self.assertAlmostEqual(jack_score(sixteenth), 1.3 * 3 * (240 / 180) ** 1.5)
+        self.assertAlmostEqual(jack_score(eighth), 1.3 * 3 * (60 / 180) ** 1.5)
+        self.assertAlmostEqual(jack_score(sixteenth), 1.3 * 3 * (120 / 180) ** 1.5)
         self.assertGreater(jack_score(sixteenth), jack_score(eighth))
 
     def test_top_one_has_about_forty_percent_of_equal_sequence_rank_weight(self):
@@ -197,7 +197,7 @@ class JackSequenceTests(unittest.TestCase):
                 JackSequenceAnalyzer(max_interrupting_taps=interruptions)
         for speed in (0, -1, float("inf"), True):
             with self.subTest(speed=speed), self.assertRaises(ValueError):
-                JackSequenceAnalyzer(speed_reference_eighth_bpm=speed)
+                JackSequenceAnalyzer(speed_reference_sixteenth_bpm=speed)
         for exponent in (0, -1, float("nan"), True):
             with self.subTest(exponent=exponent), self.assertRaises(ValueError):
                 JackSequenceAnalyzer(speed_exponent=exponent)

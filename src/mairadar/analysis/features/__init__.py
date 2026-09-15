@@ -5,6 +5,7 @@ from .note_density import NoteDensityAnalyzer
 from .peak import PeakDensityAnalyzer
 from .slide import SlideSequenceAnalyzer, SlideTrickyAnalyzer
 from .slide_cumulate import SlideCumulateAnalyzer
+from .sweep import SweepAnalyzer
 
 __all__ = [
     "JackSequenceAnalyzer",
@@ -13,4 +14,5 @@ __all__ = [
     "SlideCumulateAnalyzer",
     "SlideSequenceAnalyzer",
     "SlideTrickyAnalyzer",
+    "SweepAnalyzer",
 ]

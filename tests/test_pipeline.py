@@ -38,7 +38,7 @@ def fixtures(root):
     source = song / "maidata.txt"
     source.write_text(
         "&title=测试\n&artist=曲师\n&des=谱师\n&cabinet=DX\n"
-        "&inote_5=(180){8}1h[4:1],1,E\n&inote_6=(120){4}1h[4:1],,E\n"
+        "&inote_5=(180){16}1h[4:1],1,E\n&inote_6=(120){4}1h[4:1],,E\n"
     )
     cover = song / "bg.png"
     cover.write_bytes(b"synthetic attachment")
@@ -110,7 +110,7 @@ class PipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = root / "chart.simai"
-            source.write_text("(180){8}1h[4:1]/2-4-6[4:1],1,E")
+            source.write_text("(180){16}1h[4:1]/2-4-6[4:1],1,E")
             mapper = Mock(wraps=TestMapper())
             batch, report = run_pipeline("full", source, output=root / "complete", transformer=mapper)
             self.assertEqual(batch.exit_code, 0)
@@ -118,7 +118,7 @@ class PipelineTests(unittest.TestCase):
             mapper.transform.assert_called_once()
             self.assertEqual(read_csv(report)[0]["status"], "ok")
 
-            source.write_text("(180){8}1h[4:1]/2-4-6[4:1],1,invalid,E")
+            source.write_text("(180){16}1h[4:1]/2-4-6[4:1],1,invalid,E")
             mapper.reset_mock()
             with patch("mairadar.analysis.features.JackSequenceAnalyzer.analyze") as feature:
                 batch, report = run_pipeline("full", source, output=root / "incomplete", transformer=mapper)
@@ -356,6 +356,7 @@ class PipelineTests(unittest.TestCase):
                 )
                 self.assertTrue(all(
                     row["note_raw"] and row["note_score"]
+                    and row["sweep_raw"] and row["sweep_score"]
                     and row["peak_raw"] and row["peak_score"]
                     and row["slide_tricky_raw"] and row["slide_tricky_score"]
                     and row["slide_cumulate_raw"] and row["slide_cumulate_score"]
@@ -363,7 +364,7 @@ class PipelineTests(unittest.TestCase):
                     for row in rows
                 ))
                 self.assertTrue(all(json.loads(row["diagnostics"])["scoring"]["mapping_version"]
-                                    == "provisional-jack-tricky-identity-20260915-v28"
+                                    == "provisional-jack-sweep-tricky-identity-20260915-v30"
                                     for row in rows))
                 self.assertTrue(all((root / mode / row["cover_path"]).is_file() for row in rows))
 

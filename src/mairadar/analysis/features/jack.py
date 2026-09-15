@@ -13,7 +13,7 @@ EIGHTH_NOTE_BEATS = Fraction(1, 2)
 DEFAULT_TOP_K = 5
 DEFAULT_MAX_INTERRUPTING_TAPS = 4
 INTERRUPTING_TAP_WEIGHT = 1.5
-DEFAULT_SPEED_REFERENCE_EIGHTH_BPM = 180.0
+DEFAULT_SPEED_REFERENCE_SIXTEENTH_BPM = 180.0
 DEFAULT_SPEED_EXPONENT = 1.5
 TOP_ONE_RANK_MULTIPLIER = 1.3
 TOP_RANK_DECAY = 0.645
@@ -29,7 +29,7 @@ class JackSequence:
     anchor_count: int
     interrupting_tap_count: int
     interrupting_span_beats: Fraction
-    equivalent_eighth_bpm: float
+    equivalent_sixteenth_bpm: float
     speed_factor: float
 
     @property
@@ -65,7 +65,7 @@ def _position_sequences(
     batches: list[tuple[Fraction, float, tuple[Event, ...]]],
     position: str,
     max_interrupting_taps: int,
-    speed_reference_eighth_bpm: float,
+    speed_reference_sixteenth_bpm: float,
     speed_exponent: float,
 ) -> list[JackSequence]:
     output = []
@@ -93,9 +93,9 @@ def _position_sequences(
             span_s = end_time_s - start_time_s
             if span_s <= 0:
                 raise ValueError("Jack sequence must advance in chart time")
-            equivalent_eighth_bpm = 30 * (anchor_time_count - 1) / span_s
+            equivalent_sixteenth_bpm = 15 * (anchor_time_count - 1) / span_s
             speed_factor = (
-                equivalent_eighth_bpm / speed_reference_eighth_bpm
+                equivalent_sixteenth_bpm / speed_reference_sixteenth_bpm
             ) ** speed_exponent
             output.append(JackSequence(
                 position=position,
@@ -104,7 +104,7 @@ def _position_sequences(
                 anchor_count=anchor_count,
                 interrupting_tap_count=committed_interruptions,
                 interrupting_span_beats=committed_interruption_span,
-                equivalent_eighth_bpm=equivalent_eighth_bpm,
+                equivalent_sixteenth_bpm=equivalent_sixteenth_bpm,
                 speed_factor=speed_factor,
             ))
         start_beat = end_beat = previous_beat = None
@@ -173,7 +173,7 @@ def jack_sequences(
     events: tuple[Event, ...],
     *,
     max_interrupting_taps: int = DEFAULT_MAX_INTERRUPTING_TAPS,
-    speed_reference_eighth_bpm: float = DEFAULT_SPEED_REFERENCE_EIGHTH_BPM,
+    speed_reference_sixteenth_bpm: float = DEFAULT_SPEED_REFERENCE_SIXTEENTH_BPM,
     speed_exponent: float = DEFAULT_SPEED_EXPONENT,
 ) -> tuple[JackSequence, ...]:
     """Return deterministic maximal candidates for all eight outer buttons."""
@@ -183,7 +183,7 @@ def jack_sequences(
         or max_interrupting_taps < 0
     ):
         raise ValueError("max_interrupting_taps must be a non-negative integer")
-    _validate_speed_parameters(speed_reference_eighth_bpm, speed_exponent)
+    _validate_speed_parameters(speed_reference_sixteenth_bpm, speed_exponent)
     batches = _button_batches(events)
     sequences = [
         sequence
@@ -192,7 +192,7 @@ def jack_sequences(
             batches,
             position,
             max_interrupting_taps,
-            speed_reference_eighth_bpm,
+            speed_reference_sixteenth_bpm,
             speed_exponent,
         )
     ]
@@ -213,7 +213,7 @@ def jack_score(
     *,
     top_k: int = DEFAULT_TOP_K,
     max_interrupting_taps: int = DEFAULT_MAX_INTERRUPTING_TAPS,
-    speed_reference_eighth_bpm: float = DEFAULT_SPEED_REFERENCE_EIGHTH_BPM,
+    speed_reference_sixteenth_bpm: float = DEFAULT_SPEED_REFERENCE_SIXTEENTH_BPM,
     speed_exponent: float = DEFAULT_SPEED_EXPONENT,
 ) -> float:
     """Sum the strongest K sequences with geometric rank decay."""
@@ -222,7 +222,7 @@ def jack_score(
     sequences = jack_sequences(
         events,
         max_interrupting_taps=max_interrupting_taps,
-        speed_reference_eighth_bpm=speed_reference_eighth_bpm,
+        speed_reference_sixteenth_bpm=speed_reference_sixteenth_bpm,
         speed_exponent=speed_exponent,
     )
     return math.fsum(
@@ -234,11 +234,11 @@ def jack_score(
 
 
 def _validate_speed_parameters(
-    speed_reference_eighth_bpm: float,
+    speed_reference_sixteenth_bpm: float,
     speed_exponent: float,
 ) -> None:
     for name, value in (
-        ("speed_reference_eighth_bpm", speed_reference_eighth_bpm),
+        ("speed_reference_sixteenth_bpm", speed_reference_sixteenth_bpm),
         ("speed_exponent", speed_exponent),
     ):
         if (
@@ -256,7 +256,7 @@ class JackSequenceAnalyzer:
 
     top_k: int = DEFAULT_TOP_K
     max_interrupting_taps: int = DEFAULT_MAX_INTERRUPTING_TAPS
-    speed_reference_eighth_bpm: float = DEFAULT_SPEED_REFERENCE_EIGHTH_BPM
+    speed_reference_sixteenth_bpm: float = DEFAULT_SPEED_REFERENCE_SIXTEENTH_BPM
     speed_exponent: float = DEFAULT_SPEED_EXPONENT
 
     def __post_init__(self) -> None:
@@ -269,7 +269,7 @@ class JackSequenceAnalyzer:
         ):
             raise ValueError("max_interrupting_taps must be a non-negative integer")
         _validate_speed_parameters(
-            self.speed_reference_eighth_bpm,
+            self.speed_reference_sixteenth_bpm,
             self.speed_exponent,
         )
 
@@ -280,6 +280,6 @@ class JackSequenceAnalyzer:
             context.events,
             top_k=self.top_k,
             max_interrupting_taps=self.max_interrupting_taps,
-            speed_reference_eighth_bpm=self.speed_reference_eighth_bpm,
+            speed_reference_sixteenth_bpm=self.speed_reference_sixteenth_bpm,
             speed_exponent=self.speed_exponent,
         ))

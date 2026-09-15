@@ -11,7 +11,7 @@ identity 直通，整体物量暂用 2026-09-13 观察批次的中位数与 P99�
 from mairadar.parser import parse_chart
 from mairadar.analysis import ChartAnalyzer
 
-parsed = parse_chart("(180){8}1h[4:1],1,E")
+parsed = parse_chart("(180){16}1h[4:1],1,E")
 result = ChartAnalyzer().analyze(parsed)
 assert result.features["jack"].data == 2.6
 ```
@@ -40,8 +40,8 @@ FeatureResult 仅包含 data 和 success 两个字段，不携带单位、中间
 
 ```text
 sequence_strength = 主键 Tap/Hold 数 + 1.5 * 有效打断 Tap 数
-equivalent_eighth_bpm = 30 * (主键时间点数 - 1) / (末次主键秒数 - 首次主键秒数)
-speed_factor = (equivalent_eighth_bpm / 180) ^ 1.5
+equivalent_sixteenth_bpm = 15 * (主键时间点数 - 1) / (末次主键秒数 - 首次主键秒数)
+speed_factor = (equivalent_sixteenth_bpm / 180) ^ 1.5
 weighted_strength = sequence_strength * speed_factor
 rank_weight_(x) = 1.3 * 0.645 ^ (x - 1), x=1..5
 jack_raw = sum(weighted_strength_(x) * rank_weight_(x),
@@ -64,8 +64,8 @@ jack_raw = sum(weighted_strength_(x) * rank_weight_(x),
   主键时间点之间，不计打断权重。
 
 速度使用主键不同时间点的实际秒数计算，因此自然包含 BPM 变化；同时重复声明增加主键
-物件权重，但不增加速度采样点。180 BPM 等效八分的系数为 1，快慢两侧均按 1.5 次方
-变化，使速度影响高于线性。
+物件权重，但不增加速度采样点。180 BPM 等效十六分的系数为 1，快慢两侧均按 1.5 次方
+变化，使速度影响高于线性；180 BPM 八分仍是合法连续候选，但速度系数仅约 0.354。
 
 每个键位按上述规则切成若干不可继续延伸的最大候选；候选按 `weighted_strength` 从高到
 低排序，取前五条后使用 `1.3 * 0.645^(x-1)` 的几何名次权重。五条等强候选时 Top‑1
@@ -170,6 +170,17 @@ adjusted_weight(n) = base_weight / log2(max(2, n - 2))
 
 ## Slide 压力口径
 
+Tricky 先从全谱所有有效 Slide 路径收集声明到启动的正等待时长，按最近的 0.05 秒
+整数倍分桶（半桶边界向上）；选择频数最高的桶，并列时选择较长的一桶，再以桶内
+实际值的中位数作为众数等待基准。零等待不参与基准，但仍保留；没有正等待时不启用过滤。
+等待严格超过基准四倍的路径不再作为 Tricky 的计分目标，恰好四倍保留。同头多路径
+分别参与统计和过滤，连接路径不按连接段重复计样本。
+
+此过滤只影响 Tricky，不删除原事件，不改变 `slide_sequence` 或 `slide_cumulate`。
+先完成原有干扰归属，再移除异常目标路径；被移除配置的物件不回流到其他配置。
+混合配置仅保留正常路径，并在原先分配给它的物件内重新检查等待、启动与活动窗口，
+重算负荷和多头/多路径提升。
+
 三个 Slide 分析器只读取 events-0.3，不重新扫描 Simai。共享同一 `head_event_id` 的路径先
 组成一头多路径组；声明秒时间差不超过 `1/60` 秒的多头组再合成同一启动配置。零持续
 时间路径跳过。一个外部物件始终只归属一个配置：优先归入恰好相同的启动拍，否则归入
@@ -233,11 +244,16 @@ Q_j = (I_j + L_j) * cap_j * (1 + 0.15 * max(0, U_j - 1))
 ```
 
 单头单路径不变，双头双路径提升 15%，单头双路径提升约 6.2%。将所有 `Q_j` 从高到低
-排列为 `Q_(1), Q_(2), ...`，不足五个时补 0；`slide_tricky` 取前五强的算术平均：
+排列为 `Q_(1), Q_(2), ...`，保留重复负荷，不足五个时补 0；`slide_tricky`
+取前五强按对数衰减权重的归一化加权平均：
 
 ```text
-slide_tricky = (Q_(1) + Q_(2) + Q_(3) + Q_(4) + Q_(5)) / 5
+w_k = 1 / log2(k + 1)                                  k = 1…5
+slide_tricky = sum(w_k * Q_(k)) / sum(w_k)
 ```
+
+分母始终包含五个位置的权重；Top‑1 占约 33.916%。`tricky_total_load` 仍保留前五项
+未加权之和，便于查看配置负荷；不再等于 `slide_tricky * 5`。
 
 `slide_cumulate` 使用独立 analyser，不复用上述当前 Tricky helper。它重新建立 Slide 组、
 onset 与等待窗归属：外部物件全谱只归给最近启动的一个 onset；启动前内部物件使用
@@ -376,7 +392,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-jack-tricky-identity-20260915-v28",
+            mapping_version="provisional-jack-tricky-identity-20260915-v29",
         )
 
 TRANSFORMER = DefaultScoreTransformer
@@ -424,7 +440,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-jack-tricky-identity-20260915-v28`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-jack-tricky-identity-20260915-v29`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 
