@@ -4,8 +4,8 @@
 错位压力、星星阵、纵连和持续星星压力。评分层按 feature 独立配置映射器：纵连、扫键和 Slide Tricky 暂时
 identity 直通，整体物量暂用 2026-09-13 观察批次的中位数与 P99，Peak 使用宽松的探索
 锚点，Slide Sequence 使用有限普通谱抽样的取整探索锚点；这些都不代表官方校准。
-`slide_cumulate` 已重新启用，默认使用临时 DummyPn 锚点；当前 mapping profile
-另复制错位压力的锚点作 GUI 调参占位，不代表该维度已校准。
+`slide_cumulate` 已重新启用，默认使用临时 DummyPn 锚点；mapping profile
+可为它独立保存 GUI 调整后的锚点，不代表该维度已正式校准。
 
 ## 直接调用
 
@@ -405,10 +405,16 @@ slide_cumulate = sum(L_r) / (D / 0.5)
 ```
 
 `slide_sequence` 仍独立按声明拍分连续段：相邻启动配置满足 `0 < delta_beat <= 1` 即连续，
-夹杂其他物件不打断。若同一连续段中任何相邻启动间隔严格小于八分音符（`1/2 beat`），
-整个段的星星阵强度归零；恰好八分保留，同拍并发配置没有相邻间隔，不受此门槛影响。
-此规则不改变独立的 `slide_tricky` 或 `slide_cumulate`。合格段使用实际秒间隔的 `mean(0.5/delta_time)`、从第四个时间点后增长
-放缓的长度因子，以及 `0.5 * mean(max(0,U_j-1))` 并发加项；全局取非零段强度的 RMS。
+夹杂其他物件不打断。星星阵从每段挑选最长的合法启动主干，相邻保留启动的间隔必须
+`1/2 <= delta_beat <= 1`；严格快于八分的插入启动可以跳过，不使已有正常阵列归零或断开。
+纯快速流若没有任何原始相邻合法间隔，不通过隔项采样伪造八分阵；恰好八分保留，
+同拍并发配置没有相邻间隔，不受此门槛影响。此规则不改变独立的 `slide_tricky` 或
+`slide_cumulate`。设合格主干有 `n` 个启动：节奏项是实际秒间隔的
+`C = mean(0.5/delta_time)`（`n=1` 时不计节奏）；长度系数 `L` 在 `n<=4` 时为 1，
+`4<n<=16` 时为 `1+(n-4)/6`，之后为 `3*sqrt(n/16)`。同拍并发项
+`P = mean(max(0,U_j-1))`，其中 `U_j` 为同拍各 Slide 头路径数的平方根之和；
+主干同拍的另一条 Slide 已纳入，普通 Tap 不计入这一项。段强度为 `C*L+0.5*P`。
+全谱取最强五段，名次权重 `1/log2(k+1)`，不足五段补零，并除以固定五项权重和。
 正时长无 Slide 谱面三个维度均为 0，零时长返回失败。
 
 ## 统一 CLI 与模式
@@ -530,7 +536,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-sweep-2s-top3-cumulate-star8-20260916-v50",
+            mapping_version="provisional-sweep-2s-top3-cumulate-star8-top5-20260916-v51",
         )
 
 TRANSFORMER = DefaultScoreTransformer
@@ -577,7 +583,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-sweep-2s-top3-cumulate-star8-20260916-v50`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-sweep-2s-top3-cumulate-star8-top5-20260916-v51`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 
@@ -589,8 +595,8 @@ visualizer 的分布页可以导出 `mapping_profile.json`。导出时，对每�
 范围内 T1–T4 对应的 raw 值、百分位、样本数和最大 raw 值 `t4Max`；profile 顶层记录
 `mappingVersion`、固定目标分 `[50, 100, 150, 200]` 与开放集上限 220。所有 raw 锚点
 必须严格递增且 T1 大于 0，否则页面会拒绝导出，避免产生有歧义的分段。
-当前 `data/mapping_profile.json` 的 `slide_cumulate` 项人工复制了 `slide_tricky`
-的四个 raw 锚点和 `t4Max`，仅用于让新维度先正常显示；请在 GUI 中重新调该维度。
+`data/mapping_profile.json` 中各维度的 raw 锚点可在 GUI 中分别调整；更改分析算法后
+旧锚点可能不再适合新的 raw 分布，需重新检查。
 
 ```bash
 mairadar --mode analysis_score \

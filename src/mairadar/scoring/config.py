@@ -24,7 +24,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-sweep-2s-top3-cumulate-star8-20260916-v50",
+            mapping_version="provisional-sweep-2s-top3-cumulate-star8-top5-20260916-v51",
         )
 
 
