@@ -13,6 +13,8 @@ class SweepBurstTests(unittest.TestCase):
         result = score_sweep_burst(
             tuple(parsed.events),
             duration_s=parsed.chart_end_time_s,
+            window_seconds=3,
+            window_count=1,
             idle_distance_weight=0,
             takeover_weight=0,
             fast_jump_weight=0,
@@ -35,6 +37,8 @@ class SweepBurstTests(unittest.TestCase):
         result = score_sweep_burst(
             tuple(parsed.events),
             duration_s=parsed.chart_end_time_s,
+            window_seconds=3,
+            window_count=1,
             idle_distance_weight=0,
             takeover_weight=0,
             fast_jump_weight=0,
@@ -50,6 +54,8 @@ class SweepBurstTests(unittest.TestCase):
         result = score_sweep_burst(
             tuple(parsed.events),
             duration_s=parsed.chart_end_time_s,
+            window_seconds=3,
+            window_count=1,
             idle_distance_weight=0,
             takeover_weight=0,
             fast_jump_weight=0,
@@ -66,6 +72,8 @@ class SweepBurstTests(unittest.TestCase):
         result = score_sweep_burst(
             tuple(parsed.events),
             duration_s=parsed.chart_end_time_s,
+            window_seconds=3,
+            window_count=1,
             idle_distance_weight=0,
             takeover_weight=0,
             fast_jump_weight=0,
@@ -81,6 +89,8 @@ class SweepBurstTests(unittest.TestCase):
         result = score_sweep_burst(
             tuple(parsed.events),
             duration_s=parsed.chart_end_time_s,
+            window_seconds=3,
+            window_count=1,
             idle_distance_weight=0,
             takeover_weight=0,
             fast_jump_weight=0,
@@ -93,6 +103,8 @@ class SweepBurstTests(unittest.TestCase):
         result = score_sweep_burst(
             tuple(parsed.events),
             duration_s=parsed.chart_end_time_s,
+            window_seconds=3,
+            window_count=1,
             idle_distance_weight=0,
             takeover_weight=0,
             fast_jump_weight=0,
@@ -106,6 +118,8 @@ class SweepBurstTests(unittest.TestCase):
         result = score_sweep_burst(
             tuple(parsed.events),
             duration_s=parsed.chart_end_time_s,
+            window_seconds=3,
+            window_count=1,
             simple_run_full_attacks=100,
             same_direction_connection_bonus=0,
             same_direction_handoff_bonus=0,
@@ -135,6 +149,8 @@ class SweepBurstTests(unittest.TestCase):
         result = score_sweep_burst(
             tuple(parsed.events),
             duration_s=parsed.chart_end_time_s,
+            window_seconds=3,
+            window_count=1,
             simple_run_full_attacks=100,
             same_direction_connection_bonus=0,
             same_direction_handoff_bonus=0,
@@ -155,11 +171,39 @@ class SweepBurstTests(unittest.TestCase):
         result = score_sweep_burst(
             tuple(parsed.events),
             duration_s=parsed.chart_end_time_s,
+            window_seconds=3,
+            window_count=1,
             simple_run_full_attacks=100,
             same_direction_handoff_bonus=0,
         )
         self.assertGreater(result.raw_motion_density, 0)
         self.assertEqual(result.motion_density, result.raw_motion_density)
+
+    def test_top_three_two_second_windows_are_non_overlapping_and_weighted(self):
+        gap = "," * 30
+        body = gap.join(("1,2,3,4", "1,2,3,4", "1,2,3,4")) + gap
+        parsed = parse_chart(f"(180){{16}}{body},E")
+        result = score_sweep_burst(
+            tuple(parsed.events),
+            duration_s=parsed.chart_end_time_s,
+            idle_distance_weight=0,
+            takeover_weight=0,
+            fast_jump_weight=0,
+            same_direction_connection_bonus=0,
+            same_direction_handoff_bonus=0,
+        )
+        self.assertEqual(len(result.windows), 3)
+        for left, right in zip(
+            sorted(result.windows, key=lambda item: item.window_start_s),
+            sorted(result.windows, key=lambda item: item.window_start_s)[1:],
+        ):
+            self.assertLessEqual(left.window_end_s, right.window_start_s + 1e-9)
+        weights = (1.0, 1 / math.sqrt(2), 1 / math.sqrt(3))
+        expected = sum(
+            weight * window.value
+            for weight, window in zip(weights, result.windows)
+        ) / sum(weights)
+        self.assertAlmostEqual(result.value, expected)
 
 
 if __name__ == "__main__":

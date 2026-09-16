@@ -155,14 +155,15 @@ sweep_raw = 0.6 * mean_load + 0.4 * peak
 每秒和每物件位移及逐批手部分配。Family 起点前的手位未知，因此每只手第一次参与不计
 初始放置距离；一旦参与，之后所有空转移位均计入。该指标暂只用于实验，不进入 sweep raw。
 
-实验 API `score_sweep_burst` / `SweepBurstAnalyzer` 取全谱最高固定 3 秒窗口。窗口基础负荷
+实验 API `score_sweep_burst` / `SweepBurstAnalyzer` 取全谱三个互不重叠的 2 秒窗口，按
+`1/sqrt(k)` 排名衰减后除以权重和，保持每秒强度量纲。窗口基础负荷
 只保留普通/EX 物件权重与速度平方根系数，双押倍率固定为 1.0，不继承 family、折返、
 变速或接续的累积倍率。全程单押、无变速、无换向的单一 sequence 前 16 个攻击保持
 全权，第 `n` 个超额攻击按 `1/sqrt(n+1)` 衰减。双押批次自身保持全权并将连续单押计数
 清零，之后从 1 重新累计；换向和变速同样开始新的计数段。同向 family 接续与保持方向的
 双押换手只在切换批次局部增加 20%，不向后累乘。
-另加入 `0.5 * idle_distance + 1.0 * takeover + 2.0 * fast_jump` 作为等效物量，最后除以
-3 秒。Family 内连续简单单押 group 另以 `(hand, direction)` 建立 1 至 4 组的短周期模板；
+另加入 `0.5 * idle_distance + 1.0 * takeover + 2.0 * fast_jump` 作为等效物量，随后除以
+2 秒。Family 内连续简单单押 group 另以 `(hand, direction)` 建立 1 至 4 组的短周期模板；
 模板至少覆盖 6 组、重复三轮且匹配率达到 80% 时，符合模板的 group 起点运动负荷只保留
 10%，反手或其他不匹配 group 保持全权。双押、换向和变速 group 切断模板；同向 family
 接续 group 可参与模板判断但运动负荷受保护、不应用折扣，双押 handoff 同样保持全权。

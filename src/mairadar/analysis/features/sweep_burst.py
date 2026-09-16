@@ -1,6 +1,6 @@
 """Experimental three-second sweep burst load with two-hand motion costs."""
 
-from bisect import bisect_left, bisect_right
+from bisect import bisect_left
 from collections import Counter
 from dataclasses import dataclass, replace
 import math
@@ -19,7 +19,9 @@ from .sweep import (
 )
 
 
-DEFAULT_WINDOW_SECONDS = 3.0
+DEFAULT_WINDOW_SECONDS = 2.0
+DEFAULT_WINDOW_COUNT = 3
+DEFAULT_WINDOW_RANK_DECAY_EXPONENT = 0.5
 DEFAULT_IDLE_DISTANCE_WEIGHT = 0.5
 DEFAULT_TAKEOVER_WEIGHT = 1.0
 DEFAULT_FAST_JUMP_WEIGHT = 2.0
@@ -34,6 +36,16 @@ PATTERN_MIN_MATCH_RATIO = 0.8
 
 
 @dataclass(frozen=True)
+class SweepBurstWindow:
+    value: float
+    base_density: float
+    motion_density: float
+    raw_motion_density: float
+    window_start_s: float
+    window_end_s: float
+
+
+@dataclass(frozen=True)
 class SweepBurstScore:
     value: float
     base_density: float
@@ -41,6 +53,7 @@ class SweepBurstScore:
     raw_motion_density: float
     window_start_s: float
     window_end_s: float
+    windows: tuple[SweepBurstWindow, ...]
 
 
 def _same_direction_connection(
@@ -158,6 +171,8 @@ def score_sweep_burst(
     config: SweepScoringConfig | None = None,
     max_states: int = DEFAULT_MAX_STATES,
     window_seconds: float = DEFAULT_WINDOW_SECONDS,
+    window_count: int = DEFAULT_WINDOW_COUNT,
+    window_rank_decay_exponent: float = DEFAULT_WINDOW_RANK_DECAY_EXPONENT,
     idle_distance_weight: float = DEFAULT_IDLE_DISTANCE_WEIGHT,
     takeover_weight: float = DEFAULT_TAKEOVER_WEIGHT,
     fast_jump_weight: float = DEFAULT_FAST_JUMP_WEIGHT,
@@ -173,6 +188,7 @@ def score_sweep_burst(
     numeric = {
         "duration_s": duration_s,
         "window_seconds": window_seconds,
+        "window_rank_decay_exponent": window_rank_decay_exponent,
         "idle_distance_weight": idle_distance_weight,
         "takeover_weight": takeover_weight,
         "fast_jump_weight": fast_jump_weight,
@@ -201,6 +217,12 @@ def score_sweep_burst(
         or simple_run_full_attacks <= 0
     ):
         raise ValueError("simple_run_full_attacks must be a positive integer")
+    if (
+        isinstance(window_count, bool)
+        or not isinstance(window_count, int)
+        or window_count <= 0
+    ):
+        raise ValueError("window_count must be a positive integer")
     if pattern_motion_floor > 1:
         raise ValueError("pattern_motion_floor must be at most one")
 
@@ -329,10 +351,10 @@ def score_sweep_burst(
         motion_prefix.append(motion_prefix[-1] + motion)
         raw_motion_prefix.append(raw_motion_prefix[-1] + raw_motion)
 
-    best = SweepBurstScore(0.0, 0.0, 0.0, 0.0, 0.0, window_seconds)
+    candidates_by_start = []
     for start in sorted(candidates):
         left = bisect_left(times, start - 1e-9)
-        right = bisect_right(times, start + window_seconds + 1e-9)
+        right = bisect_left(times, start + window_seconds - 1e-9)
         base = base_prefix[right] - base_prefix[left]
         motion = motion_prefix[right] - motion_prefix[left]
         raw_motion = raw_motion_prefix[right] - raw_motion_prefix[left]
@@ -340,20 +362,58 @@ def score_sweep_burst(
         motion_density = motion / window_seconds
         raw_motion_density = raw_motion / window_seconds
         value = base_density + motion_density
-        candidate = SweepBurstScore(
+        candidates_by_start.append(SweepBurstWindow(
             value,
             base_density,
             motion_density,
             raw_motion_density,
             start,
             start + window_seconds,
-        )
-        if (candidate.value, -candidate.window_start_s) > (
-            best.value,
-            -best.window_start_s,
+        ))
+
+    selected = []
+    for candidate in sorted(
+        candidates_by_start,
+        key=lambda item: (-item.value, item.window_start_s),
+    ):
+        if candidate.value <= 0:
+            continue
+        if any(
+            candidate.window_start_s < other.window_end_s - 1e-9
+            and other.window_start_s < candidate.window_end_s - 1e-9
+            for other in selected
         ):
-            best = candidate
-    return best
+            continue
+        selected.append(candidate)
+        if len(selected) == window_count:
+            break
+
+    if not selected:
+        empty = SweepBurstWindow(0.0, 0.0, 0.0, 0.0, 0.0, window_seconds)
+        return SweepBurstScore(0.0, 0.0, 0.0, 0.0, 0.0, window_seconds, (empty,))
+
+    weights = tuple(
+        rank ** -window_rank_decay_exponent
+        for rank in range(1, len(selected) + 1)
+    )
+    weight_total = math.fsum(weights)
+
+    def weighted(attribute: str) -> float:
+        return math.fsum(
+            weight * getattr(window, attribute)
+            for weight, window in zip(weights, selected)
+        ) / weight_total
+
+    strongest = selected[0]
+    return SweepBurstScore(
+        weighted("value"),
+        weighted("base_density"),
+        weighted("motion_density"),
+        weighted("raw_motion_density"),
+        strongest.window_start_s,
+        strongest.window_end_s,
+        tuple(selected),
+    )
 
 
 @dataclass(frozen=True)

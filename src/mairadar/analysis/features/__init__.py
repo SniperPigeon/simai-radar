@@ -7,7 +7,12 @@ from .peak import PeakDensityAnalyzer
 from .slide import SlideSequenceAnalyzer, SlideTrickyAnalyzer
 from .slide_cumulate import SlideCumulateAnalyzer
 from .sweep import SweepAnalyzer
-from .sweep_burst import SweepBurstAnalyzer, SweepBurstScore, score_sweep_burst
+from .sweep_burst import (
+    SweepBurstAnalyzer,
+    SweepBurstScore,
+    SweepBurstWindow,
+    score_sweep_burst,
+)
 
 __all__ = [
     "HandMotionResult",
@@ -20,6 +25,7 @@ __all__ = [
     "SweepAnalyzer",
     "SweepBurstAnalyzer",
     "SweepBurstScore",
+    "SweepBurstWindow",
     "score_sweep_burst",
     "sweep_family_hand_motion",
     "two_hand_motion",
