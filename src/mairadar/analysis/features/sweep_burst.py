@@ -37,6 +37,7 @@ DEFAULT_SIMPLE_RUN_FULL_ATTACKS = 16
 DEFAULT_SIMPLE_RUN_DECAY_EXPONENT = 0.5
 DEFAULT_SAME_DIRECTION_CONNECTION_BONUS = 0.2
 DEFAULT_SAME_DIRECTION_HANDOFF_BONUS = 0.2
+DEFAULT_EIGHTH_GAP_GROUP_BONUS = 0.05
 DEFAULT_PATTERN_MOTION_FLOOR = 0.1
 DEFAULT_SOLO_FAST_MIN_BATCHES = 16
 DEFAULT_SOLO_FAST_LONG_MIN_BATCHES = 48
@@ -314,6 +315,7 @@ def score_sweep_burst(
         DEFAULT_SAME_DIRECTION_CONNECTION_BONUS
     ),
     same_direction_handoff_bonus: float = DEFAULT_SAME_DIRECTION_HANDOFF_BONUS,
+    eighth_gap_group_bonus: float = DEFAULT_EIGHTH_GAP_GROUP_BONUS,
     pattern_motion_floor: float = DEFAULT_PATTERN_MOTION_FLOOR,
     alternating_idle_multiplier: float | None = None,
     solo_fast_base_multiplier: float = 1.0,
@@ -335,6 +337,7 @@ def score_sweep_burst(
         "simple_run_decay_exponent": simple_run_decay_exponent,
         "same_direction_connection_bonus": same_direction_connection_bonus,
         "same_direction_handoff_bonus": same_direction_handoff_bonus,
+        "eighth_gap_group_bonus": eighth_gap_group_bonus,
         "pattern_motion_floor": pattern_motion_floor,
         "solo_fast_base_multiplier": solo_fast_base_multiplier,
         "solo_fast_motion_multiplier": solo_fast_motion_multiplier,
@@ -384,6 +387,8 @@ def score_sweep_burst(
         raise ValueError("takeover_same_direction_only must be a boolean")
     if pattern_motion_floor > 1:
         raise ValueError("pattern_motion_floor must be at most one")
+    if eighth_gap_group_bonus > 1:
+        raise ValueError("eighth_gap_group_bonus must be at most one")
     if alternating_idle_multiplier is not None and (
         isinstance(alternating_idle_multiplier, bool)
         or not isinstance(alternating_idle_multiplier, (int, float))
@@ -424,6 +429,25 @@ def score_sweep_burst(
     )
     scored = score_sweep_sequences(sequences, config=resolved, duration_s=duration_s)
     groups_by_id = {group.group_id: group for group in scored.groups}
+    eighth_bonus_group_ids = set()
+    if eighth_gap_group_bonus and not (
+        resolved.eighth_gap_family_bridge
+        or resolved.eighth_gap_similar_speed_bridge
+    ):
+        groups_ending_at = {}
+        for group in scored.groups:
+            if group.parent_group_id is None:
+                previous = groups_ending_at.get(
+                    group.sequence.start_beat - EIGHTH_NOTE_BEATS, ()
+                )
+                if any(math.isclose(
+                    parent.sequence.interval_seconds,
+                    group.sequence.interval_seconds,
+                    rel_tol=resolved.eighth_bridge_speed_relative_tolerance,
+                    abs_tol=1e-9,
+                ) for parent in previous):
+                    eighth_bonus_group_ids.add(group.group_id)
+            groups_ending_at.setdefault(group.sequence.end_beat, []).append(group)
     motions_by_family = {
         family.family_id: sweep_family_hand_motion(
             family,
@@ -525,6 +549,12 @@ def score_sweep_burst(
                 base *= solo_fast_long_base_multiplier
             elif index in solo_fast_indexes_by_group.get(group.group_id, ()):
                 base *= solo_fast_base_multiplier
+            if group.group_id in eighth_bonus_group_ids:
+                base += (
+                    sequence.widths[index]
+                    * speed_factor
+                    * eighth_gap_group_bonus
+                )
             if (
                 index in sequence.double_handoff_indexes
                 and index not in sequence.direction_switch_indexes

@@ -446,6 +446,45 @@ class SweepBurstTests(unittest.TestCase):
         self.assertGreater(same.motion_density, 0)
         self.assertAlmostEqual(same.motion_density, same_filtered.motion_density)
 
+    def test_exact_eighth_gap_awards_next_group_without_merging_families(self):
+        def score(body, bonus):
+            parsed = parse_chart(f"(168){{48}}{body},E")
+            return score_sweep_burst(
+                tuple(parsed.events),
+                duration_s=parsed.chart_end_time_s,
+                window_seconds=3,
+                window_count=1,
+                idle_distance_weight=0,
+                takeover_weight=0,
+                fast_jump_weight=0,
+                same_direction_connection_bonus=0,
+                same_direction_handoff_bonus=0,
+                eighth_gap_group_bonus=bonus,
+            )
+
+        different_shapes = "18,27,36,45,,,,,,28,37,46,51"
+        normal_bonus = (
+            score(different_shapes, 0.05).base_density
+            - score(different_shapes, 0).base_density
+        )
+        ex_body = "18,27,36,45,,,,,,2x/8x,37,46,51"
+        ex_bonus = (
+            score(ex_body, 0.05).base_density
+            - score(ex_body, 0).base_density
+        )
+        self.assertGreater(normal_bonus, 0)
+        self.assertAlmostEqual(ex_bonus, normal_bonus)
+
+        for body in (
+            "18,27,36,45,,,,,,,28,37,46,51",
+            "18,27,36,45,,,,,,{24}28,37,46,51",
+        ):
+            with self.subTest(body=body):
+                self.assertAlmostEqual(
+                    score(body, 0.05).base_density,
+                    score(body, 0).base_density,
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

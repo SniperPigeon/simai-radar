@@ -120,6 +120,11 @@ reposition，而不是硬判为连续快扫的跳跃违规。两个实验开关�
 单位速度差不超过 10%，不要求键位形状相同。它将两组合为新 family，按新首尾时长重新
 计算 family 密度；默认三窗 burst 仍按时间点负荷计算，但跨组双手移位会进入该 family。
 
+当前默认 burst 改用更局部的八分接续：若下一组尚无其他前驱，且存在一组恰好在半拍前
+结束、单位秒速度差不超过 10%，只给**下一组全部物理键基础负荷 +5%**。该奖励与 EX
+声明权重分离，最多计一次，不向后继承，也不合并 family 或将空隙中的双手移动加入 DP。
+启用上述实验性 family 桥接时，这项局部奖励不再叠加。
+
 每个时间批次包含一个主干键和最多两个辅助物件；辅助物件参与普通/EX 物件权重，但不
 参与速度或方向计算。双押节点可用不同键位进入和离开，例如 `3,4,56,7,8` 以 5 接收
 前段、以 6 发出后段；这是同拍换手而非 5 到 6 的瞬时单手移动。同向、异向双扫及单双扫
@@ -522,7 +527,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-sweep-2s-top3-identity-20260916-v47",
+            mapping_version="provisional-sweep-2s-top3-identity-20260916-v48",
         )
 
 TRANSFORMER = DefaultScoreTransformer
@@ -569,7 +574,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-sweep-2s-top3-identity-20260916-v47`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-sweep-2s-top3-identity-20260916-v48`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 
