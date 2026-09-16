@@ -30,7 +30,7 @@ DEFAULT_SPEED_CHANGE_INCREMENT = 0.2
 DEFAULT_SAME_DIRECTION_INCREMENT = 0.1
 DEFAULT_REVERSAL_INCREMENT = 0.2
 FAMILY_LIMIT = 5
-DETECTOR_VERSION = "main_spine_v1_speed_tolerance"
+DETECTOR_VERSION = "main_spine_v2_chord_handoff"
 SCORING_VERSION = "sweep_family_blend_v7_family_mean_duration_sqrt"
 
 
@@ -276,7 +276,8 @@ class SweepScore:
 @dataclass(frozen=True)
 class _MainSpineState:
     batch_indexes: tuple[int, ...]
-    attack_ids: tuple[int, ...]
+    entry_attack_ids: tuple[int, ...]
+    exit_attack_ids: tuple[int, ...]
     direction: int | None = None
     run_steps: int = 0
     turn_count: int = 0
@@ -402,14 +403,15 @@ def _same_speed(left: float, right: float, relative_tolerance: float) -> bool:
 def _advance_main_spine(
     state: _MainSpineState,
     current_batch_index: int,
-    current_attack_id: int,
+    current_entry_attack_id: int,
+    current_exit_attack_id: int,
     attacks: tuple[ButtonAttack, ...],
     batches: tuple[_AttackBatch, ...],
     holds: tuple[_HoldOccupancy, ...],
     speed_relative_tolerance: float,
 ) -> _MainSpineState | None:
-    previous = attacks[state.attack_ids[-1]]
-    current = attacks[current_attack_id]
+    previous = attacks[state.exit_attack_ids[-1]]
+    current = attacks[current_entry_attack_id]
     move = _move(previous, current, holds)
     if move is None:
         return None
@@ -463,7 +465,8 @@ def _advance_main_spine(
         direction_switched = True
     return _MainSpineState(
         batch_indexes=state.batch_indexes + (current_batch_index,),
-        attack_ids=state.attack_ids + (current_attack_id,),
+        entry_attack_ids=state.entry_attack_ids + (current_entry_attack_id,),
+        exit_attack_ids=state.exit_attack_ids + (current_exit_attack_id,),
         direction=direction,
         run_steps=run_steps,
         turn_count=turn_count,
@@ -479,10 +482,13 @@ def _main_spine_complete(
     attacks: tuple[ButtonAttack, ...],
 ) -> bool:
     return (
-        len(state.attack_ids) >= 3
+        len(state.entry_attack_ids) >= 3
         and state.direction is not None
         and (state.turn_count == 0 or state.run_steps >= 2)
-        and len({attacks[attack_id].lane for attack_id in state.attack_ids}) >= 3
+        and len({
+            attacks[attack_id].lane
+            for attack_id in state.entry_attack_ids + state.exit_attack_ids
+        }) >= 3
     )
 
 
@@ -495,17 +501,29 @@ def _main_state_to_sequence(
         batches[index].attack_ids for index in state.batch_indexes
     )
     extras_by_batch = tuple(
-        tuple(attack_id for attack_id in included if attack_id != main_attack_id)
-        for included, main_attack_id in zip(included_by_batch, state.attack_ids)
+        tuple(
+            attack_id for attack_id in included
+            if attack_id not in {entry_attack_id, exit_attack_id}
+        )
+        for included, entry_attack_id, exit_attack_id in zip(
+            included_by_batch,
+            state.entry_attack_ids,
+            state.exit_attack_ids,
+        )
     )
     event_ids_by_batch = tuple(
         tuple(event_id for attack_id in included for event_id in attacks[attack_id].event_ids)
         for included in included_by_batch
     )
-    main_attacks = tuple(attacks[attack_id] for attack_id in state.attack_ids)
+    main_attacks = tuple(
+        attacks[attack_id] for attack_id in state.entry_attack_ids
+    )
     directions = tuple(
         1 if (right.lane - left.lane) % 8 in {1, 2} else -1
-        for left, right in zip(main_attacks, main_attacks[1:])
+        for left, right in zip(
+            (attacks[attack_id] for attack_id in state.exit_attack_ids[:-1]),
+            (attacks[attack_id] for attack_id in state.entry_attack_ids[1:]),
+        )
     )
     widths = tuple(len(included) for included in included_by_batch)
     return SweepSequence(
@@ -537,7 +555,13 @@ def _main_state_to_sequence(
             index for index, (left, right) in enumerate(zip(widths, widths[1:]), start=1)
             if left != right
         ),
-        double_handoff_indexes=(),
+        double_handoff_indexes=tuple(
+            index for index, (entry_attack_id, exit_attack_id) in enumerate(zip(
+                state.entry_attack_ids,
+                state.exit_attack_ids,
+            ))
+            if entry_attack_id != exit_attack_id
+        ),
         normal_declaration_counts=tuple(
             sum(attacks[attack_id].normal_declaration_count for attack_id in included)
             for included in included_by_batch
@@ -547,7 +571,7 @@ def _main_state_to_sequence(
             for included in included_by_batch
         ),
         strands=(SweepStrand(
-            attack_ids=state.attack_ids,
+            attack_ids=state.entry_attack_ids,
             lanes=tuple(attack.lane for attack in main_attacks),
             start_beat=main_attacks[0].beat,
             end_beat=main_attacks[-1].beat,
@@ -574,22 +598,24 @@ def _candidate_sequences(
             active = {}
             continue
         next_states = [
-            _MainSpineState((batch_index,), (attack_id,))
+            _MainSpineState((batch_index,), (attack_id,), (attack_id,))
             for attack_id in batch.attack_ids
         ]
         for state in active.values():
-            for attack_id in batch.attack_ids:
-                advanced = _advance_main_spine(
-                    state,
-                    batch_index,
-                    attack_id,
-                    attacks,
-                    batches,
-                    holds,
-                    speed_relative_tolerance,
-                )
-                if advanced is not None:
-                    next_states.append(advanced)
+            for entry_attack_id in batch.attack_ids:
+                for exit_attack_id in batch.attack_ids:
+                    advanced = _advance_main_spine(
+                        state,
+                        batch_index,
+                        entry_attack_id,
+                        exit_attack_id,
+                        attacks,
+                        batches,
+                        holds,
+                        speed_relative_tolerance,
+                    )
+                    if advanced is not None:
+                        next_states.append(advanced)
         deduplicated: dict[tuple, _MainSpineState] = {}
         for state in next_states:
             visited += 1
@@ -602,7 +628,7 @@ def _candidate_sequences(
                 if state.unit_intervals_seconds else None
             )
             key = (
-                state.attack_ids[-1],
+                state.exit_attack_ids[-1],
                 state.direction,
                 min(state.run_steps, 2),
                 last_interval,
@@ -610,19 +636,35 @@ def _candidate_sequences(
             )
             previous = deduplicated.get(key)
             quality = (
-                len(state.attack_ids),
+                len(state.entry_attack_ids),
                 -sum(state.speed_switches),
                 -state.turn_count,
-                tuple(-attack_id for attack_id in state.attack_ids),
+                -sum(
+                    entry_attack_id != exit_attack_id
+                    for entry_attack_id, exit_attack_id in zip(
+                        state.entry_attack_ids,
+                        state.exit_attack_ids,
+                    )
+                ),
+                tuple(-attack_id for attack_id in state.entry_attack_ids),
+                tuple(-attack_id for attack_id in state.exit_attack_ids),
             )
             if previous is None:
                 deduplicated[key] = state
                 continue
             previous_quality = (
-                len(previous.attack_ids),
+                len(previous.entry_attack_ids),
                 -sum(previous.speed_switches),
                 -previous.turn_count,
-                tuple(-attack_id for attack_id in previous.attack_ids),
+                -sum(
+                    entry_attack_id != exit_attack_id
+                    for entry_attack_id, exit_attack_id in zip(
+                        previous.entry_attack_ids,
+                        previous.exit_attack_ids,
+                    )
+                ),
+                tuple(-attack_id for attack_id in previous.entry_attack_ids),
+                tuple(-attack_id for attack_id in previous.exit_attack_ids),
             )
             if quality > previous_quality:
                 deduplicated[key] = state

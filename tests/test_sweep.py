@@ -112,7 +112,8 @@ class SweepTests(unittest.TestCase):
         self.assertEqual(expanded[0].widths, (1, 1, 1, 1, 2, 2, 2))
         self.assertEqual(len(contracted), 1)
         self.assertEqual(contracted[0].widths, (2, 2, 2, 2, 1, 1, 1))
-        self.assertTrue(contracted[0].direction_switch_indexes)
+        self.assertEqual(contracted[0].double_handoff_indexes, (3,))
+        self.assertFalse(contracted[0].direction_switch_indexes)
 
     def test_stable_internal_chord_notes_are_attached_but_not_used_for_speed(self):
         [sequence] = sweep_sequences(events("(180){16}1,2,3/7,4,5,E"))
@@ -127,6 +128,20 @@ class SweepTests(unittest.TestCase):
             ),
             18,
         )
+
+    def test_chord_can_switch_from_incoming_to_outgoing_main_spine(self):
+        [sequence] = sweep_sequences(events("(180){16}3,4,56,7,8,E"))
+        self.assertEqual(
+            sequence.lanes_by_batch,
+            ((3,), (4,), (5, 6), (7,), (8,)),
+        )
+        self.assertEqual(sequence.attack_count, 6)
+        self.assertEqual(sequence.double_handoff_indexes, (2,))
+        self.assertEqual(sequence.extra_event_ids_by_batch[2], ())
+        self.assertFalse(sequence.direction_switch_indexes)
+
+    def test_chord_handoff_does_not_turn_plain_alternation_into_a_sweep(self):
+        self.assertFalse(sweep_sequences(events("(180){16}2,3,2,3,E")))
 
     def test_short_hold_and_slide_head_are_attacks_but_long_hold_is_occupancy(self):
         chart = events("(180){16}1,2h[16:1],3-5[4:1],4h[4:1],E")

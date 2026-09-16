@@ -100,7 +100,9 @@ Touch 和 TouchHold 不进入。每个普通声明权重为 1，每个 EX 声明
 节奏档位差异远大于该容差。
 
 每个时间批次包含一个主干键和最多两个辅助物件；辅助物件参与普通/EX 物件权重，但不
-参与速度或方向计算。同向、异向双扫及单双扫切换只要存在贯穿的合法最长主干就不会中断；
+参与速度或方向计算。双押节点可用不同键位进入和离开，例如 `3,4,56,7,8` 以 5 接收
+前段、以 6 发出后段；这是同拍换手而非 5 到 6 的瞬时单手移动。同向、异向双扫及单双扫
+切换只要存在贯穿的合法最长主干就不会中断；
 批次宽度仍保留作审计，但自然扩张、收束及双押交棒都不额外增加权重。双扫批次本身已按
 两个物件贡献基础负荷，不再因第二 Strand 或宽度变化重复奖励。
 折返只有前一方向已完成至少两步时才成立，最后一段也必须完成两步；转向轴心的 0.2 从
@@ -143,7 +145,21 @@ sweep_raw = 0.6 * mean_load + 0.4 * peak
 `sqrt(chart_duration / 150 seconds)` 作温和总时长补正。最终按
 `0.6 * Mean + 0.4 * Peak` 混合。当前公式版本为
 `sweep_family_blend_v7_family_mean_duration_sqrt`，识别版本为
-`main_spine_v1_speed_tolerance`，默认映射暂用 identity。
+`main_spine_v2_chord_handoff`，默认映射暂用 identity。
+
+实验 API `two_hand_motion(times_s, lanes_by_batch)` 使用动态规划最小化双手位移。状态保留
+两只手最后位置和最后使用批次；若连续快速批次要求当前手跨越超过可用步数，优先改由
+空闲手处理，但空闲手从上次位置到新键位的环形距离仍计入 idle reposition。目标按被迫
+快速跳跃次数、自由手接管次数、双手总位移依次最小化。Family 可通过
+`sweep_family_hand_motion(family, groups)` 直接计算，返回 active/idle 位移、接管、违规、
+每秒和每物件位移及逐批手部分配。Family 起点前的手位未知，因此每只手第一次参与不计
+初始放置距离；一旦参与，之后所有空转移位均计入。该指标暂只用于实验，不进入 sweep raw。
+
+实验 API `score_sweep_burst` / `SweepBurstAnalyzer` 取全谱最高固定 3 秒窗口。窗口基础负荷
+只保留普通/EX 物件权重与速度平方根系数，双押倍率固定为 1.0，不继承 family、折返、
+变速或接续的累积倍率；另加入 `0.5 * idle_distance + 1.0 * takeover + 2.0 * fast_jump`
+作为等效物量，最后除以 3 秒。它可通过注入 `ChartAnalyzer` 做独立实验，不替换默认
+`SweepAnalyzer`。
 
 ## 整体物量口径
 
@@ -461,7 +477,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-jack-sweep-tricky-identity-20260915-v42",
+            mapping_version="provisional-jack-sweep-tricky-identity-20260915-v43",
         )
 
 TRANSFORMER = DefaultScoreTransformer
@@ -508,7 +524,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-jack-sweep-tricky-identity-20260915-v42`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-jack-sweep-tricky-identity-20260915-v43`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 

@@ -401,7 +401,7 @@ class PipelineTests(unittest.TestCase):
                     for row in rows
                 ))
                 self.assertTrue(all(json.loads(row["diagnostics"])["scoring"]["mapping_version"]
-                                    == "provisional-jack-sweep-tricky-identity-20260915-v42"
+                                    == "provisional-jack-sweep-tricky-identity-20260915-v43"
                                     for row in rows))
                 self.assertTrue(all((root / mode / row["cover_path"]).is_file() for row in rows))
 
