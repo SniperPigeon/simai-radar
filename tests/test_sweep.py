@@ -7,6 +7,7 @@ import unittest
 
 from mairadar.analysis import AnalysisContext
 from mairadar.analysis.features import SweepAnalyzer
+from mairadar.analysis.features.hand_motion import sweep_family_hand_motion
 from mairadar.analysis.features.sweep import (
     ButtonAttack,
     SweepScoringConfig,
@@ -142,6 +143,64 @@ class SweepTests(unittest.TestCase):
 
     def test_chord_handoff_does_not_turn_plain_alternation_into_a_sweep(self):
         self.assertFalse(sweep_sequences(events("(180){16}2,3,2,3,E")))
+
+    def test_opt_in_paired_sweeps_include_distant_two_note_chunks(self):
+        xaleid = events("(180){32}2,3,6,5,2,3,6,5,E")
+        aegleseeker = events("(180){16}1,2,8,7,1,2,8,7,E")
+        rotating = events("(180){16}2,3,8,1,6,7,4,5,2,3,8,1,6,7,E")
+        self.assertFalse(sweep_sequences(xaleid))
+        self.assertFalse(sweep_sequences(aegleseeker))
+        for chart, expected in ((xaleid, 8), (aegleseeker, 8), (rotating, 14)):
+            with self.subTest(expected=expected):
+                paired = [
+                    sequence for sequence in sweep_sequences(
+                        chart, include_paired_sweeps=True
+                    )
+                    if sequence.paired_sweep
+                ]
+                self.assertEqual(sum(seq.attack_count for seq in paired), expected)
+        self.assertFalse(sweep_sequences(
+            events("(180){16}2,3,2,3,2,3,2,3,E"),
+            include_paired_sweeps=True,
+        ))
+        self.assertFalse(sweep_sequences(
+            events("(180){8}2,3,6,5,2,3,6,5,E"),
+            include_paired_sweeps=True,
+        ))
+        gradual = events(
+            "(180){32}2,3,6,5,2,3,7,6,3,4,7,6,3,4,8,7,E"
+        )
+        self.assertEqual(
+            sum(sequence.attack_count for sequence in sweep_sequences(
+                gradual, include_paired_sweeps=True,
+            ) if sequence.paired_sweep),
+            16,
+        )
+
+    def test_opt_in_repeated_double_front_bridges_exact_eighth_gap(self):
+        chart = events("(168){48}18,27,36,45,,,,,,18,27,36,45,E")
+        sequences = sweep_sequences(chart)
+        self.assertEqual(len(sequences), 2)
+        plain = score_sweep_sequences(sequences, config=PERMISSIVE_CONFIG)
+        bridged = score_sweep_sequences(
+            sequences,
+            config=replace(PERMISSIVE_CONFIG, eighth_gap_family_bridge=True),
+        )
+        self.assertEqual(len(plain.families), 2)
+        self.assertEqual(len(bridged.families), 1)
+        self.assertEqual(bridged.groups[1].parent_group_id, 1)
+        motion = sweep_family_hand_motion(
+            bridged.families[0], bridged.groups, respect_group_gaps=True,
+        )
+        self.assertGreater(motion.idle_reposition_distance, 0)
+        self.assertEqual(motion.fast_jump_violations, 0)
+        wider_gap = sweep_sequences(events(
+            "(168){48}18,27,36,45,,,,,,,18,27,36,45,E"
+        ))
+        self.assertEqual(len(score_sweep_sequences(
+            wider_gap,
+            config=replace(PERMISSIVE_CONFIG, eighth_gap_family_bridge=True),
+        ).families), 2)
 
     def test_short_hold_and_slide_head_are_attacks_but_long_hold_is_occupancy(self):
         chart = events("(180){16}1,2h[16:1],3-5[4:1],4h[4:1],E")

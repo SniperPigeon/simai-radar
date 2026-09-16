@@ -111,11 +111,12 @@ def _move_cost(
     batch_index: int,
     time_s: float,
     previous_time_s: float | None,
+    force_idle: bool,
 ) -> tuple[int, int, int, int]:
     if target_position is None or previous_position is None:
         return 0, 0, 0, 0
     distance = circular_key_distance(previous_position, target_position)
-    active = last_batch == batch_index - 1
+    active = last_batch == batch_index - 1 and not force_idle
     active_distance = distance if active else 0
     idle_distance = distance if not active else 0
     fast_violation = 0
@@ -129,6 +130,8 @@ def _move_cost(
 def two_hand_motion(
     times_s: tuple[float, ...],
     lanes_by_batch: tuple[tuple[int, ...], ...],
+    *,
+    idle_transition_indexes: frozenset[int] | None = None,
 ) -> HandMotionResult:
     """Minimize fast jumps first, then both hands' total circular displacement."""
     if len(times_s) != len(lanes_by_batch) or not times_s:
@@ -140,6 +143,15 @@ def two_hand_motion(
     ):
         raise ValueError("batch times must be finite and strictly increasing")
     normalized_lanes = tuple(tuple(sorted(set(lanes))) for lanes in lanes_by_batch)
+    idle_transition_indexes = idle_transition_indexes or frozenset()
+    if (
+        not isinstance(idle_transition_indexes, frozenset)
+        or any(
+            type(index) is not int or not 1 <= index < len(times_s)
+            for index in idle_transition_indexes
+        )
+    ):
+        raise ValueError("idle_transition_indexes must contain later batch indexes")
     if any(
         not lanes
         or len(lanes) > 3
@@ -167,6 +179,7 @@ def two_hand_motion(
                     batch_index,
                     time_s,
                     previous_time_s,
+                    batch_index in idle_transition_indexes,
                 )
                 right_cost = _move_cost(
                     state.right_position,
@@ -175,6 +188,7 @@ def two_hand_motion(
                     batch_index,
                     time_s,
                     previous_time_s,
+                    batch_index in idle_transition_indexes,
                 )
                 used_left = left_target is not None
                 used_right = right_target is not None
@@ -241,6 +255,8 @@ def two_hand_motion(
 def sweep_family_hand_motion(
     family: ScoredSweepFamily,
     groups: tuple[ScoredSweepGroup, ...],
+    *,
+    respect_group_gaps: bool = False,
 ) -> HandMotionResult:
     """Combine a scored family's groups and run the two-hand displacement DP."""
     by_id = {group.group_id: group for group in groups}
@@ -255,7 +271,24 @@ def sweep_family_hand_motion(
         ):
             batches.setdefault(time_s, set()).update(lanes)
     ordered = sorted(batches.items())
+    idle_start_times = set()
+    if respect_group_gaps:
+        member_ids = set(family.group_ids)
+        for group_id in family.group_ids:
+            group = by_id[group_id]
+            parent = by_id.get(group.parent_group_id)
+            if (
+                parent is not None
+                and parent.group_id in member_ids
+                and group.sequence.start_time_s - parent.sequence.end_time_s
+                > parent.sequence.interval_seconds + 1e-9
+            ):
+                idle_start_times.add(group.sequence.start_time_s)
     return two_hand_motion(
         tuple(time_s for time_s, _ in ordered),
         tuple(tuple(sorted(lanes)) for _, lanes in ordered),
+        idle_transition_indexes=frozenset(
+            index for index, (time_s, _) in enumerate(ordered)
+            if time_s in idle_start_times
+        ),
     )

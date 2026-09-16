@@ -87,6 +87,36 @@ class SweepBurstTests(unittest.TestCase):
         expected = 2 * (16 + 1 / math.sqrt(2)) + 2
         self.assertAlmostEqual(result.base_density, expected / 3)
 
+    def test_paired_sweep_is_not_treated_as_one_long_single_hand_run(self):
+        body = ",".join(("2", "3", "6", "5") * 6)
+        parsed = parse_chart(f"(180){{32}}{body},E")
+        result = score_sweep_burst(
+            tuple(parsed.events),
+            duration_s=parsed.chart_end_time_s,
+            window_seconds=3,
+            window_count=1,
+            include_paired_sweeps=True,
+            idle_distance_weight=0,
+            takeover_weight=0,
+            fast_jump_weight=0,
+            same_direction_connection_bonus=0,
+            same_direction_handoff_bonus=0,
+        )
+        self.assertAlmostEqual(result.base_density, 24 * math.sqrt(2) / 3)
+
+    def test_paired_sweep_alternation_does_not_earn_takeover_bonus(self):
+        parsed = parse_chart("(180){32}2,3,6,5,2,3,6,5,E")
+        result = score_sweep_burst(
+            tuple(parsed.events),
+            duration_s=parsed.chart_end_time_s,
+            window_seconds=2,
+            window_count=1,
+            include_paired_sweeps=True,
+            idle_distance_weight=0,
+            fast_jump_weight=0,
+        )
+        self.assertEqual(result.motion_density, 0)
+
     def test_same_direction_chord_handoff_gets_local_bonus(self):
         parsed = parse_chart("(180){16}3,4,56,7,8,E")
         result = score_sweep_burst(

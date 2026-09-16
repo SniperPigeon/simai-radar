@@ -60,6 +60,17 @@ class HandMotionTests(unittest.TestCase):
         self.assertEqual(result.fast_jump_violations, 2)
         self.assertEqual(result.total_distance, 4)
 
+    def test_explicit_group_gap_counts_reposition_instead_of_fast_jump(self):
+        active = two_hand_motion((0.0, 0.15), ((1, 8), (4, 5)))
+        repositioned = two_hand_motion(
+            (0.0, 0.15),
+            ((1, 8), (4, 5)),
+            idle_transition_indexes=frozenset({1}),
+        )
+        self.assertEqual(active.fast_jump_violations, 2)
+        self.assertEqual(repositioned.fast_jump_violations, 0)
+        self.assertEqual(repositioned.idle_reposition_distance, 6)
+
 
 if __name__ == "__main__":
     unittest.main()

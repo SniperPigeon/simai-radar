@@ -1,5 +1,6 @@
 """Sweep-family recognition over one- or two-strand button fronts."""
 
+from bisect import bisect_left
 from dataclasses import dataclass
 from fractions import Fraction
 from functools import lru_cache
@@ -99,6 +100,7 @@ class SweepSequence:
     normal_declaration_counts: tuple[int, ...]
     protected_declaration_counts: tuple[int, ...]
     strands: tuple[SweepStrand, ...]
+    paired_sweep: bool = False
 
     @property
     def lanes(self) -> tuple[int, ...]:
@@ -181,8 +183,11 @@ class SweepScoringConfig:
     speed_change_increment: float = DEFAULT_SPEED_CHANGE_INCREMENT
     same_direction_increment: float = DEFAULT_SAME_DIRECTION_INCREMENT
     reversal_increment: float = DEFAULT_REVERSAL_INCREMENT
+    eighth_gap_family_bridge: bool = False
 
     def validate(self) -> None:
+        if not isinstance(self.eighth_gap_family_bridge, bool):
+            raise ValueError("eighth_gap_family_bridge must be a boolean")
         positive = {
             "reference_interval_seconds": self.reference_interval_seconds,
             "speed_exponent": self.speed_exponent,
@@ -713,6 +718,184 @@ def _candidate_sequences(
     return [candidate for index, (_, candidate) in enumerate(items) if index not in contained]
 
 
+def _paired_sweep_sequence(
+    attacks: tuple[ButtonAttack, ...],
+    batches: tuple[_AttackBatch, ...],
+    start: int,
+    pair_count: int,
+) -> SweepSequence:
+    members = tuple(attacks[batches[index].attack_ids[0]] for index in range(
+        start, start + 2 * pair_count
+    ))
+    pairs = tuple((members[index], members[index + 1]) for index in range(
+        0, len(members), 2
+    ))
+    strands = []
+    for phase in range(2):
+        strand_attacks = tuple(
+            attack for pair in pairs[phase::2] for attack in pair
+        )
+        if not strand_attacks:
+            continue
+        directions = tuple(
+            1 if (right.lane - left.lane) % 8 == 1 else -1
+            for left, right in pairs[phase::2]
+        )
+        strands.append(SweepStrand(
+            attack_ids=tuple(attack.attack_id for attack in strand_attacks),
+            lanes=tuple(attack.lane for attack in strand_attacks),
+            start_beat=strand_attacks[0].beat,
+            end_beat=strand_attacks[-1].beat,
+            initial_direction=directions[0],
+            final_direction=directions[-1],
+            turn_count=sum(left != right for left, right in zip(
+                directions, directions[1:]
+            )),
+        ))
+    return SweepSequence(
+        lanes_by_batch=tuple((attack.lane,) for attack in members),
+        attack_ids_by_batch=tuple((attack.attack_id,) for attack in members),
+        event_ids_by_batch=tuple(attack.event_ids for attack in members),
+        event_ids_by_attack_batch=tuple((attack.event_ids,) for attack in members),
+        extra_event_ids_by_batch=((),) * len(members),
+        beats=tuple(attack.beat for attack in members),
+        times_s=tuple(attack.time_s for attack in members),
+        unit_intervals_beats=tuple(
+            right.beat - left.beat for left, right in zip(members, members[1:])
+        ),
+        unit_intervals_seconds=tuple(
+            right.time_s - left.time_s for left, right in zip(members, members[1:])
+        ),
+        speed_switch_indexes=(),
+        direction_switch_indexes=(),
+        width_switch_indexes=(),
+        double_handoff_indexes=(),
+        normal_declaration_counts=tuple(
+            attack.normal_declaration_count for attack in members
+        ),
+        protected_declaration_counts=tuple(
+            attack.protected_declaration_count for attack in members
+        ),
+        strands=tuple(strands),
+        paired_sweep=True,
+    )
+
+
+def _paired_sweep_candidates(
+    attacks: tuple[ButtonAttack, ...],
+    batches: tuple[_AttackBatch, ...],
+    covered_attack_ids: set[int],
+    speed_relative_tolerance: float,
+) -> tuple[SweepSequence, ...]:
+    """Find repeated, separated adjacent-key pairs without accepting trills."""
+    candidates = []
+    for start in range(len(batches) - 7):
+        signatures = []
+        unit_beat = None
+        unit_second = None
+        previous = None
+        for pair_index in range((len(batches) - start) // 2):
+            left_batch = batches[start + 2 * pair_index]
+            right_batch = batches[start + 2 * pair_index + 1]
+            if len(left_batch.attack_ids) != 1 or len(right_batch.attack_ids) != 1:
+                break
+            left = attacks[left_batch.attack_ids[0]]
+            right = attacks[right_batch.attack_ids[0]]
+            if left.attack_id in covered_attack_ids or right.attack_id in covered_attack_ids:
+                break
+            if circular_key_distance(left.lane, right.lane) != 1:
+                break
+            beat_gap = right.beat - left.beat
+            second_gap = right.time_s - left.time_s
+            if beat_gap <= 0 or beat_gap > BASE_MAX_UNIT_BEATS or second_gap <= 0:
+                break
+            if unit_beat is None:
+                unit_beat, unit_second = beat_gap, second_gap
+            elif (
+                beat_gap != unit_beat
+                or not _same_speed(
+                    second_gap, unit_second, speed_relative_tolerance
+                )
+            ):
+                break
+            if previous is not None:
+                boundary_beat_gap = left.beat - previous.beat
+                boundary_second_gap = left.time_s - previous.time_s
+                if (
+                    boundary_beat_gap != unit_beat
+                    or not _same_speed(
+                        boundary_second_gap, unit_second, speed_relative_tolerance
+                    )
+                    or circular_key_distance(previous.lane, left.lane) <= 1
+                ):
+                    break
+            signatures.append((left.lane, right.lane))
+            previous = right
+        best_pairs = 0
+        if len(signatures) >= 4:
+            directions = tuple(
+                1 if (right - left) % 8 == 1 else -1
+                for left, right in signatures
+            )
+            if directions[0] == -directions[1]:
+                length = 2
+                while (
+                    length < len(signatures)
+                    and directions[length] == directions[length - 2]
+                    and circular_key_distance(
+                        signatures[length][0], signatures[length - 2][0]
+                    ) <= 1
+                ):
+                    length += 1
+                if length >= 4:
+                    best_pairs = length
+        for period in (2, 4):
+            minimum = 4 if period == 2 else 6
+            if len(signatures) < minimum:
+                continue
+            length = period
+            while (
+                length < len(signatures)
+                and signatures[length] == signatures[length - period]
+            ):
+                length += 1
+            if length >= minimum:
+                best_pairs = max(best_pairs, length)
+        if best_pairs:
+            candidates.append(_paired_sweep_sequence(
+                attacks, batches, start, best_pairs
+            ))
+    ordered = sorted(
+        candidates,
+        key=lambda item: (item.end_beat, item.start_beat, -item.attack_count),
+    )
+    ends = [item.end_beat for item in ordered]
+    # Candidates occupy contiguous, single-attack batches. Weighted interval
+    # scheduling maximizes covered attacks without exponential conflict search.
+    best: list[tuple[int, int, tuple[int, ...]]] = [(0, 0, ())]
+    for index, candidate in enumerate(ordered):
+        previous_count = bisect_left(ends, candidate.start_beat, 0, index)
+        previous = best[previous_count]
+        included = (
+            previous[0] + candidate.attack_count,
+            previous[1] - 1,
+            previous[2] + (index,),
+        )
+        excluded = best[-1]
+        include_quality = (included[0], included[1], tuple(
+            -item for item in included[2]
+        ))
+        exclude_quality = (excluded[0], excluded[1], tuple(
+            -item for item in excluded[2]
+        ))
+        best.append(included if include_quality > exclude_quality else excluded)
+    selected = [ordered[index] for index in best[-1][2]]
+    return tuple(sorted(
+        selected,
+        key=lambda item: (item.start_beat, item.end_beat, item.lanes_by_batch),
+    ))
+
+
 def _select_disjoint_sequences(
     sequences: list[SweepSequence],
     *,
@@ -783,9 +966,12 @@ def sweep_sequences(
     *,
     max_states: int = DEFAULT_MAX_STATES,
     speed_relative_tolerance: float = DEFAULT_SPEED_RELATIVE_TOLERANCE,
+    include_paired_sweeps: bool = False,
 ) -> tuple[SweepSequence, ...]:
     """Recognize maximal variable-width sweep families from canonical events."""
     _validate_recognition_parameters(max_states, speed_relative_tolerance)
+    if not isinstance(include_paired_sweeps, bool):
+        raise ValueError("include_paired_sweeps must be a boolean")
     attacks = button_attacks(events)
     batches = _attack_batches(attacks)
     candidates = _candidate_sequences(
@@ -795,7 +981,22 @@ def sweep_sequences(
         max_states=max_states,
         speed_relative_tolerance=speed_relative_tolerance,
     )
-    return _select_disjoint_sequences(candidates, max_states=max_states)
+    selected = _select_disjoint_sequences(candidates, max_states=max_states)
+    if not include_paired_sweeps:
+        return selected
+    covered = {
+        attack_id for sequence in selected
+        for batch in sequence.attack_ids_by_batch for attack_id in batch
+    }
+    paired = _paired_sweep_candidates(
+        attacks, batches, covered, speed_relative_tolerance
+    )
+    return tuple(sorted(
+        (*selected, *paired),
+        key=lambda sequence: (
+            sequence.start_beat, sequence.end_beat, sequence.lanes_by_batch
+        ),
+    ))
 
 
 def circular_key_distance(left: int, right: int) -> int:
@@ -848,7 +1049,24 @@ def _external_connection(
     config: SweepScoringConfig,
 ) -> float | None:
     gap = child.start_time_s - parent.end_time_s
-    if gap < -1e-9 or gap > parent.interval_seconds + 1e-9:
+    repeated_eighth_bridge = (
+        config.eighth_gap_family_bridge
+        and child.start_beat - parent.end_beat == EIGHTH_NOTE_BEATS
+        and len(parent.beats) >= 4
+        and len(child.beats) >= 4
+        and sum(width >= 2 for width in parent.widths) >= 3
+        and sum(width >= 2 for width in child.widths) >= 3
+        and parent.lanes_by_batch == child.lanes_by_batch
+        and _same_speed(
+            parent.interval_seconds,
+            child.interval_seconds,
+            config.speed_relative_tolerance,
+        )
+    )
+    if gap < -1e-9 or (
+        gap > parent.interval_seconds + 1e-9
+        and not repeated_eighth_bridge
+    ):
         return None
     double_connection = abs(gap) <= 1e-9
     speed_changed = not _same_speed(
@@ -863,7 +1081,7 @@ def _external_connection(
         for left in parent.lanes_by_batch[0]
         for right in child.lanes_by_batch[0]
     )
-    same_direction = bool(parent_directions & child_directions)
+    same_direction = bool(parent_directions & child_directions) or repeated_eighth_bridge
     fold = any(
         left == -right for left in parent_directions for right in child_directions
     ) and any(

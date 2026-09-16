@@ -15,6 +15,7 @@ from .hand_motion import (
 )
 from .sweep import (
     DEFAULT_MAX_STATES,
+    EIGHTH_NOTE_BEATS,
     ScoredSweepFamily,
     ScoredSweepGroup,
     SweepScoringConfig,
@@ -294,6 +295,7 @@ def score_sweep_burst(
     duration_s: float,
     config: SweepScoringConfig | None = None,
     max_states: int = DEFAULT_MAX_STATES,
+    include_paired_sweeps: bool = False,
     window_seconds: float = DEFAULT_WINDOW_SECONDS,
     window_count: int = DEFAULT_WINDOW_COUNT,
     window_rank_decay_exponent: float = DEFAULT_WINDOW_RANK_DECAY_EXPONENT,
@@ -414,11 +416,25 @@ def score_sweep_burst(
         events,
         max_states=max_states,
         speed_relative_tolerance=resolved.speed_relative_tolerance,
+        include_paired_sweeps=include_paired_sweeps,
     )
     scored = score_sweep_sequences(sequences, config=resolved, duration_s=duration_s)
     groups_by_id = {group.group_id: group for group in scored.groups}
     motions_by_family = {
-        family.family_id: sweep_family_hand_motion(family, scored.groups)
+        family.family_id: sweep_family_hand_motion(
+            family,
+            scored.groups,
+            respect_group_gaps=resolved.eighth_gap_family_bridge,
+        )
+        for family in scored.families
+    }
+    paired_times_by_family = {
+        family.family_id: {
+            time_s
+            for group_id in family.group_ids
+            if groups_by_id[group_id].sequence.paired_sweep
+            for time_s in groups_by_id[group_id].sequence.times_s
+        }
         for family in scored.families
     }
     solo_fast_indexes_by_group: dict[int, set[int]] = {}
@@ -485,7 +501,7 @@ def score_sweep_burst(
                     sequence.widths[index] * speed_factor
                 )
             decay = 1.0
-            if sequence.widths[index] >= 2:
+            if sequence.paired_sweep or sequence.widths[index] >= 2:
                 simple_run_length = 0
             else:
                 if (
@@ -518,7 +534,13 @@ def score_sweep_burst(
         if group.parent_group_id is None:
             continue
         parent = groups_by_id[group.parent_group_id]
-        if _same_direction_connection(parent, group):
+        repeated_eighth_bridge = (
+            resolved.eighth_gap_family_bridge
+            and group.sequence.start_beat - parent.sequence.end_beat
+            == EIGHTH_NOTE_BEATS
+            and parent.sequence.lanes_by_batch == group.sequence.lanes_by_batch
+        )
+        if _same_direction_connection(parent, group) or repeated_eighth_bridge:
             same_direction_group_ids.add(group.group_id)
             add_point(
                 group.sequence.start_time_s,
@@ -580,6 +602,10 @@ def score_sweep_burst(
                     last_hand_use[hand] = assignment.time_s
             idle_bonus = weighted_idle_distance * idle_distance_weight
             takeover_bonus = assignment.free_hand_takeover * takeover_weight
+            if assignment.time_s in paired_times_by_family[family.family_id]:
+                # Alternating hands every two notes is the paired motif itself,
+                # not an additional surprise takeover.
+                takeover_bonus = 0.0
             if (
                 takeover_same_direction_only
                 and assignment.time_s not in same_direction_start_times
