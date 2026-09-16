@@ -170,12 +170,12 @@ class SweepBurstTests(unittest.TestCase):
 
     def test_idle_speed_pressure_uses_each_hands_available_time(self):
         self.assertAlmostEqual(
-            _idle_distance_pressure(4, 0.25, 12),
-            4 * math.sqrt(4 / 3),
+            _idle_distance_pressure(4, 0.25, 10),
+            4 * math.sqrt(8 / 5),
         )
-        self.assertEqual(_idle_distance_pressure(2, 1 / 6, 12), 2)
-        self.assertEqual(_idle_distance_pressure(3, 5 / 12, 12), 3)
-        self.assertEqual(_idle_distance_pressure(0, 0, 12), 0)
+        self.assertEqual(_idle_distance_pressure(2, 0.2, 10), 2)
+        self.assertEqual(_idle_distance_pressure(3, 5 / 12, 10), 3)
+        self.assertEqual(_idle_distance_pressure(0, 0, 10), 0)
 
     def test_fast_idle_reposition_raises_motion_but_not_base(self):
         body = "2x,3,4,1x,2,3,8x,1,2,7x,8,1,6x,7,8,5x,6,7,4x,5,6,3x,4,5"
@@ -197,7 +197,7 @@ class SweepBurstTests(unittest.TestCase):
         self.assertGreater(pressured.motion_density, unpressured.motion_density)
         self.assertAlmostEqual(
             pressured.motion_density - unpressured.motion_density,
-            6 * 4 * 0.5 * (math.sqrt(4 / 3) - 1) / 2,
+            6 * 4 * 0.5 * (math.sqrt(8 / 5) - 1) / 2,
         )
 
     def test_periodic_group_handoffs_discount_only_motion(self):

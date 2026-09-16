@@ -163,9 +163,9 @@ sweep_raw = 0.6 * mean_load + 0.4 * peak
 清零，之后从 1 重新累计；换向和变速同样开始新的计数段。同向 family 接续与保持方向的
 双押换手只在切换批次局部增加 20%，不向后累乘；结构奖励按物理键数与速度计算，
 EX 的 `0.3` 只扣减基础物量，不扣减接续奖励。
-空转位移按每只手上次触键到本次触键的完整可用时间计算速度，以 180 BPM 八分音符
-移动 2 个键距，即 `12 键/秒` 为参考：
-`weighted_idle = distance * sqrt(max(1, (distance / idle_time) / 12))`。
+空转位移按每只手上次触键到本次触键的完整可用时间计算速度，以 150 BPM 八分音符
+移动 2 个键距，即 `10 键/秒` 为参考：
+`weighted_idle = distance * sqrt(max(1, (distance / idle_time) / 10))`。
 再将 `0.5 * weighted_idle + 1.0 * takeover + 2.0 * fast_jump` 作为等效物量，随后除以
 2 秒。Family 内连续简单单押 group 另以 `(hand, direction)` 建立 1 至 4 组的短周期模板；
 模板至少覆盖 6 组、重复三轮且匹配率达到 80% 时，符合模板的 group 起点运动负荷只保留
@@ -489,7 +489,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-sweep-2s-top3-identity-20260916-v46",
+            mapping_version="provisional-sweep-2s-top3-identity-20260916-v47",
         )
 
 TRANSFORMER = DefaultScoreTransformer
@@ -536,7 +536,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-sweep-2s-top3-identity-20260916-v46`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-sweep-2s-top3-identity-20260916-v47`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 
