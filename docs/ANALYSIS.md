@@ -41,7 +41,8 @@ FeatureResult 仅包含 data 和 success 两个字段，不携带单位、中间
 ## 纵连口径
 
 ```text
-sequence_strength = 主键 Tap/Hold 数 + 1.5 * 有效打断 Tap 数
+note_weight = 0.3 if is_ex else 1
+sequence_strength = sum(主键 Tap/Hold 的 note_weight) + 1.5 * sum(有效打断 Tap 的 note_weight)
 equivalent_sixteenth_bpm = 15 * (主键时间点数 - 1) / (末次主键秒数 - 首次主键秒数)
 speed_factor = (equivalent_sixteenth_bpm / 180) ^ 1.5
 weighted_strength = sequence_strength * speed_factor
@@ -64,6 +65,9 @@ jack_raw = sum(weighted_strength_(x) * rank_weight_(x),
   边界值恰好八分音符时保留。
 - 异键 Hold 不能作为打断，会结束当前键位候选。与主键同拍的其他位置物件不位于两个
   主键时间点之间，不计打断权重。
+- EX 主键 Tap/Hold 的强度权重为 0.3，EX 打断 Tap 的强度权重为 `1.5 * 0.3 = 0.45`；
+  同时带 Break 标记的 EX 也按此规则降权。物件数量、连续性、飞键数量上限和主键速度
+  仍按实际声明与时间点计算；同拍重复声明逐个使用各自的 EX 权重。
 
 速度使用主键不同时间点的实际秒数计算，因此自然包含 BPM 变化；同时重复声明增加主键
 物件权重，但不增加速度采样点。180 BPM 等效十六分的系数为 1，快慢两侧均按 1.5 次方

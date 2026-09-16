@@ -13,6 +13,7 @@ EIGHTH_NOTE_BEATS = Fraction(1, 2)
 DEFAULT_TOP_K = 5
 DEFAULT_MAX_INTERRUPTING_TAPS = 4
 INTERRUPTING_TAP_WEIGHT = 1.5
+EX_NOTE_WEIGHT = 0.3
 DEFAULT_SPEED_REFERENCE_SIXTEENTH_BPM = 180.0
 DEFAULT_SPEED_EXPONENT = 1.5
 TOP_ONE_RANK_MULTIPLIER = 1.3
@@ -31,10 +32,17 @@ class JackSequence:
     interrupting_span_beats: Fraction
     equivalent_sixteenth_bpm: float
     speed_factor: float
+    ex_anchor_count: int = 0
+    ex_interrupting_tap_count: int = 0
 
     @property
     def strength(self) -> float:
-        return self.anchor_count + INTERRUPTING_TAP_WEIGHT * self.interrupting_tap_count
+        anchors = self.anchor_count - self.ex_anchor_count + EX_NOTE_WEIGHT * self.ex_anchor_count
+        interruptions = (
+            self.interrupting_tap_count - self.ex_interrupting_tap_count
+            + EX_NOTE_WEIGHT * self.ex_interrupting_tap_count
+        )
+        return anchors + INTERRUPTING_TAP_WEIGHT * interruptions
 
     @property
     def weighted_strength(self) -> float:
@@ -75,16 +83,20 @@ def _position_sequences(
     end_time_s = None
     previous_beat = None
     anchor_count = 0
+    ex_anchor_count = 0
     anchor_time_count = 0
     anchors_since_interruption = 0
     pending_interruptions = 0
+    pending_ex_interruptions = 0
     pending_start_beat = None
     committed_interruptions = 0
+    committed_ex_interruptions = 0
     committed_interruption_span = Fraction(0)
 
     def finish() -> None:
         nonlocal start_beat, end_beat, start_time_s, end_time_s, previous_beat
         nonlocal anchor_count, anchor_time_count, anchors_since_interruption
+        nonlocal ex_anchor_count, pending_ex_interruptions, committed_ex_interruptions
         nonlocal pending_interruptions, pending_start_beat, committed_interruptions
         nonlocal committed_interruption_span
         # Simultaneous duplicate declarations remain counted, but do not by
@@ -106,10 +118,13 @@ def _position_sequences(
                 interrupting_span_beats=committed_interruption_span,
                 equivalent_sixteenth_bpm=equivalent_sixteenth_bpm,
                 speed_factor=speed_factor,
+                ex_anchor_count=ex_anchor_count,
+                ex_interrupting_tap_count=committed_ex_interruptions,
             ))
         start_beat = end_beat = previous_beat = None
         start_time_s = end_time_s = None
         anchor_count = anchor_time_count = anchors_since_interruption = 0
+        ex_anchor_count = pending_ex_interruptions = committed_ex_interruptions = 0
         pending_interruptions = committed_interruptions = 0
         pending_start_beat = None
         committed_interruption_span = Fraction(0)
@@ -128,6 +143,7 @@ def _position_sequences(
                     returned_from_interruption = False
                 else:
                     committed_interruptions += pending_interruptions
+                    committed_ex_interruptions += pending_ex_interruptions
                     committed_interruption_span += interruption_span
             if start_beat is None:
                 start_beat = beat
@@ -135,12 +151,14 @@ def _position_sequences(
             end_beat = beat
             end_time_s = time_s
             anchor_count += len(anchors)
+            ex_anchor_count += sum(bool(event.is_ex) for event in anchors)
             anchor_time_count += 1
             anchors_since_interruption = (
                 1 if returned_from_interruption
                 else anchors_since_interruption + 1
             )
             pending_interruptions = 0
+            pending_ex_interruptions = 0
             pending_start_beat = None
             previous_beat = beat
             continue
@@ -163,6 +181,7 @@ def _position_sequences(
         if pending_start_beat is None:
             pending_start_beat = beat
         pending_interruptions += len(events)
+        pending_ex_interruptions += sum(bool(event.is_ex) for event in events)
         previous_beat = beat
 
     finish()

@@ -55,11 +55,13 @@ ScoreTransformer.transform(result: AnalysisResult) -> ScoreResult
 纵连按全局拍轴寻找同键 Tap/Hold 主干。相邻外键时间点最多间隔八分音符；形成两个主键
 时间点后才允许飞键，每次飞键可在多个连续时间点包含最多四个异键普通 Tap，且从首个
 异键到返回主键不超过八分音符。回到主键后又需两个主键时间点才能再次飞出；每次飞键
-独立应用数量和时间上限。主键权重为 1，打断权重为 1.5，速度相对 180 BPM 等效十六分
+独立应用数量和时间上限。主键基础权重为 1，打断基础权重为 1.5，EX 在对应基础权重上
+乘 0.3；实际声明数量、连续性和速度不降权。速度相对 180 BPM 等效十六分
 作 1.5 次方加权。
 
 ```text
-sequence_strength = anchor_count + 1.5 * interrupting_tap_count
+note_weight = 0.3 if is_ex else 1
+sequence_strength = sum(anchor note_weight) + 1.5 * sum(interrupting Tap note_weight)
 speed_factor = (equivalent_sixteenth_bpm / 180) ^ 1.5
 rank_weight_(x) = 1.3 * 0.645 ^ (x - 1), x=1..5
 jack_raw = sum(sequence_strength_(x) * speed_factor_(x) * rank_weight_(x),
