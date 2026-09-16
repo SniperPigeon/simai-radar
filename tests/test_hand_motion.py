@@ -36,6 +36,14 @@ class HandMotionTests(unittest.TestCase):
             result.idle_reposition_distance,
         )
         self.assertEqual(
+            sum(
+                item.left_idle_reposition_distance
+                + item.right_idle_reposition_distance
+                for item in result.assignments
+            ),
+            result.idle_reposition_distance,
+        )
+        self.assertEqual(
             sum(item.free_hand_takeover for item in result.assignments),
             result.free_hand_takeovers,
         )

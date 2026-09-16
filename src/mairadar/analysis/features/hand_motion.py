@@ -21,6 +21,8 @@ class HandAssignment:
     idle_reposition_distance: int
     free_hand_takeover: int
     fast_jump_violations: int
+    left_idle_reposition_distance: int = 0
+    right_idle_reposition_distance: int = 0
 
 
 @dataclass(frozen=True)
@@ -200,6 +202,8 @@ def two_hand_motion(
                     idle_reposition_distance=left_cost[2] + right_cost[2],
                     free_hand_takeover=takeover,
                     fast_jump_violations=left_cost[3] + right_cost[3],
+                    left_idle_reposition_distance=left_cost[2],
+                    right_idle_reposition_distance=right_cost[2],
                 )
                 candidate = _MotionRecord(
                     fast_jump_violations=(

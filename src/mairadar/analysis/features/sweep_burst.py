@@ -1,4 +1,4 @@
-"""Experimental three-second sweep burst load with two-hand motion costs."""
+"""Ranked two-second sweep bursts with two-hand motion costs."""
 
 from bisect import bisect_left
 from collections import Counter
@@ -8,7 +8,11 @@ import math
 from mairadar.analysis.model import AnalysisContext, FeatureResult
 from mairadar.model import Event
 
-from .hand_motion import HandMotionResult, sweep_family_hand_motion
+from .hand_motion import (
+    REFERENCE_STEP_SECONDS,
+    HandMotionResult,
+    sweep_family_hand_motion,
+)
 from .sweep import (
     DEFAULT_MAX_STATES,
     ScoredSweepFamily,
@@ -25,6 +29,7 @@ DEFAULT_WINDOW_RANK_DECAY_EXPONENT = 0.5
 DEFAULT_IDLE_DISTANCE_WEIGHT = 0.5
 DEFAULT_TAKEOVER_WEIGHT = 1.0
 DEFAULT_FAST_JUMP_WEIGHT = 2.0
+DEFAULT_IDLE_SPEED_REFERENCE_KEYS_PER_SECOND = 1 / (2 * REFERENCE_STEP_SECONDS)
 DEFAULT_SIMPLE_RUN_FULL_ATTACKS = 16
 DEFAULT_SIMPLE_RUN_DECAY_EXPONENT = 0.5
 DEFAULT_SAME_DIRECTION_CONNECTION_BONUS = 0.2
@@ -64,6 +69,20 @@ def _same_direction_connection(
         {strand.final_direction for strand in parent.sequence.strands}
         & {strand.initial_direction for strand in child.sequence.strands}
     )
+
+
+def _idle_distance_pressure(
+    distance: int,
+    elapsed_s: float,
+    reference_keys_per_second: float,
+) -> float:
+    """Charge idle travel above the reference key-per-second movement rate."""
+    if distance == 0:
+        return 0.0
+    if elapsed_s <= 0:
+        raise ValueError("Idle hand travel requires positive elapsed time")
+    speed_ratio = distance / (elapsed_s * reference_keys_per_second)
+    return distance * math.sqrt(max(1.0, speed_ratio))
 
 
 def _simple_group_token(
@@ -176,6 +195,9 @@ def score_sweep_burst(
     idle_distance_weight: float = DEFAULT_IDLE_DISTANCE_WEIGHT,
     takeover_weight: float = DEFAULT_TAKEOVER_WEIGHT,
     fast_jump_weight: float = DEFAULT_FAST_JUMP_WEIGHT,
+    idle_speed_reference_keys_per_second: float = (
+        DEFAULT_IDLE_SPEED_REFERENCE_KEYS_PER_SECOND
+    ),
     simple_run_full_attacks: int = DEFAULT_SIMPLE_RUN_FULL_ATTACKS,
     simple_run_decay_exponent: float = DEFAULT_SIMPLE_RUN_DECAY_EXPONENT,
     same_direction_connection_bonus: float = (
@@ -192,6 +214,7 @@ def score_sweep_burst(
         "idle_distance_weight": idle_distance_weight,
         "takeover_weight": takeover_weight,
         "fast_jump_weight": fast_jump_weight,
+        "idle_speed_reference_keys_per_second": idle_speed_reference_keys_per_second,
         "simple_run_decay_exponent": simple_run_decay_exponent,
         "same_direction_connection_bonus": same_direction_connection_bonus,
         "same_direction_handoff_bonus": same_direction_handoff_bonus,
@@ -203,11 +226,22 @@ def score_sweep_burst(
             or not isinstance(value, (int, float))
             or not math.isfinite(value)
             or value < 0
-            or (name in {"duration_s", "window_seconds"} and value <= 0)
+            or (
+                name in {
+                    "duration_s",
+                    "window_seconds",
+                    "idle_speed_reference_keys_per_second",
+                }
+                and value <= 0
+            )
         ):
             qualifier = (
                 "positive"
-                if name in {"duration_s", "window_seconds"}
+                if name in {
+                    "duration_s",
+                    "window_seconds",
+                    "idle_speed_reference_keys_per_second",
+                }
                 else "non-negative"
             )
             raise ValueError(f"{name} must be a {qualifier} finite number")
@@ -248,7 +282,7 @@ def score_sweep_burst(
         row[1] += motion
         row[2] += raw_motion
 
-    first_batch_base: dict[int, float] = {}
+    first_batch_physical_base: dict[int, float] = {}
     groups_by_id = {group.group_id: group for group in scored.groups}
     for group in scored.groups:
         sequence = group.sequence
@@ -268,7 +302,9 @@ def score_sweep_burst(
             ) ** resolved.speed_exponent
             raw_base = note_weight * speed_factor
             if index == 0:
-                first_batch_base[group.group_id] = raw_base
+                first_batch_physical_base[group.group_id] = (
+                    sequence.widths[index] * speed_factor
+                )
             decay = 1.0
             if sequence.widths[index] >= 2:
                 simple_run_length = 0
@@ -287,7 +323,11 @@ def score_sweep_burst(
                 index in sequence.double_handoff_indexes
                 and index not in sequence.direction_switch_indexes
             ):
-                base += raw_base * same_direction_handoff_bonus
+                base += (
+                    sequence.widths[index]
+                    * speed_factor
+                    * same_direction_handoff_bonus
+                )
             add_point(time_s, base=base)
 
     same_direction_group_ids = set()
@@ -300,13 +340,14 @@ def score_sweep_burst(
             add_point(
                 group.sequence.start_time_s,
                 base=(
-                    first_batch_base[group.group_id]
+                    first_batch_physical_base[group.group_id]
                     * same_direction_connection_bonus
                 ),
             )
 
     for family in scored.families:
         motion = sweep_family_hand_motion(family, scored.groups)
+        last_hand_use: dict[str, float | None] = {"L": None, "R": None}
         regular_group_ids = _regular_pattern_group_ids(
             family,
             groups_by_id,
@@ -318,8 +359,32 @@ def score_sweep_burst(
             for group_id in regular_group_ids
         }
         for assignment in motion.assignments:
+            weighted_idle_distance = 0.0
+            for hand, lanes, distance in (
+                (
+                    "L",
+                    assignment.left_lanes,
+                    assignment.left_idle_reposition_distance,
+                ),
+                (
+                    "R",
+                    assignment.right_lanes,
+                    assignment.right_idle_reposition_distance,
+                ),
+            ):
+                if distance:
+                    previous_time = last_hand_use[hand]
+                    if previous_time is None:
+                        raise ValueError("Idle displacement has no prior hand use")
+                    weighted_idle_distance += _idle_distance_pressure(
+                        distance,
+                        assignment.time_s - previous_time,
+                        idle_speed_reference_keys_per_second,
+                    )
+                if lanes:
+                    last_hand_use[hand] = assignment.time_s
             raw_bonus = (
-                assignment.idle_reposition_distance * idle_distance_weight
+                weighted_idle_distance * idle_distance_weight
                 + assignment.free_hand_takeover * takeover_weight
                 + assignment.fast_jump_violations * fast_jump_weight
             )
@@ -418,7 +483,7 @@ def score_sweep_burst(
 
 @dataclass(frozen=True)
 class SweepBurstAnalyzer:
-    """Expose the experimental strongest three-second sweep burst as raw."""
+    """Expose the ranked two-second sweep burst aggregate as raw."""
 
     def analyze(self, context: AnalysisContext) -> FeatureResult:
         if context.duration_s <= 0:

@@ -153,7 +153,7 @@ sweep_raw = 0.6 * mean_load + 0.4 * peak
 快速跳跃次数、自由手接管次数、双手总位移依次最小化。Family 可通过
 `sweep_family_hand_motion(family, groups)` 直接计算，返回 active/idle 位移、接管、违规、
 每秒和每物件位移及逐批手部分配。Family 起点前的手位未知，因此每只手第一次参与不计
-初始放置距离；一旦参与，之后所有空转移位均计入。该指标暂只用于实验，不进入 sweep raw。
+初始放置距离；一旦参与，之后所有空转移位均计入。默认 SweepBurst 以此分配双手动作。
 
 当前默认 `score_sweep_burst` / `SweepBurstAnalyzer` 取全谱三个互不重叠的 2 秒窗口，按
 `1/sqrt(k)` 排名衰减后除以权重和，保持每秒强度量纲。窗口基础负荷
@@ -161,8 +161,11 @@ sweep_raw = 0.6 * mean_load + 0.4 * peak
 变速或接续的累积倍率。全程单押、无变速、无换向的单一 sequence 前 16 个攻击保持
 全权，第 `n` 个超额攻击按 `1/sqrt(n+1)` 衰减。双押批次自身保持全权并将连续单押计数
 清零，之后从 1 重新累计；换向和变速同样开始新的计数段。同向 family 接续与保持方向的
-双押换手只在切换批次局部增加 20%，不向后累乘。
-另加入 `0.5 * idle_distance + 1.0 * takeover + 2.0 * fast_jump` 作为等效物量，随后除以
+双押换手只在切换批次局部增加 20%，不向后累乘；结构奖励按物理键数与速度计算，
+EX 的 `0.3` 只扣减基础物量，不扣减接续奖励。
+空转位移按每只手上次触键到本次触键的可用时间计算速度，以 180 BPM 八分音符的
+`6 键/秒` 为参考：`weighted_idle = distance * sqrt(max(1, (distance / idle_time) / 6))`。
+再将 `0.5 * weighted_idle + 1.0 * takeover + 2.0 * fast_jump` 作为等效物量，随后除以
 2 秒。Family 内连续简单单押 group 另以 `(hand, direction)` 建立 1 至 4 组的短周期模板；
 模板至少覆盖 6 组、重复三轮且匹配率达到 80% 时，符合模板的 group 起点运动负荷只保留
 10%，反手或其他不匹配 group 保持全权。双押、换向和变速 group 切断模板；同向 family
@@ -485,7 +488,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-sweep-2s-top3-identity-20260916-v44",
+            mapping_version="provisional-sweep-2s-top3-identity-20260916-v45",
         )
 
 TRANSFORMER = DefaultScoreTransformer
@@ -532,7 +535,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-sweep-2s-top3-identity-20260916-v44`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-sweep-2s-top3-identity-20260916-v45`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 
