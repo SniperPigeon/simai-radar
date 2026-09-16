@@ -293,6 +293,76 @@ class SweepBurstTests(unittest.TestCase):
         ) / sum(weights)
         self.assertAlmostEqual(result.value, expected)
 
+    def test_alternating_template_reduces_idle_but_preserves_takeovers(self):
+        body = ",".join(("1,2,3,4", "8,7,6,5") * 4)
+        parsed = parse_chart(f"(180){{16}}{body},E")
+        common = {
+            "duration_s": parsed.chart_end_time_s,
+            "window_seconds": 3,
+            "window_count": 1,
+            "simple_run_decay_exponent": 0,
+            "same_direction_connection_bonus": 0,
+            "same_direction_handoff_bonus": 0,
+        }
+
+        def motion(idle_multiplier, takeover_weight):
+            return score_sweep_burst(
+                tuple(parsed.events),
+                alternating_idle_multiplier=idle_multiplier,
+                takeover_weight=takeover_weight,
+                **common,
+            )
+
+        full = motion(1.0, 1.0)
+        reduced = motion(0.2, 1.0)
+        full_without_takeovers = motion(1.0, 0.0)
+        reduced_without_takeovers = motion(0.2, 0.0)
+        self.assertAlmostEqual(full.base_density, reduced.base_density)
+        self.assertLess(reduced.motion_density, full.motion_density)
+        self.assertAlmostEqual(
+            full.motion_density - full_without_takeovers.motion_density,
+            reduced.motion_density - reduced_without_takeovers.motion_density,
+        )
+
+    def test_solo_fast_template_replaces_per_note_long_run_decay(self):
+        body = ",".join("12345678123456781234")
+        parsed = parse_chart(f"(180){{32}}{body},E")
+        common = {
+            "duration_s": parsed.chart_end_time_s,
+            "window_seconds": 2,
+            "window_count": 1,
+            "simple_run_decay_exponent": 0,
+            "alternating_idle_multiplier": 0.2,
+            "idle_distance_weight": 0,
+            "takeover_weight": 0,
+            "fast_jump_weight": 0,
+        }
+        no_template = score_sweep_burst(tuple(parsed.events), **common)
+        solo_template = score_sweep_burst(
+            tuple(parsed.events),
+            solo_fast_base_multiplier=0.85,
+            solo_fast_motion_multiplier=0.5,
+            **common,
+        )
+        self.assertAlmostEqual(
+            solo_template.base_density,
+            no_template.base_density * 0.85,
+        )
+
+        slower = parse_chart(f"(180){{16}}{body},E")
+        slower_common = dict(common, duration_s=slower.chart_end_time_s)
+        slower_plain = score_sweep_burst(tuple(slower.events), **slower_common)
+        slower_template = score_sweep_burst(
+            tuple(slower.events),
+            solo_fast_base_multiplier=0.85,
+            solo_fast_motion_multiplier=0.5,
+            **slower_common,
+        )
+        self.assertAlmostEqual(
+            slower_template.base_density,
+            slower_plain.base_density,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

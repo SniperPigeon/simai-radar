@@ -173,6 +173,14 @@ EX 的 `0.3` 只扣减基础物量，不扣减接续奖励。
 接续 group 可参与模板判断但运动负荷受保护、不应用折扣，双押 handoff 同样保持全权。
 旧版 `SweepAnalyzer` 仍可由调用方显式注入以作对照。
 
+消融参数可关闭长单押逐项衰减（`simple_run_decay_exponent=0`），改为两类独立模板。
+`alternating_idle_multiplier` 启用真正左右交替的两相 group 模板，只缩放匹配组起点的
+空转位移项，接管和高速跳跃项保持全权；该参数启用时不再叠加旧的整体运动模板折扣。
+连续至少 16 批、单手、单押、同方向，且单位间隔不慢于 180 BPM 24 分音符的 section
+可用 `solo_fast_base_multiplier` 和 `solo_fast_motion_multiplier` 分别缩放基础与运动项。
+这些参数默认关闭，不改变当前 CLI 算法；首轮消融取交替空转 `0.2`、单手快扫基础 `0.85`、
+运动 `0.5`。
+
 ## 整体物量口径
 
 `NoteDensityAnalyzer` 使用从谱面时间原点开始、互不重叠的 1.5 秒窗口。末窗按完整

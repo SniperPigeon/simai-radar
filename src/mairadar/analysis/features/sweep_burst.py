@@ -9,6 +9,7 @@ from mairadar.analysis.model import AnalysisContext, FeatureResult
 from mairadar.model import Event
 
 from .hand_motion import (
+    HandAssignment,
     HandMotionResult,
     sweep_family_hand_motion,
 )
@@ -36,6 +37,8 @@ DEFAULT_SIMPLE_RUN_DECAY_EXPONENT = 0.5
 DEFAULT_SAME_DIRECTION_CONNECTION_BONUS = 0.2
 DEFAULT_SAME_DIRECTION_HANDOFF_BONUS = 0.2
 DEFAULT_PATTERN_MOTION_FLOOR = 0.1
+DEFAULT_SOLO_FAST_MIN_BATCHES = 16
+DEFAULT_SOLO_FAST_MAX_INTERVAL_SECONDS = 1 / 18  # 180 BPM twenty-fourth.
 PATTERN_MIN_GROUPS = 6
 PATTERN_MAX_PERIOD = 4
 PATTERN_MIN_MATCH_RATIO = 0.8
@@ -184,6 +187,102 @@ def _regular_pattern_group_ids(
     return regular - protected_group_ids
 
 
+def _mark_alternating_segment(
+    segment: list[tuple[int, tuple[str, int]]],
+) -> set[int]:
+    """Find a two-phase template whose hands actually alternate."""
+    if len(segment) < PATTERN_MIN_GROUPS:
+        return set()
+    template = tuple(
+        Counter(
+            token for index, (_, token) in enumerate(segment)
+            if index % 2 == phase
+        ).most_common(1)[0][0]
+        for phase in range(2)
+    )
+    if template[0][0] == template[1][0]:
+        return set()
+    matched = {
+        group_id
+        for index, (group_id, token) in enumerate(segment)
+        if token == template[index % 2]
+    }
+    return matched if len(matched) / len(segment) >= PATTERN_MIN_MATCH_RATIO else set()
+
+
+def _alternating_pattern_group_ids(
+    family: ScoredSweepFamily,
+    groups_by_id: dict[int, ScoredSweepGroup],
+    motion: HandMotionResult,
+    protected_group_ids: set[int],
+) -> set[int]:
+    alternating = set()
+    segment: list[tuple[int, tuple[str, int]]] = []
+    members = sorted(
+        (groups_by_id[group_id] for group_id in family.group_ids),
+        key=lambda group: group.sequence.start_time_s,
+    )
+    for group in members:
+        token = _simple_group_token(group, motion)
+        if token is None:
+            alternating.update(_mark_alternating_segment(segment))
+            segment = []
+        else:
+            segment.append((group.group_id, token))
+    alternating.update(_mark_alternating_segment(segment))
+    return alternating - protected_group_ids
+
+
+def _solo_fast_indexes(
+    group: ScoredSweepGroup,
+    assignments_by_time: dict[float, HandAssignment],
+    *,
+    minimum_batches: int,
+    maximum_interval_seconds: float,
+) -> set[int]:
+    """Mark long, fast, uninterrupted single-hand directional sections."""
+    sequence = group.sequence
+    speed_by_batch = (
+        sequence.unit_intervals_seconds[0],
+        *sequence.unit_intervals_seconds,
+    )
+    switches = set(sequence.speed_switch_indexes) | set(
+        sequence.direction_switch_indexes
+    )
+    marked: set[int] = set()
+    run: list[int] = []
+    run_hand: str | None = None
+
+    def finish() -> None:
+        if len(run) >= minimum_batches:
+            marked.update(run)
+
+    for index, time_s in enumerate(sequence.times_s):
+        if index in switches:
+            finish()
+            run = []
+            run_hand = None
+        assignment = assignments_by_time.get(time_s)
+        hand = None
+        if assignment is not None and sequence.widths[index] == 1:
+            if assignment.left_lanes and not assignment.right_lanes:
+                hand = "L"
+            elif assignment.right_lanes and not assignment.left_lanes:
+                hand = "R"
+        if hand is None or speed_by_batch[index] > maximum_interval_seconds:
+            finish()
+            run = []
+            run_hand = None
+            continue
+        if run and hand != run_hand:
+            finish()
+            run = []
+        run.append(index)
+        run_hand = hand
+    finish()
+    return marked
+
+
 def score_sweep_burst(
     events: tuple[Event, ...],
     *,
@@ -206,6 +305,11 @@ def score_sweep_burst(
     ),
     same_direction_handoff_bonus: float = DEFAULT_SAME_DIRECTION_HANDOFF_BONUS,
     pattern_motion_floor: float = DEFAULT_PATTERN_MOTION_FLOOR,
+    alternating_idle_multiplier: float | None = None,
+    solo_fast_base_multiplier: float = 1.0,
+    solo_fast_motion_multiplier: float = 1.0,
+    solo_fast_min_batches: int = DEFAULT_SOLO_FAST_MIN_BATCHES,
+    solo_fast_max_interval_seconds: float = DEFAULT_SOLO_FAST_MAX_INTERVAL_SECONDS,
 ) -> SweepBurstScore:
     """Return the strongest fixed window without family multiplier carry-over."""
     numeric = {
@@ -220,6 +324,9 @@ def score_sweep_burst(
         "same_direction_connection_bonus": same_direction_connection_bonus,
         "same_direction_handoff_bonus": same_direction_handoff_bonus,
         "pattern_motion_floor": pattern_motion_floor,
+        "solo_fast_base_multiplier": solo_fast_base_multiplier,
+        "solo_fast_motion_multiplier": solo_fast_motion_multiplier,
+        "solo_fast_max_interval_seconds": solo_fast_max_interval_seconds,
     }
     for name, value in numeric.items():
         if (
@@ -232,6 +339,7 @@ def score_sweep_burst(
                     "duration_s",
                     "window_seconds",
                     "idle_speed_reference_keys_per_second",
+                    "solo_fast_max_interval_seconds",
                 }
                 and value <= 0
             )
@@ -242,6 +350,7 @@ def score_sweep_burst(
                     "duration_s",
                     "window_seconds",
                     "idle_speed_reference_keys_per_second",
+                    "solo_fast_max_interval_seconds",
                 }
                 else "non-negative"
             )
@@ -260,6 +369,21 @@ def score_sweep_burst(
         raise ValueError("window_count must be a positive integer")
     if pattern_motion_floor > 1:
         raise ValueError("pattern_motion_floor must be at most one")
+    if alternating_idle_multiplier is not None and (
+        isinstance(alternating_idle_multiplier, bool)
+        or not isinstance(alternating_idle_multiplier, (int, float))
+        or not math.isfinite(alternating_idle_multiplier)
+        or not 0 <= alternating_idle_multiplier <= 1
+    ):
+        raise ValueError("alternating_idle_multiplier must be in [0, 1]")
+    if solo_fast_base_multiplier > 1 or solo_fast_motion_multiplier > 1:
+        raise ValueError("solo fast multipliers must be at most one")
+    if (
+        isinstance(solo_fast_min_batches, bool)
+        or not isinstance(solo_fast_min_batches, int)
+        or solo_fast_min_batches <= 0
+    ):
+        raise ValueError("solo_fast_min_batches must be a positive integer")
 
     resolved = replace(config or SweepScoringConfig(), chord_note_multiplier=1.0)
     resolved.validate()
@@ -269,6 +393,31 @@ def score_sweep_burst(
         speed_relative_tolerance=resolved.speed_relative_tolerance,
     )
     scored = score_sweep_sequences(sequences, config=resolved, duration_s=duration_s)
+    groups_by_id = {group.group_id: group for group in scored.groups}
+    motions_by_family = {
+        family.family_id: sweep_family_hand_motion(family, scored.groups)
+        for family in scored.families
+    }
+    solo_fast_indexes_by_group: dict[int, set[int]] = {}
+    solo_fast_times_by_family: dict[int, set[float]] = {}
+    if solo_fast_base_multiplier < 1 or solo_fast_motion_multiplier < 1:
+        for family in scored.families:
+            assignments = {
+                item.time_s: item
+                for item in motions_by_family[family.family_id].assignments
+            }
+            family_times: set[float] = set()
+            for group_id in family.group_ids:
+                group = groups_by_id[group_id]
+                indexes = _solo_fast_indexes(
+                    group,
+                    assignments,
+                    minimum_batches=solo_fast_min_batches,
+                    maximum_interval_seconds=solo_fast_max_interval_seconds,
+                )
+                solo_fast_indexes_by_group[group_id] = indexes
+                family_times.update(group.sequence.times_s[index] for index in indexes)
+            solo_fast_times_by_family[family.family_id] = family_times
 
     points: dict[float, list[float]] = {}
 
@@ -284,7 +433,6 @@ def score_sweep_burst(
         row[2] += raw_motion
 
     first_batch_physical_base: dict[int, float] = {}
-    groups_by_id = {group.group_id: group for group in scored.groups}
     for group in scored.groups:
         sequence = group.sequence
         speed_by_batch = (
@@ -320,6 +468,8 @@ def score_sweep_burst(
                     excess_rank = simple_run_length - simple_run_full_attacks + 1
                     decay = excess_rank ** -simple_run_decay_exponent
             base = raw_base * decay
+            if index in solo_fast_indexes_by_group.get(group.group_id, ()):
+                base *= solo_fast_base_multiplier
             if (
                 index in sequence.double_handoff_indexes
                 and index not in sequence.direction_switch_indexes
@@ -347,18 +497,26 @@ def score_sweep_burst(
             )
 
     for family in scored.families:
-        motion = sweep_family_hand_motion(family, scored.groups)
+        motion = motions_by_family[family.family_id]
         last_hand_use: dict[str, float | None] = {"L": None, "R": None}
-        regular_group_ids = _regular_pattern_group_ids(
-            family,
-            groups_by_id,
-            motion,
-            same_direction_group_ids,
-        )
-        regular_start_times = {
-            groups_by_id[group_id].sequence.start_time_s
-            for group_id in regular_group_ids
-        }
+        if alternating_idle_multiplier is None:
+            regular_group_ids = _regular_pattern_group_ids(
+                family, groups_by_id, motion, same_direction_group_ids,
+            )
+            regular_start_times = {
+                groups_by_id[group_id].sequence.start_time_s
+                for group_id in regular_group_ids
+            }
+            alternating_start_times: set[float] = set()
+        else:
+            alternating_group_ids = _alternating_pattern_group_ids(
+                family, groups_by_id, motion, same_direction_group_ids,
+            )
+            alternating_start_times = {
+                groups_by_id[group_id].sequence.start_time_s
+                for group_id in alternating_group_ids
+            }
+            regular_start_times = set()
         for assignment in motion.assignments:
             weighted_idle_distance = 0.0
             for hand, lanes, distance in (
@@ -384,20 +542,27 @@ def score_sweep_burst(
                     )
                 if lanes:
                     last_hand_use[hand] = assignment.time_s
-            raw_bonus = (
-                weighted_idle_distance * idle_distance_weight
-                + assignment.free_hand_takeover * takeover_weight
+            idle_bonus = weighted_idle_distance * idle_distance_weight
+            other_bonus = (
+                assignment.free_hand_takeover * takeover_weight
                 + assignment.fast_jump_violations * fast_jump_weight
             )
+            raw_bonus = idle_bonus + other_bonus
             if raw_bonus:
-                factor = (
-                    pattern_motion_floor
-                    if assignment.time_s in regular_start_times
-                    else 1.0
+                adjusted_bonus = (
+                    idle_bonus * alternating_idle_multiplier + other_bonus
+                    if assignment.time_s in alternating_start_times
+                    else raw_bonus
                 )
+                if assignment.time_s in regular_start_times:
+                    adjusted_bonus *= pattern_motion_floor
+                if assignment.time_s in solo_fast_times_by_family.get(
+                    family.family_id, ()
+                ):
+                    adjusted_bonus *= solo_fast_motion_multiplier
                 add_point(
                     assignment.time_s,
-                    motion=raw_bonus * factor,
+                    motion=adjusted_bonus,
                     raw_motion=raw_bonus,
                 )
 
