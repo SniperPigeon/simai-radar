@@ -20,6 +20,10 @@ DEFAULT_WINDOW_SECONDS = 3.0
 DEFAULT_IDLE_DISTANCE_WEIGHT = 0.5
 DEFAULT_TAKEOVER_WEIGHT = 1.0
 DEFAULT_FAST_JUMP_WEIGHT = 2.0
+DEFAULT_SIMPLE_RUN_FULL_ATTACKS = 16
+DEFAULT_SIMPLE_RUN_DECAY_EXPONENT = 0.5
+DEFAULT_SAME_DIRECTION_CONNECTION_BONUS = 0.2
+DEFAULT_SAME_DIRECTION_HANDOFF_BONUS = 0.2
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,12 @@ def score_sweep_burst(
     idle_distance_weight: float = DEFAULT_IDLE_DISTANCE_WEIGHT,
     takeover_weight: float = DEFAULT_TAKEOVER_WEIGHT,
     fast_jump_weight: float = DEFAULT_FAST_JUMP_WEIGHT,
+    simple_run_full_attacks: int = DEFAULT_SIMPLE_RUN_FULL_ATTACKS,
+    simple_run_decay_exponent: float = DEFAULT_SIMPLE_RUN_DECAY_EXPONENT,
+    same_direction_connection_bonus: float = (
+        DEFAULT_SAME_DIRECTION_CONNECTION_BONUS
+    ),
+    same_direction_handoff_bonus: float = DEFAULT_SAME_DIRECTION_HANDOFF_BONUS,
 ) -> SweepBurstScore:
     """Return the strongest fixed window without family multiplier carry-over."""
     numeric = {
@@ -49,6 +59,9 @@ def score_sweep_burst(
         "idle_distance_weight": idle_distance_weight,
         "takeover_weight": takeover_weight,
         "fast_jump_weight": fast_jump_weight,
+        "simple_run_decay_exponent": simple_run_decay_exponent,
+        "same_direction_connection_bonus": same_direction_connection_bonus,
+        "same_direction_handoff_bonus": same_direction_handoff_bonus,
     }
     for name, value in numeric.items():
         if (
@@ -64,6 +77,12 @@ def score_sweep_burst(
                 else "non-negative"
             )
             raise ValueError(f"{name} must be a {qualifier} finite number")
+    if (
+        isinstance(simple_run_full_attacks, bool)
+        or not isinstance(simple_run_full_attacks, int)
+        or simple_run_full_attacks <= 0
+    ):
+        raise ValueError("simple_run_full_attacks must be a positive integer")
 
     resolved = replace(config or SweepScoringConfig(), chord_note_multiplier=1.0)
     resolved.validate()
@@ -81,11 +100,19 @@ def score_sweep_burst(
         row[0] += base
         row[1] += motion
 
+    first_batch_base: dict[int, float] = {}
+    groups_by_id = {group.group_id: group for group in scored.groups}
     for group in scored.groups:
         sequence = group.sequence
         speed_by_batch = (
             sequence.unit_intervals_seconds[0],
             *sequence.unit_intervals_seconds,
+        )
+        simple_uninterrupted_run = (
+            len(sequence.times_s) > simple_run_full_attacks
+            and all(width == 1 for width in sequence.widths)
+            and not sequence.speed_switch_indexes
+            and not sequence.direction_switch_indexes
         )
         for index, time_s in enumerate(sequence.times_s):
             note_weight = (
@@ -96,7 +123,39 @@ def score_sweep_burst(
             speed_factor = (
                 resolved.reference_interval_seconds / speed_by_batch[index]
             ) ** resolved.speed_exponent
-            add_point(time_s, base=note_weight * speed_factor)
+            raw_base = note_weight * speed_factor
+            if index == 0:
+                first_batch_base[group.group_id] = raw_base
+            decay = 1.0
+            if simple_uninterrupted_run and index >= simple_run_full_attacks:
+                excess_rank = index - simple_run_full_attacks + 2
+                decay = excess_rank ** -simple_run_decay_exponent
+            base = raw_base * decay
+            if (
+                index in sequence.double_handoff_indexes
+                and index not in sequence.direction_switch_indexes
+            ):
+                base += raw_base * same_direction_handoff_bonus
+            add_point(time_s, base=base)
+
+    for group in scored.groups:
+        if group.parent_group_id is None:
+            continue
+        parent = groups_by_id[group.parent_group_id]
+        parent_directions = {
+            strand.final_direction for strand in parent.sequence.strands
+        }
+        child_directions = {
+            strand.initial_direction for strand in group.sequence.strands
+        }
+        if parent_directions & child_directions:
+            add_point(
+                group.sequence.start_time_s,
+                base=(
+                    first_batch_base[group.group_id]
+                    * same_direction_connection_bonus
+                ),
+            )
 
     for family in scored.families:
         motion = sweep_family_hand_motion(family, scored.groups)

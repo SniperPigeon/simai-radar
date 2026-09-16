@@ -157,9 +157,11 @@ sweep_raw = 0.6 * mean_load + 0.4 * peak
 
 实验 API `score_sweep_burst` / `SweepBurstAnalyzer` 取全谱最高固定 3 秒窗口。窗口基础负荷
 只保留普通/EX 物件权重与速度平方根系数，双押倍率固定为 1.0，不继承 family、折返、
-变速或接续的累积倍率；另加入 `0.5 * idle_distance + 1.0 * takeover + 2.0 * fast_jump`
-作为等效物量，最后除以 3 秒。它可通过注入 `ChartAnalyzer` 做独立实验，不替换默认
-`SweepAnalyzer`。
+变速或接续的累积倍率。全程单押、无变速、无换向的单一 sequence 前 16 个攻击保持
+全权，第 `n` 个超额攻击按 `1/sqrt(n+1)` 衰减；sequence 内只要出现一次双押便完全取消
+该衰减。同向 family 接续与保持方向的双押换手只在切换批次局部增加 20%，不向后累乘。
+另加入 `0.5 * idle_distance + 1.0 * takeover + 2.0 * fast_jump` 作为等效物量，最后除以
+3 秒。它可通过注入 `ChartAnalyzer` 做独立实验，不替换默认 `SweepAnalyzer`。
 
 ## 整体物量口径
 
