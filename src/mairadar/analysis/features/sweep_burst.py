@@ -296,6 +296,8 @@ def score_sweep_burst(
     config: SweepScoringConfig | None = None,
     max_states: int = DEFAULT_MAX_STATES,
     include_paired_sweeps: bool = False,
+    strict_opposite_pairs: bool = False,
+    paired_max_interval_seconds: float | None = None,
     window_seconds: float = DEFAULT_WINDOW_SECONDS,
     window_count: int = DEFAULT_WINDOW_COUNT,
     window_rank_decay_exponent: float = DEFAULT_WINDOW_RANK_DECAY_EXPONENT,
@@ -417,6 +419,8 @@ def score_sweep_burst(
         max_states=max_states,
         speed_relative_tolerance=resolved.speed_relative_tolerance,
         include_paired_sweeps=include_paired_sweeps,
+        strict_opposite_pairs=strict_opposite_pairs,
+        paired_max_interval_seconds=paired_max_interval_seconds,
     )
     scored = score_sweep_sequences(sequences, config=resolved, duration_s=duration_s)
     groups_by_id = {group.group_id: group for group in scored.groups}

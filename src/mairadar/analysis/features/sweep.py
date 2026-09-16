@@ -797,6 +797,8 @@ def _paired_sweep_candidates(
     batches: tuple[_AttackBatch, ...],
     covered_attack_ids: set[int],
     speed_relative_tolerance: float,
+    strict_opposite_pairs: bool,
+    max_interval_seconds: float | None,
 ) -> tuple[SweepSequence, ...]:
     """Find repeated, separated adjacent-key pairs without accepting trills."""
     candidates = []
@@ -873,9 +875,46 @@ def _paired_sweep_candidates(
             if length >= minimum:
                 best_pairs = max(best_pairs, length)
         if best_pairs:
-            candidates.append(_paired_sweep_sequence(
+            candidate = _paired_sweep_sequence(
                 attacks, batches, start, best_pairs
-            ))
+            )
+            if max_interval_seconds is not None and (
+                candidate.interval_seconds > max_interval_seconds
+            ):
+                continue
+            if strict_opposite_pairs:
+                directions = tuple(
+                    1 if (candidate.lanes_by_batch[index + 1][0]
+                          - candidate.lanes_by_batch[index][0]) % 8 == 1
+                    else -1
+                    for index in range(0, len(candidate.lanes_by_batch), 2)
+                )
+                if any(
+                    left != -right
+                    for left, right in zip(directions, directions[1:])
+                ):
+                    continue
+                # A note stream cannot prove intent, but reject candidates
+                # whose best physical assignment cannot sustain two-note
+                # same-hand pairs alternating between the hands.
+                from .hand_motion import two_hand_motion
+
+                assignment = two_hand_motion(
+                    candidate.times_s, candidate.lanes_by_batch
+                )
+                hands = tuple(
+                    "L" if item.left_lanes else "R"
+                    for item in assignment.assignments
+                )
+                if assignment.fast_jump_violations or any(
+                    hands[index] != hands[index + 1]
+                    for index in range(0, len(hands), 2)
+                ) or any(
+                    hands[index] == hands[index + 2]
+                    for index in range(0, len(hands) - 2, 2)
+                ):
+                    continue
+            candidates.append(candidate)
     ordered = sorted(
         candidates,
         key=lambda item: (item.end_beat, item.start_beat, -item.attack_count),
@@ -978,11 +1017,25 @@ def sweep_sequences(
     max_states: int = DEFAULT_MAX_STATES,
     speed_relative_tolerance: float = DEFAULT_SPEED_RELATIVE_TOLERANCE,
     include_paired_sweeps: bool = False,
+    strict_opposite_pairs: bool = False,
+    paired_max_interval_seconds: float | None = None,
 ) -> tuple[SweepSequence, ...]:
     """Recognize maximal variable-width sweep families from canonical events."""
     _validate_recognition_parameters(max_states, speed_relative_tolerance)
     if not isinstance(include_paired_sweeps, bool):
         raise ValueError("include_paired_sweeps must be a boolean")
+    if not isinstance(strict_opposite_pairs, bool):
+        raise ValueError("strict_opposite_pairs must be a boolean")
+    if strict_opposite_pairs and not include_paired_sweeps:
+        raise ValueError("strict_opposite_pairs requires include_paired_sweeps")
+    if paired_max_interval_seconds is not None and (
+        isinstance(paired_max_interval_seconds, bool)
+        or not isinstance(paired_max_interval_seconds, (int, float))
+        or not math.isfinite(paired_max_interval_seconds)
+        or paired_max_interval_seconds <= 0
+        or not include_paired_sweeps
+    ):
+        raise ValueError("paired_max_interval_seconds requires a positive opt-in value")
     attacks = button_attacks(events)
     batches = _attack_batches(attacks)
     candidates = _candidate_sequences(
@@ -1000,7 +1053,12 @@ def sweep_sequences(
         for batch in sequence.attack_ids_by_batch for attack_id in batch
     }
     paired = _paired_sweep_candidates(
-        attacks, batches, covered, speed_relative_tolerance
+        attacks,
+        batches,
+        covered,
+        speed_relative_tolerance,
+        strict_opposite_pairs,
+        paired_max_interval_seconds,
     )
     return tuple(sorted(
         (*selected, *paired),

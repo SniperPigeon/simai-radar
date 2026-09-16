@@ -177,6 +177,43 @@ class SweepTests(unittest.TestCase):
             16,
         )
 
+    def test_strict_paired_sweeps_need_opposite_direction_and_feasible_hands(self):
+        positive = events(
+            "(180){32}2,3,6,5,2,3,7,6,3,4,7,6,3,4,8,7,E"
+        )
+        strict = sweep_sequences(
+            positive,
+            include_paired_sweeps=True,
+            strict_opposite_pairs=True,
+            paired_max_interval_seconds=1 / 12,
+        )
+        self.assertEqual(sum(s.attack_count for s in strict if s.paired_sweep), 16)
+
+        same_direction = events(
+            "(168){16}2,3,8,1,6,7,4,5,2,3,8,1,6,7,E"
+        )
+        self.assertFalse(any(s.paired_sweep for s in sweep_sequences(
+            same_direction,
+            include_paired_sweeps=True,
+            strict_opposite_pairs=True,
+        )))
+
+        scattered = events(
+            "(163){16}4,5,2,1,3,4,1,8,4,5,8,7,5,6,E"
+        )
+        # Hand feasibility alone cannot disambiguate this pattern.
+        self.assertTrue(any(s.paired_sweep for s in sweep_sequences(
+            scattered,
+            include_paired_sweeps=True,
+            strict_opposite_pairs=True,
+        )))
+        self.assertFalse(any(s.paired_sweep for s in sweep_sequences(
+            scattered,
+            include_paired_sweeps=True,
+            strict_opposite_pairs=True,
+            paired_max_interval_seconds=1 / 12,
+        )))
+
     def test_opt_in_repeated_double_front_bridges_exact_eighth_gap(self):
         chart = events("(168){48}18,27,36,45,,,,,,18,27,36,45,E")
         sequences = sweep_sequences(chart)
