@@ -184,10 +184,14 @@ class SweepScoringConfig:
     same_direction_increment: float = DEFAULT_SAME_DIRECTION_INCREMENT
     reversal_increment: float = DEFAULT_REVERSAL_INCREMENT
     eighth_gap_family_bridge: bool = False
+    eighth_gap_similar_speed_bridge: bool = False
+    eighth_bridge_speed_relative_tolerance: float = 0.1
 
     def validate(self) -> None:
         if not isinstance(self.eighth_gap_family_bridge, bool):
             raise ValueError("eighth_gap_family_bridge must be a boolean")
+        if not isinstance(self.eighth_gap_similar_speed_bridge, bool):
+            raise ValueError("eighth_gap_similar_speed_bridge must be a boolean")
         positive = {
             "reference_interval_seconds": self.reference_interval_seconds,
             "speed_exponent": self.speed_exponent,
@@ -196,6 +200,9 @@ class SweepScoringConfig:
         }
         non_negative = {
             "speed_relative_tolerance": self.speed_relative_tolerance,
+            "eighth_bridge_speed_relative_tolerance": (
+                self.eighth_bridge_speed_relative_tolerance
+            ),
             "protected_note_weight": self.protected_note_weight,
             "single_connection_increment": self.single_connection_increment,
             "double_connection_increment": self.double_connection_increment,
@@ -225,6 +232,10 @@ class SweepScoringConfig:
                 raise ValueError(f"{name} must be a non-negative finite number")
         if self.speed_relative_tolerance >= 1:
             raise ValueError("speed_relative_tolerance must be less than one")
+        if self.eighth_bridge_speed_relative_tolerance >= 1:
+            raise ValueError(
+                "eighth_bridge_speed_relative_tolerance must be less than one"
+            )
         if (
             isinstance(self.minimum_family_attack_count, bool)
             or not isinstance(self.minimum_family_attack_count, int)
@@ -1049,9 +1060,10 @@ def _external_connection(
     config: SweepScoringConfig,
 ) -> float | None:
     gap = child.start_time_s - parent.end_time_s
+    eighth_gap = child.start_beat - parent.end_beat == EIGHTH_NOTE_BEATS
     repeated_eighth_bridge = (
         config.eighth_gap_family_bridge
-        and child.start_beat - parent.end_beat == EIGHTH_NOTE_BEATS
+        and eighth_gap
         and len(parent.beats) >= 4
         and len(child.beats) >= 4
         and sum(width >= 2 for width in parent.widths) >= 3
@@ -1063,16 +1075,30 @@ def _external_connection(
             config.speed_relative_tolerance,
         )
     )
+    similar_speed_eighth_bridge = (
+        config.eighth_gap_similar_speed_bridge
+        and eighth_gap
+        and _same_speed(
+            parent.interval_seconds,
+            child.interval_seconds,
+            config.eighth_bridge_speed_relative_tolerance,
+        )
+    )
     if gap < -1e-9 or (
         gap > parent.interval_seconds + 1e-9
         and not repeated_eighth_bridge
+        and not similar_speed_eighth_bridge
     ):
         return None
     double_connection = abs(gap) <= 1e-9
     speed_changed = not _same_speed(
         parent.interval_seconds,
         child.interval_seconds,
-        config.speed_relative_tolerance,
+        (
+            config.eighth_bridge_speed_relative_tolerance
+            if similar_speed_eighth_bridge
+            else config.speed_relative_tolerance
+        ),
     )
     parent_directions = {strand.final_direction for strand in parent.strands}
     child_directions = {strand.initial_direction for strand in child.strands}

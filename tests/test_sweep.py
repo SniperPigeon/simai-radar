@@ -202,6 +202,43 @@ class SweepTests(unittest.TestCase):
             config=replace(PERMISSIVE_CONFIG, eighth_gap_family_bridge=True),
         ).families), 2)
 
+    def test_opt_in_eighth_bridge_accepts_different_shapes_at_similar_speed(self):
+        chart = events(
+            "(168){48}18,27,36,45,,,,,,28,37,46,51,E"
+        )
+        sequences = sweep_sequences(chart)
+        self.assertEqual(len(sequences), 2)
+        self.assertNotEqual(
+            sequences[0].lanes_by_batch,
+            sequences[1].lanes_by_batch,
+        )
+        baseline = score_sweep_sequences(sequences, config=PERMISSIVE_CONFIG)
+        bridged = score_sweep_sequences(
+            sequences,
+            config=replace(
+                PERMISSIVE_CONFIG,
+                eighth_gap_similar_speed_bridge=True,
+            ),
+        )
+        self.assertEqual(len(baseline.families), 2)
+        self.assertEqual(len(bridged.families), 1)
+        self.assertEqual(bridged.families[0].attack_count, 16)
+        self.assertAlmostEqual(
+            bridged.families[0].density,
+            bridged.families[0].load / bridged.families[0].duration_s,
+        )
+
+        slower = sweep_sequences(events(
+            "(168){48}18,27,36,45,,,,,,{24}28,37,46,51,E"
+        ))
+        self.assertEqual(len(score_sweep_sequences(
+            slower,
+            config=replace(
+                PERMISSIVE_CONFIG,
+                eighth_gap_similar_speed_bridge=True,
+            ),
+        ).families), 2)
+
     def test_short_hold_and_slide_head_are_attacks_but_long_hold_is_occupancy(self):
         chart = events("(180){16}1,2h[16:1],3-5[4:1],4h[4:1],E")
         attacks = button_attacks(chart)

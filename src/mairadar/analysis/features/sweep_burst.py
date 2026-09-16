@@ -424,7 +424,10 @@ def score_sweep_burst(
         family.family_id: sweep_family_hand_motion(
             family,
             scored.groups,
-            respect_group_gaps=resolved.eighth_gap_family_bridge,
+            respect_group_gaps=(
+                resolved.eighth_gap_family_bridge
+                or resolved.eighth_gap_similar_speed_bridge
+            ),
         )
         for family in scored.families
     }
@@ -535,7 +538,10 @@ def score_sweep_burst(
             continue
         parent = groups_by_id[group.parent_group_id]
         repeated_eighth_bridge = (
-            resolved.eighth_gap_family_bridge
+            (
+                resolved.eighth_gap_family_bridge
+                or resolved.eighth_gap_similar_speed_bridge
+            )
             and group.sequence.start_beat - parent.sequence.end_beat
             == EIGHTH_NOTE_BEATS
             and parent.sequence.lanes_by_batch == group.sequence.lanes_by_batch
