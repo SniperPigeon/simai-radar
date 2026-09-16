@@ -234,12 +234,7 @@ def score_sweep_burst(
             sequence.unit_intervals_seconds[0],
             *sequence.unit_intervals_seconds,
         )
-        simple_uninterrupted_run = (
-            len(sequence.times_s) > simple_run_full_attacks
-            and all(width == 1 for width in sequence.widths)
-            and not sequence.speed_switch_indexes
-            and not sequence.direction_switch_indexes
-        )
+        simple_run_length = 0
         for index, time_s in enumerate(sequence.times_s):
             note_weight = (
                 sequence.normal_declaration_counts[index]
@@ -253,9 +248,18 @@ def score_sweep_burst(
             if index == 0:
                 first_batch_base[group.group_id] = raw_base
             decay = 1.0
-            if simple_uninterrupted_run and index >= simple_run_full_attacks:
-                excess_rank = index - simple_run_full_attacks + 2
-                decay = excess_rank ** -simple_run_decay_exponent
+            if sequence.widths[index] >= 2:
+                simple_run_length = 0
+            else:
+                if (
+                    index in sequence.speed_switch_indexes
+                    or index in sequence.direction_switch_indexes
+                ):
+                    simple_run_length = 0
+                simple_run_length += 1
+                if simple_run_length > simple_run_full_attacks:
+                    excess_rank = simple_run_length - simple_run_full_attacks + 1
+                    decay = excess_rank ** -simple_run_decay_exponent
             base = raw_base * decay
             if (
                 index in sequence.double_handoff_indexes

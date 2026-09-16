@@ -44,7 +44,7 @@ class SweepBurstTests(unittest.TestCase):
         expected = 16 + sum(1 / math.sqrt(rank) for rank in range(2, 10))
         self.assertAlmostEqual(result.base_density, expected / 3)
 
-    def test_double_sweep_disables_simple_run_decay(self):
+    def test_double_sweep_batches_remain_full_weight(self):
         body = ",".join(("15", "26", "37", "48") * 6)
         parsed = parse_chart(f"(180){{16}}{body},E")
         result = score_sweep_burst(
@@ -57,6 +57,24 @@ class SweepBurstTests(unittest.TestCase):
             same_direction_handoff_bonus=0,
         )
         self.assertAlmostEqual(result.base_density, 48 / 3)
+
+    def test_double_batch_resets_single_run_decay_counter(self):
+        before = list("12345678123456781")
+        after = list("34567812345678123")
+        body = ",".join((*before, "2/6", *after))
+        parsed = parse_chart(f"(180){{16}}{body},E")
+        result = score_sweep_burst(
+            tuple(parsed.events),
+            duration_s=parsed.chart_end_time_s,
+            idle_distance_weight=0,
+            takeover_weight=0,
+            fast_jump_weight=0,
+            same_direction_connection_bonus=0,
+            same_direction_handoff_bonus=0,
+            pattern_motion_floor=1,
+        )
+        expected = 2 * (16 + 1 / math.sqrt(2)) + 2
+        self.assertAlmostEqual(result.base_density, expected / 3)
 
     def test_same_direction_chord_handoff_gets_local_bonus(self):
         parsed = parse_chart("(180){16}3,4,56,7,8,E")
