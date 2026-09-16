@@ -176,6 +176,8 @@ EX 的 `0.3` 只扣减基础物量，不扣减接续奖励。
 消融参数可关闭长单押逐项衰减（`simple_run_decay_exponent=0`），改为两类独立模板。
 `alternating_idle_multiplier` 启用真正左右交替的两相 group 模板，只缩放匹配组起点的
 空转位移项，接管和高速跳跃项保持全权；该参数启用时不再叠加旧的整体运动模板折扣。
+可选 `takeover_same_direction_only=True` 进一步限制接管奖励：只在 DP 实际换手且当前组
+与父组同向时给 `+1`，反向规律交替没有独立接管奖励，空转位移仍单独计算。
 连续至少 16 批、单手、单押、同方向，且单位间隔不慢于 180 BPM 24 分音符的 section
 可用 `solo_fast_base_multiplier` 和 `solo_fast_motion_multiplier` 分别缩放基础与运动项。
 同类 section 若连续至少 48 批，可用 `solo_fast_long_base_multiplier` 单独覆盖基础倍率，

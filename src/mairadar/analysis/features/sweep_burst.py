@@ -299,6 +299,7 @@ def score_sweep_burst(
     window_rank_decay_exponent: float = DEFAULT_WINDOW_RANK_DECAY_EXPONENT,
     idle_distance_weight: float = DEFAULT_IDLE_DISTANCE_WEIGHT,
     takeover_weight: float = DEFAULT_TAKEOVER_WEIGHT,
+    takeover_same_direction_only: bool = False,
     fast_jump_weight: float = DEFAULT_FAST_JUMP_WEIGHT,
     idle_speed_reference_keys_per_second: float = (
         DEFAULT_IDLE_SPEED_REFERENCE_KEYS_PER_SECOND
@@ -375,6 +376,8 @@ def score_sweep_burst(
         or window_count <= 0
     ):
         raise ValueError("window_count must be a positive integer")
+    if not isinstance(takeover_same_direction_only, bool):
+        raise ValueError("takeover_same_direction_only must be a boolean")
     if pattern_motion_floor > 1:
         raise ValueError("pattern_motion_floor must be at most one")
     if alternating_idle_multiplier is not None and (
@@ -524,6 +527,10 @@ def score_sweep_burst(
                     * same_direction_connection_bonus
                 ),
             )
+    same_direction_start_times = {
+        groups_by_id[group_id].sequence.start_time_s
+        for group_id in same_direction_group_ids
+    }
 
     for family in scored.families:
         motion = motions_by_family[family.family_id]
@@ -572,8 +579,14 @@ def score_sweep_burst(
                 if lanes:
                     last_hand_use[hand] = assignment.time_s
             idle_bonus = weighted_idle_distance * idle_distance_weight
+            takeover_bonus = assignment.free_hand_takeover * takeover_weight
+            if (
+                takeover_same_direction_only
+                and assignment.time_s not in same_direction_start_times
+            ):
+                takeover_bonus = 0.0
             other_bonus = (
-                assignment.free_hand_takeover * takeover_weight
+                takeover_bonus
                 + assignment.fast_jump_violations * fast_jump_weight
             )
             raw_bonus = idle_bonus + other_bonus

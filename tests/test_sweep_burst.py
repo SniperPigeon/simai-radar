@@ -385,6 +385,37 @@ class SweepBurstTests(unittest.TestCase):
         )
         self.assertAlmostEqual(templated.base_density, plain.base_density * 0.4)
 
+    def test_takeover_bonus_requires_same_direction_when_requested(self):
+        common = {
+            "window_seconds": 3,
+            "window_count": 1,
+            "idle_distance_weight": 0,
+            "fast_jump_weight": 0,
+            "same_direction_connection_bonus": 0,
+            "same_direction_handoff_bonus": 0,
+            "pattern_motion_floor": 1,
+        }
+
+        def score(body, same_direction_only):
+            parsed = parse_chart(f"(180){{16}}{body},E")
+            return score_sweep_burst(
+                tuple(parsed.events),
+                duration_s=parsed.chart_end_time_s,
+                takeover_same_direction_only=same_direction_only,
+                **common,
+            )
+
+        opposite = score("1,2,3,8,7,6", False)
+        opposite_filtered = score("1,2,3,8,7,6", True)
+        self.assertAlmostEqual(
+            opposite.motion_density - opposite_filtered.motion_density,
+            1 / 3,
+        )
+        same = score("1,2,3,8,1,2", False)
+        same_filtered = score("1,2,3,8,1,2", True)
+        self.assertGreater(same.motion_density, 0)
+        self.assertAlmostEqual(same.motion_density, same_filtered.motion_density)
+
 
 if __name__ == "__main__":
     unittest.main()
