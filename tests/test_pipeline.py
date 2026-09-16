@@ -88,7 +88,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(row["sweep_raw"], row["sweep_score"])
             self.assertEqual(
                 json.loads(row["diagnostics"])["scoring"]["mapping_version"],
-                "provisional-sweep-2s-top3-cumulate-20260916-v49",
+                "provisional-sweep-2s-top3-cumulate-star8-20260916-v50",
             )
 
     def test_cli_loads_frozen_mapping_profile_for_scoring(self):
@@ -441,7 +441,7 @@ class PipelineTests(unittest.TestCase):
                     for row in rows
                 ))
                 self.assertTrue(all(json.loads(row["diagnostics"])["scoring"]["mapping_version"]
-                                    == "provisional-sweep-2s-top3-cumulate-20260916-v49"
+                                    == "provisional-sweep-2s-top3-cumulate-star8-20260916-v50"
                                     for row in rows))
                 self.assertTrue(all((root / mode / row["cover_path"]).is_file() for row in rows))
 

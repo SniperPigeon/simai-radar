@@ -16,6 +16,7 @@ from .note_density import _simultaneous_touch_components
 CADENCE_REFERENCE_SECONDS = 0.5
 SIMULTANEOUS_ONSET_SECONDS = 1 / 60
 SEQUENCE_FULL_ONSETS = 3
+SEQUENCE_MIN_INTERVAL_BEATS = Fraction(1, 2)
 CONCURRENCY_WEIGHT = 0.5
 TRICKY_OBJECT_CAP = 16
 TRICKY_TOP_COUNT = 5
@@ -761,7 +762,15 @@ def _section_metrics(
     ) / onset_count
     sequence_length = _sequence_length_factor(onset_count)
     continuous = cadence * sequence_length if onset_count >= 2 else 0.0
-    sequence_intensity = continuous + CONCURRENCY_WEIGHT * concurrency
+    has_sub_eighth_gap = any(
+        right.declaration_beat - left.declaration_beat < SEQUENCE_MIN_INTERVAL_BEATS
+        for left, right in zip(section, section[1:])
+    )
+    # A rapid onset makes this entire connected array ineligible, including
+    # its concurrency term; the independent Tricky calculation is untouched.
+    sequence_intensity = (
+        0.0 if has_sub_eighth_gap else continuous + CONCURRENCY_WEIGHT * concurrency
+    )
     return SlideSectionMetrics(
         slide_count=slide_count,
         onset_count=onset_count,

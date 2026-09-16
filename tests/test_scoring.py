@@ -52,7 +52,7 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(scores.features["slide_cumulate"].value, 50)
         self.assertEqual(
             scores.mapping_version,
-            "provisional-sweep-2s-top3-cumulate-20260916-v49",
+            "provisional-sweep-2s-top3-cumulate-star8-20260916-v50",
         )
 
     def test_identity_mapper_validates_and_preserves_finite_values(self):

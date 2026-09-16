@@ -405,7 +405,9 @@ slide_cumulate = sum(L_r) / (D / 0.5)
 ```
 
 `slide_sequence` 仍独立按声明拍分连续段：相邻启动配置满足 `0 < delta_beat <= 1` 即连续，
-夹杂其他物件不打断。它使用实际秒间隔的 `mean(0.5/delta_time)`、从第四个时间点后增长
+夹杂其他物件不打断。若同一连续段中任何相邻启动间隔严格小于八分音符（`1/2 beat`），
+整个段的星星阵强度归零；恰好八分保留，同拍并发配置没有相邻间隔，不受此门槛影响。
+此规则不改变独立的 `slide_tricky` 或 `slide_cumulate`。合格段使用实际秒间隔的 `mean(0.5/delta_time)`、从第四个时间点后增长
 放缓的长度因子，以及 `0.5 * mean(max(0,U_j-1))` 并发加项；全局取非零段强度的 RMS。
 正时长无 Slide 谱面三个维度均为 0，零时长返回失败。
 
@@ -528,7 +530,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-sweep-2s-top3-cumulate-20260916-v49",
+            mapping_version="provisional-sweep-2s-top3-cumulate-star8-20260916-v50",
         )
 
 TRANSFORMER = DefaultScoreTransformer
@@ -575,7 +577,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-sweep-2s-top3-cumulate-20260916-v49`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-sweep-2s-top3-cumulate-star8-20260916-v50`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 
