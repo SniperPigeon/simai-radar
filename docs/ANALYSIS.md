@@ -161,7 +161,11 @@ sweep_raw = 0.6 * mean_load + 0.4 * peak
 全权，第 `n` 个超额攻击按 `1/sqrt(n+1)` 衰减；sequence 内只要出现一次双押便完全取消
 该衰减。同向 family 接续与保持方向的双押换手只在切换批次局部增加 20%，不向后累乘。
 另加入 `0.5 * idle_distance + 1.0 * takeover + 2.0 * fast_jump` 作为等效物量，最后除以
-3 秒。它可通过注入 `ChartAnalyzer` 做独立实验，不替换默认 `SweepAnalyzer`。
+3 秒。Family 内连续简单单押 group 另以 `(hand, direction)` 建立 1 至 4 组的短周期模板；
+模板至少覆盖 6 组、重复三轮且匹配率达到 80% 时，符合模板的 group 起点运动负荷只保留
+10%，反手或其他不匹配 group 保持全权。双押、换向和变速 group 切断模板；同向 family
+接续 group 可参与模板判断但运动负荷受保护、不应用折扣，双押 handoff 同样保持全权。
+该实验可通过注入 `ChartAnalyzer` 使用，不替换默认 `SweepAnalyzer`。
 
 ## 整体物量口径
 
