@@ -1,6 +1,6 @@
 {
   "schemaVersion": "mairadar-mapping-profile-1",
-  "mappingVersion": "mapping-profile-2026-09-15T08-56-43-109Z",
+  "mappingVersion": "mapping-profile-2026-09-15T08-56-43-109Z-cumulate-dummy",
   "generatedAt": "2026-09-15T08:56:43.109Z",
   "scoreAnchors": [
     50,
@@ -115,6 +115,23 @@
         42.06824315354476
       ],
       "t4Max": 146.65442246453955,
+      "sampleCount": 1886
+    },
+    "slide_cumulate": {
+      "label": "持续星星压力",
+      "percentiles": [
+        79.741,
+        88.024,
+        95.884,
+        99.572
+      ],
+      "rawAnchors": [
+        5.922184062089411,
+        6.956739990341152,
+        8.885053606113308,
+        11.963678093006447
+      ],
+      "t4Max": 16.901251108712703,
       "sampleCount": 1886
     }
   }

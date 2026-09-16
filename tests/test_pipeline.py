@@ -88,7 +88,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(row["sweep_raw"], row["sweep_score"])
             self.assertEqual(
                 json.loads(row["diagnostics"])["scoring"]["mapping_version"],
-                "provisional-sweep-2s-top3-identity-20260916-v48",
+                "provisional-sweep-2s-top3-cumulate-20260916-v49",
             )
 
     def test_cli_loads_frozen_mapping_profile_for_scoring(self):
@@ -104,7 +104,8 @@ class PipelineTests(unittest.TestCase):
                 "dimensions": {
                     name: {"rawAnchors": [1, 2, 3, 4], "t4Max": 5}
                     for name in (
-                        "note", "peak", "sweep", "slide_tricky", "slide_sequence", "jack",
+                        "note", "peak", "sweep", "slide_tricky", "slide_sequence",
+                        "jack", "slide_cumulate",
                     )
                 },
             }), encoding="utf-8")
@@ -436,10 +437,11 @@ class PipelineTests(unittest.TestCase):
                     and row["peak_raw"] and row["peak_score"]
                     and row["slide_tricky_raw"] and row["slide_tricky_score"]
                     and row["slide_sequence_raw"] and row["slide_sequence_score"]
+                    and row["slide_cumulate_raw"] and row["slide_cumulate_score"]
                     for row in rows
                 ))
                 self.assertTrue(all(json.loads(row["diagnostics"])["scoring"]["mapping_version"]
-                                    == "provisional-sweep-2s-top3-identity-20260916-v48"
+                                    == "provisional-sweep-2s-top3-cumulate-20260916-v49"
                                     for row in rows))
                 self.assertTrue(all((root / mode / row["cover_path"]).is_file() for row in rows))
 

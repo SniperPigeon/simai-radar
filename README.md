@@ -388,7 +388,8 @@ Slide 当前默认启用两个维度：`slide_tricky` 取五个最高单配置�
 作归一化加权平均（不足五项补零），每个配置
 最多按 16 个逻辑干扰物件计；
 Tricky 按全谱正等待时长的 0.05 秒众数桶建立基准，排除等待严格超过基准四倍的路径；
-`slide_cumulate` 的独立 analyser 仍按历史确认口径保留，但已从默认分析和评分链路注释停用；
+`slide_cumulate` 的独立 analyser 已重新加入默认分析和评分链路；当前
+`data/mapping_profile.json` 暂复制“错位压力”的锚点给它，待在 GUI 中单独校准；
 `slide_sequence` 只分析连续阵、
 同拍双押和同头多路径。`slide_tricky` 的 Tap 干扰包含同位、扫键和实际 Slide 头修正，
 Touch 连通组最多计两组，启动拍统一将物件负荷除以二，并只追加启动后一拍以内的运动
@@ -414,7 +415,7 @@ FEATURES = {
     "slide_tricky": SlideTrickyAnalyzer,
     "slide_sequence": SlideSequenceAnalyzer,
     "jack": JackSequenceAnalyzer,
-    # "slide_cumulate": SlideCumulateAnalyzer,
+    "slide_cumulate": SlideCumulateAnalyzer,
 }
 ```
 

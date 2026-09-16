@@ -4,7 +4,7 @@ from .features import (
     JackSequenceAnalyzer,
     NoteDensityAnalyzer,
     PeakDensityAnalyzer,
-    # SlideCumulateAnalyzer,
+    SlideCumulateAnalyzer,
     SlideSequenceAnalyzer,
     SlideTrickyAnalyzer,
     SweepBurstAnalyzer,
@@ -18,5 +18,5 @@ FEATURES = {
     "slide_tricky": SlideTrickyAnalyzer,
     "slide_sequence": SlideSequenceAnalyzer,
     "jack": JackSequenceAnalyzer,
-    # "slide_cumulate": SlideCumulateAnalyzer,
+    "slide_cumulate": SlideCumulateAnalyzer,
 }

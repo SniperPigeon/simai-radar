@@ -1,10 +1,11 @@
 # 谱面分析 MVP
 
-核心按显式配置调用独立维度分析器，返回原始指标；当前默认六维依次为 Note、Peak、扫键、
-错位压力、星星阵和纵连。评分层按 feature 独立配置映射器：纵连、扫键和 Slide Tricky 暂时
+核心按显式配置调用独立维度分析器，返回原始指标；当前默认七维依次为 Note、Peak、扫键、
+错位压力、星星阵、纵连和持续星星压力。评分层按 feature 独立配置映射器：纵连、扫键和 Slide Tricky 暂时
 identity 直通，整体物量暂用 2026-09-13 观察批次的中位数与 P99，Peak 使用宽松的探索
 锚点，Slide Sequence 使用有限普通谱抽样的取整探索锚点；这些都不代表官方校准。
-`slide_cumulate` 的实现与测试仍保留，但默认分析和评分注册已注释停用。
+`slide_cumulate` 已重新启用，默认使用临时 DummyPn 锚点；当前 mapping profile
+另复制错位压力的锚点作 GUI 调参占位，不代表该维度已校准。
 
 ## 直接调用
 
@@ -520,14 +521,14 @@ FEATURE_MAPPERS = {
     "slide_tricky": IdentityMapper(),
     "slide_sequence": DummyPnMapper(p50=1.3, p100=2.9),
     "jack": IdentityMapper(),
-    # "slide_cumulate": DummyPnMapper(p50=0.36, p100=0.96),
+    "slide_cumulate": DummyPnMapper(p50=0.36, p100=0.96),
 }
 
 class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-sweep-2s-top3-identity-20260916-v48",
+            mapping_version="provisional-sweep-2s-top3-cumulate-20260916-v49",
         )
 
 TRANSFORMER = DefaultScoreTransformer
@@ -539,7 +540,7 @@ p50、p100 是 `DummyPnMapper` 的原始指标阈值，要求 `0 < p50 < p100` �
 样本的中位数和 P99；Peak 的 10、20 是首轮观察用宽松锚点。当前 1888 张难度索引 5/6
 观察样本中，`slide_tricky` 曾使用中位数 27.5、P99.9 约 116.06 作为临时锚点；当前默认
 改用 `IdentityMapper`，使 `slide_tricky_score` 原样等于 analyser 的 raw 值；
-已停用的 `slide_cumulate` 独立复刻版本曾取 0.36、0.96；
+已重启的 `slide_cumulate` 独立复刻版本暂取 0.36、0.96；
 `slide_sequence` 暂取 1.3、2.9。它们都是固定临时配置，后续批次不会自动重新拟合。
 
 DummyPnMapper 使用两段线性变换：
@@ -574,7 +575,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-sweep-2s-top3-identity-20260916-v48`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-sweep-2s-top3-cumulate-20260916-v49`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 
@@ -586,6 +587,8 @@ visualizer 的分布页可以导出 `mapping_profile.json`。导出时，对每�
 范围内 T1–T4 对应的 raw 值、百分位、样本数和最大 raw 值 `t4Max`；profile 顶层记录
 `mappingVersion`、固定目标分 `[50, 100, 150, 200]` 与开放集上限 220。所有 raw 锚点
 必须严格递增且 T1 大于 0，否则页面会拒绝导出，避免产生有歧义的分段。
+当前 `data/mapping_profile.json` 的 `slide_cumulate` 项人工复制了 `slide_tricky`
+的四个 raw 锚点和 `t4Max`，仅用于让新维度先正常显示；请在 GUI 中重新调该维度。
 
 ```bash
 mairadar --mode analysis_score \

@@ -6,7 +6,8 @@ from . import DummyPnMapper, FeatureScoreTransformer, IdentityMapper, ScoreTrans
 # receives their analyzer values without applying stale calibration. NOTE uses
 # the 2026-09-13 observation batch's median and P99. PEAK starts with broad
 # exploratory anchors. SLIDE_SEQUENCE uses rounded Master/Re:Master observation
-# anchors. SLIDE_CUMULATE remains implemented but is disabled in the default chain.
+# anchors. SLIDE_CUMULATE uses provisional standalone anchors unless a frozen
+# mapping profile overrides them. All parameters below are exploratory.
 # None is official.
 FEATURE_MAPPERS = {
     "note": DummyPnMapper(p50=3.540077197, p100=9.328672541),
@@ -15,7 +16,7 @@ FEATURE_MAPPERS = {
     "slide_tricky": IdentityMapper(),
     "slide_sequence": DummyPnMapper(p50=1.3, p100=2.9),
     "jack": IdentityMapper(),
-    # "slide_cumulate": DummyPnMapper(p50=0.36, p100=0.96),
+    "slide_cumulate": DummyPnMapper(p50=0.36, p100=0.96),
 }
 
 
@@ -23,7 +24,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-sweep-2s-top3-identity-20260916-v48",
+            mapping_version="provisional-sweep-2s-top3-cumulate-20260916-v49",
         )
 
 
