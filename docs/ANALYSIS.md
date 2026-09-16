@@ -80,7 +80,7 @@ jack_raw = sum(weighted_strength_(x) * rank_weight_(x),
 
 ## 扫键口径
 
-`SweepAnalyzer` 按全局拍轴把外键攻击组成时间批次，再用动态规划选择一条最长合法主干。
+旧版 `SweepAnalyzer` 按全局拍轴把外键攻击组成时间批次，再用动态规划选择一条最长合法主干。
 同一时间批次的其他一至两个物件直接作为辅助物件附在主干上；它们与第二条扫键 Strand
 计分等价，因此不再枚举左右手匹配。到达相同末键、方向、速度和连续步数的历史状态只
 保留主干更长、变速及折返更少、事件序更早的解释。候选最终按事件覆盖最大、组数最少
@@ -155,7 +155,7 @@ sweep_raw = 0.6 * mean_load + 0.4 * peak
 每秒和每物件位移及逐批手部分配。Family 起点前的手位未知，因此每只手第一次参与不计
 初始放置距离；一旦参与，之后所有空转移位均计入。该指标暂只用于实验，不进入 sweep raw。
 
-实验 API `score_sweep_burst` / `SweepBurstAnalyzer` 取全谱三个互不重叠的 2 秒窗口，按
+当前默认 `score_sweep_burst` / `SweepBurstAnalyzer` 取全谱三个互不重叠的 2 秒窗口，按
 `1/sqrt(k)` 排名衰减后除以权重和，保持每秒强度量纲。窗口基础负荷
 只保留普通/EX 物件权重与速度平方根系数，双押倍率固定为 1.0，不继承 family、折返、
 变速或接续的累积倍率。全程单押、无变速、无换向的单一 sequence 前 16 个攻击保持
@@ -167,7 +167,7 @@ sweep_raw = 0.6 * mean_load + 0.4 * peak
 模板至少覆盖 6 组、重复三轮且匹配率达到 80% 时，符合模板的 group 起点运动负荷只保留
 10%，反手或其他不匹配 group 保持全权。双押、换向和变速 group 切断模板；同向 family
 接续 group 可参与模板判断但运动负荷受保护、不应用折扣，双押 handoff 同样保持全权。
-该实验可通过注入 `ChartAnalyzer` 使用，不替换默认 `SweepAnalyzer`。
+旧版 `SweepAnalyzer` 仍可由调用方显式注入以作对照。
 
 ## 整体物量口径
 
@@ -485,7 +485,7 @@ class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-jack-sweep-tricky-identity-20260915-v43",
+            mapping_version="provisional-sweep-2s-top3-identity-20260916-v44",
         )
 
 TRANSFORMER = DefaultScoreTransformer
@@ -532,7 +532,7 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-jack-sweep-tricky-identity-20260915-v43`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-sweep-2s-top3-identity-20260916-v44`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 

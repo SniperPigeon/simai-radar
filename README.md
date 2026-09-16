@@ -366,7 +366,7 @@ Tap，允许分布在多个连续时间点；每次从首个异键到返回主�
 快速衰减。完整边界规则见
 [分析说明](docs/ANALYSIS.md#纵连口径)。
 
-`SweepAnalyzer` 按时间批次用动态规划选择最长主干，并把同拍另外一至两个物件作为辅助
+旧版 `SweepAnalyzer` 按时间批次用动态规划选择最长主干，并把同拍另外一至两个物件作为辅助
 物件纳入；双押节点可以一键接收前段、由另一键发出后段，因此 `3,4,56,7,8` 一类换手扫键
 不会在双押处截断。支持双扫、单扫/双扫互切、复合双押、折返、变速和长 Hold 占位跨键。基础门槛为十二分，
 八分只允许作为减速后继；短 Hold 按 Tap，EX 声明为 0.3。变速比较使用 0.5% 相对容差；
@@ -379,8 +379,8 @@ Tap，允许分布在多个连续时间点；每次从首个异键到返回主�
 识别只读取 parser 事件，不重新扫描 Simai；完整公式见
 [分析说明](docs/ANALYSIS.md#扫键口径)。
 另外提供实验性的双手位移 DP，可计算 family 内两手总位移、连续动作位移、空转移位和
-自由手接管；`SweepBurstAnalyzer` 可将速度基础物量和该双手负荷放进固定 3 秒滑窗，
-但两者尚未进入默认 sweep 分数。
+自由手接管；当前默认 CLI 使用 `SweepBurstAnalyzer`，将速度基础物量和双手负荷放进
+三个互不重叠的 2 秒窗口，按 `1/√k` 衰减后除以权重和。旧版 `SweepAnalyzer` 仍保留用于对照。
 
 Slide 当前默认启用两个维度：`slide_tricky` 取五个最高单配置负荷，按 `1/log₂(k+1)`
 作归一化加权平均（不足五项补零），每个配置
@@ -408,7 +408,7 @@ Touch 连通组最多计两组，启动拍统一将物件负荷除以二，并�
 FEATURES = {
     "note": NoteDensityAnalyzer,
     "peak": PeakDensityAnalyzer,
-    "sweep": SweepAnalyzer,
+    "sweep": SweepBurstAnalyzer,
     "slide_tricky": SlideTrickyAnalyzer,
     "slide_sequence": SlideSequenceAnalyzer,
     "jack": JackSequenceAnalyzer,
