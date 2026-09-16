@@ -38,6 +38,7 @@ DEFAULT_SAME_DIRECTION_CONNECTION_BONUS = 0.2
 DEFAULT_SAME_DIRECTION_HANDOFF_BONUS = 0.2
 DEFAULT_PATTERN_MOTION_FLOOR = 0.1
 DEFAULT_SOLO_FAST_MIN_BATCHES = 16
+DEFAULT_SOLO_FAST_LONG_MIN_BATCHES = 48
 DEFAULT_SOLO_FAST_MAX_INTERVAL_SECONDS = 1 / 18  # 180 BPM twenty-fourth.
 PATTERN_MIN_GROUPS = 6
 PATTERN_MAX_PERIOD = 4
@@ -238,8 +239,9 @@ def _solo_fast_indexes(
     assignments_by_time: dict[float, HandAssignment],
     *,
     minimum_batches: int,
+    long_minimum_batches: int,
     maximum_interval_seconds: float,
-) -> set[int]:
+) -> tuple[set[int], set[int]]:
     """Mark long, fast, uninterrupted single-hand directional sections."""
     sequence = group.sequence
     speed_by_batch = (
@@ -250,12 +252,15 @@ def _solo_fast_indexes(
         sequence.direction_switch_indexes
     )
     marked: set[int] = set()
+    ultra_long: set[int] = set()
     run: list[int] = []
     run_hand: str | None = None
 
     def finish() -> None:
         if len(run) >= minimum_batches:
             marked.update(run)
+        if len(run) >= long_minimum_batches:
+            ultra_long.update(run)
 
     for index, time_s in enumerate(sequence.times_s):
         if index in switches:
@@ -280,7 +285,7 @@ def _solo_fast_indexes(
         run.append(index)
         run_hand = hand
     finish()
-    return marked
+    return marked, ultra_long
 
 
 def score_sweep_burst(
@@ -308,7 +313,9 @@ def score_sweep_burst(
     alternating_idle_multiplier: float | None = None,
     solo_fast_base_multiplier: float = 1.0,
     solo_fast_motion_multiplier: float = 1.0,
+    solo_fast_long_base_multiplier: float = 1.0,
     solo_fast_min_batches: int = DEFAULT_SOLO_FAST_MIN_BATCHES,
+    solo_fast_long_min_batches: int = DEFAULT_SOLO_FAST_LONG_MIN_BATCHES,
     solo_fast_max_interval_seconds: float = DEFAULT_SOLO_FAST_MAX_INTERVAL_SECONDS,
 ) -> SweepBurstScore:
     """Return the strongest fixed window without family multiplier carry-over."""
@@ -326,6 +333,7 @@ def score_sweep_burst(
         "pattern_motion_floor": pattern_motion_floor,
         "solo_fast_base_multiplier": solo_fast_base_multiplier,
         "solo_fast_motion_multiplier": solo_fast_motion_multiplier,
+        "solo_fast_long_base_multiplier": solo_fast_long_base_multiplier,
         "solo_fast_max_interval_seconds": solo_fast_max_interval_seconds,
     }
     for name, value in numeric.items():
@@ -376,7 +384,13 @@ def score_sweep_burst(
         or not 0 <= alternating_idle_multiplier <= 1
     ):
         raise ValueError("alternating_idle_multiplier must be in [0, 1]")
-    if solo_fast_base_multiplier > 1 or solo_fast_motion_multiplier > 1:
+    if any(
+        multiplier > 1 for multiplier in (
+            solo_fast_base_multiplier,
+            solo_fast_motion_multiplier,
+            solo_fast_long_base_multiplier,
+        )
+    ):
         raise ValueError("solo fast multipliers must be at most one")
     if (
         isinstance(solo_fast_min_batches, bool)
@@ -384,6 +398,12 @@ def score_sweep_burst(
         or solo_fast_min_batches <= 0
     ):
         raise ValueError("solo_fast_min_batches must be a positive integer")
+    if (
+        isinstance(solo_fast_long_min_batches, bool)
+        or not isinstance(solo_fast_long_min_batches, int)
+        or solo_fast_long_min_batches < solo_fast_min_batches
+    ):
+        raise ValueError("solo_fast_long_min_batches must be at least solo_fast_min_batches")
 
     resolved = replace(config or SweepScoringConfig(), chord_note_multiplier=1.0)
     resolved.validate()
@@ -399,8 +419,13 @@ def score_sweep_burst(
         for family in scored.families
     }
     solo_fast_indexes_by_group: dict[int, set[int]] = {}
+    solo_fast_long_indexes_by_group: dict[int, set[int]] = {}
     solo_fast_times_by_family: dict[int, set[float]] = {}
-    if solo_fast_base_multiplier < 1 or solo_fast_motion_multiplier < 1:
+    if (
+        solo_fast_base_multiplier < 1
+        or solo_fast_motion_multiplier < 1
+        or solo_fast_long_base_multiplier < 1
+    ):
         for family in scored.families:
             assignments = {
                 item.time_s: item
@@ -409,13 +434,15 @@ def score_sweep_burst(
             family_times: set[float] = set()
             for group_id in family.group_ids:
                 group = groups_by_id[group_id]
-                indexes = _solo_fast_indexes(
+                indexes, long_indexes = _solo_fast_indexes(
                     group,
                     assignments,
                     minimum_batches=solo_fast_min_batches,
+                    long_minimum_batches=solo_fast_long_min_batches,
                     maximum_interval_seconds=solo_fast_max_interval_seconds,
                 )
                 solo_fast_indexes_by_group[group_id] = indexes
+                solo_fast_long_indexes_by_group[group_id] = long_indexes
                 family_times.update(group.sequence.times_s[index] for index in indexes)
             solo_fast_times_by_family[family.family_id] = family_times
 
@@ -468,7 +495,9 @@ def score_sweep_burst(
                     excess_rank = simple_run_length - simple_run_full_attacks + 1
                     decay = excess_rank ** -simple_run_decay_exponent
             base = raw_base * decay
-            if index in solo_fast_indexes_by_group.get(group.group_id, ()):
+            if index in solo_fast_long_indexes_by_group.get(group.group_id, ()):
+                base *= solo_fast_long_base_multiplier
+            elif index in solo_fast_indexes_by_group.get(group.group_id, ()):
                 base *= solo_fast_base_multiplier
             if (
                 index in sequence.double_handoff_indexes

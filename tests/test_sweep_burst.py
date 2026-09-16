@@ -363,6 +363,28 @@ class SweepBurstTests(unittest.TestCase):
             slower_plain.base_density,
         )
 
+    def test_ultra_long_fast_single_hand_uses_stronger_template(self):
+        body = ",".join("12345678" * 7)
+        parsed = parse_chart(f"(180){{32}}{body},E")
+        common = {
+            "duration_s": parsed.chart_end_time_s,
+            "window_seconds": 3,
+            "window_count": 1,
+            "simple_run_decay_exponent": 0,
+            "idle_distance_weight": 0,
+            "takeover_weight": 0,
+            "fast_jump_weight": 0,
+        }
+        plain = score_sweep_burst(tuple(parsed.events), **common)
+        templated = score_sweep_burst(
+            tuple(parsed.events),
+            solo_fast_base_multiplier=0.85,
+            solo_fast_long_base_multiplier=0.4,
+            solo_fast_motion_multiplier=0.5,
+            **common,
+        )
+        self.assertAlmostEqual(templated.base_density, plain.base_density * 0.4)
+
 
 if __name__ == "__main__":
     unittest.main()
