@@ -67,3 +67,10 @@ class ChartAnalyzer:
                 raise ValueError("Successful feature must have a finite numeric value")
         elif result.data is not None:
             raise ValueError("Unsuccessful feature must have a null value")
+        if not isinstance(result.stats, dict) or any(
+            not isinstance(key, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", key)
+            or (value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))
+                                       or not math.isfinite(value)))
+            for key, value in result.stats.items()
+        ):
+            raise ValueError("Feature stats require named finite numbers or null")

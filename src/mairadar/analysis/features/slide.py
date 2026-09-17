@@ -8,6 +8,7 @@ import math
 from statistics import median
 
 from mairadar.analysis.model import AnalysisContext, FeatureResult
+from mairadar.analysis.statistics import summarize
 from mairadar.model import Event
 
 from .note_density import _simultaneous_touch_components
@@ -810,7 +811,6 @@ def _section_metrics(
     # These section fields remain useful diagnostics for Slide sequence output,
     # but no section boundary or length bonus contributes to slide_tricky.
     tricky_intensity = tricky_mean
-    tricky_effective_length = float(onset_count)
     tricky_load = math.fsum(tricky_values)
 
     sequence_section = _sequence_onsets(section)
@@ -1010,7 +1010,11 @@ class SlideTrickyAnalyzer:
         if context.duration_s <= 0:
             return FeatureResult(None, success=False)
         result = slide_feature_breakdown(context.events, context.duration_s)
-        return FeatureResult(result.tricky)
+        return FeatureResult(result.tricky, stats={
+            **summarize((point.internal for point in result.tricky_points), "internal"),
+            **summarize((point.launch for point in result.tricky_points), "launch"),
+            "total_load": result.tricky_total_load,
+        })
 
 
 class SlideSequenceAnalyzer:
@@ -1020,4 +1024,8 @@ class SlideSequenceAnalyzer:
         if context.duration_s <= 0:
             return FeatureResult(None, success=False)
         result = slide_feature_breakdown(context.events, context.duration_s)
-        return FeatureResult(result.sequence)
+        return FeatureResult(result.sequence, stats={
+            **summarize((section.cadence_factor for section in result.sections), "cadence"),
+            **summarize((section.concurrency_pressure for section in result.sections), "concurrency"),
+            **summarize((section.sequence_length_factor for section in result.sections), "length"),
+        })

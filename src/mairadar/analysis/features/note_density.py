@@ -7,6 +7,7 @@ import math
 from types import MappingProxyType
 
 from mairadar.analysis.model import AnalysisContext, FeatureResult
+from mairadar.analysis.statistics import summarize
 from mairadar.model import Event
 
 
@@ -285,9 +286,10 @@ class NoteDensityAnalyzer:
             workload[index] += weight
 
         densities = [value / WINDOW_SECONDS for value in workload]
+        stats = summarize(densities, "density")
         mean = math.fsum(densities) / count
         if mean == 0:
-            return FeatureResult(0.0)
+            return FeatureResult(0.0, stats=stats)
         variance = math.fsum((value - mean) ** 2 for value in densities) / count
         coefficient_of_variation = math.sqrt(variance) / mean
-        return FeatureResult(mean * (1 + BURST_WEIGHT * coefficient_of_variation))
+        return FeatureResult(mean * (1 + BURST_WEIGHT * coefficient_of_variation), stats=stats)

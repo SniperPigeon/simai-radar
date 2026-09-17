@@ -762,7 +762,12 @@ class SweepBurstAnalyzer:
     def analyze(self, context: AnalysisContext) -> FeatureResult:
         if context.duration_s <= 0:
             return FeatureResult(None, success=False)
-        return FeatureResult(score_sweep_burst(
+        result = score_sweep_burst(
             context.events,
             duration_s=context.duration_s,
-        ).value)
+        )
+        return FeatureResult(result.value, stats={
+            "base_density": result.base_density,
+            "motion_density": result.motion_density,
+            "raw_motion_density": result.raw_motion_density,
+        })
