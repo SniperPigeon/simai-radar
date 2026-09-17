@@ -174,7 +174,7 @@ class BatchTests(unittest.TestCase):
             self.assertEqual(report.exit_code, 0)
             self.assertEqual(batch.exit_code, 0)  # Export errors do not mutate core results.
 
-    def test_different_colliding_covers_remain_empty_without_failing_analysis(self):
+    def test_different_colliding_covers_use_chart_metadata_without_overwriting(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             source = bundle(root)
@@ -186,11 +186,11 @@ class BatchTests(unittest.TestCase):
             report = CsvExporter().export(batch.records, root / "report", feature_names=batch.feature_names)
             _, rows = read_rows(report.csv_path)
             self.assertEqual([row["status"] for row in rows], ["ok", "ok"])
-            self.assertEqual(rows[1]["cover_path"], "")
+            self.assertEqual(rows[1]["cover_path"], "covers/曲名-5-dx.png")
             self.assertEqual((root / "report" / rows[0]["cover_path"]).read_bytes(), (root / "art.png").read_bytes())
+            self.assertEqual((root / "report" / rows[1]["cover_path"]).read_bytes(), alternate.read_bytes())
             self.assertEqual(report.exit_code, 0)
-            self.assertEqual(json.loads(rows[1]["diagnostics"])["export"][0]["code"],
-                             "COVER_EXPORT_FAILED")
+            self.assertNotIn("export", json.loads(rows[1]["diagnostics"]))
 
     def test_failed_cover_copy_keeps_raw_value_and_continues_next_record(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -58,20 +58,26 @@ def export_song_covers(
     def export_one(record: AnalysisRecord) -> tuple[str, bytes]:
         source, suffix, content = source_bytes(record)
         filename = _cover_stem(record) + suffix
-        key = unicodedata.normalize("NFC", filename).casefold()
-        if key in used:
-            existing = used[key]
-            if content != existing.read_bytes():
-                raise ValueError(f"Conflicting cover filename: {filename}")
-            return existing.relative_to(staging).as_posix(), content
-        target = target_directory / filename
-        try:
-            shutil.copyfile(source, target)
-        except OSError:
-            target.unlink(missing_ok=True)
-            raise
-        used[key] = target
-        return target.relative_to(staging).as_posix(), content
+        filenames = [filename]
+        chart = record.chart
+        if chart.difficulty_index is not None and chart.chart_type in {"dx", "sd"}:
+            filenames.append(f"{_cover_stem(record)}-{chart.difficulty_index}-{chart.chart_type}{suffix}")
+        for candidate in filenames:
+            key = unicodedata.normalize("NFC", candidate).casefold()
+            if key in used:
+                existing = used[key]
+                if content == existing.read_bytes():
+                    return existing.relative_to(staging).as_posix(), content
+                continue
+            target = target_directory / candidate
+            try:
+                shutil.copyfile(source, target)
+            except OSError:
+                target.unlink(missing_ok=True)
+                raise
+            used[key] = target
+            return target.relative_to(staging).as_posix(), content
+        raise ValueError(f"Conflicting cover filename: {filename}")
 
     for grouped in groups.values():
         candidates = [(index, record) for index, record in grouped if record.cover_path is not None]

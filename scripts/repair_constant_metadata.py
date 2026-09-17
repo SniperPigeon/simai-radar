@@ -10,11 +10,13 @@ from copy import deepcopy
 import json
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from mairadar.constants import chart_type, write_json
+from mairadar.io import COVER_EXTENSIONS
 
 
 def repair_metadata(text, changes):
@@ -102,6 +104,22 @@ def repair_payload(payload, entries):
     return result, changes
 
 
+def cover_copies(payload, source_root):
+    """Validate existing attachment references before modifying any raw files."""
+    names = {item["cover"] for song in payload["songs"] for item in [song, *song["charts"]]
+             if item.get("cover")}
+    copies = []
+    for name in sorted(names):
+        relative = _relative_source(name)
+        if relative.parts[:2] != ("assets", "covers") or relative.suffix.lower() not in COVER_EXTENSIONS:
+            raise ValueError(f"Invalid visualizer cover path: {name}")
+        source = source_root / relative
+        if not source.resolve().is_relative_to(source_root.resolve()) or not source.is_file():
+            raise ValueError(f"Missing or external visualizer cover: {name}")
+        copies.append((source, relative))
+    return copies
+
+
 def run(root, site, plan, output, backup_root, *, apply=False):
     root, site, output, backup_root = map(Path, (root, site, output, backup_root))
     if plan.get("schema_version") != "mairadar-metadata-repairs-1":
@@ -114,6 +132,10 @@ def run(root, site, plan, output, backup_root, *, apply=False):
     data_path = site / "data/songs.json" if site.is_dir() else site
     payload = json.loads(data_path.read_text(encoding="utf-8-sig"))
     repaired, cached_changes = repair_payload(payload, entries)
+    site_root = site if site.is_dir() else (
+        data_path.parent.parent if data_path.parent.name == "data" else data_path.parent
+    )
+    covers = cover_copies(repaired, site_root)
     planned = []
     for entry in entries:
         relative = _relative_source(entry["source_ref"])
@@ -133,6 +155,7 @@ def run(root, site, plan, output, backup_root, *, apply=False):
                         for p, _, _, _, edits in planned],
         "cached_changes": cached_changes, "features_recomputed": False,
         "source_bundle": str(site), "backup_root": str(backup_root),
+        "covers_copied": len(covers),
     }
     if not apply:
         return report
@@ -161,6 +184,10 @@ def run(root, site, plan, output, backup_root, *, apply=False):
             raise ValueError(f"Raw file changed during repair: {path}")
         path.write_bytes(fixed)
     write_json(output / "data/songs.json", repaired)
+    for source, relative in covers:
+        destination = output / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
     write_json(output / "repair-report.json", report)
     write_json(output / "repair-plan.json", plan)
     return report

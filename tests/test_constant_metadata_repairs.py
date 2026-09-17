@@ -63,6 +63,12 @@ class MetadataRepairTests(unittest.TestCase):
             original = b"\xef\xbb\xbf&title=Grip\r\n&inote_5=(120)1,E\r\n"
             raw.write_bytes(original)
             site = root / "songs.json"
+            cover = root / "assets/covers/Grip.png"
+            cover.parent.mkdir(parents=True)
+            cover.write_bytes(b"original cover")
+            payload["songs"][0]["cover"] = "assets/covers/Grip.png"
+            for chart in payload["songs"][0]["charts"]:
+                chart["cover"] = "assets/covers/Grip.png"
             site.write_text(json.dumps(payload))
             plan = {"schema_version": "mairadar-metadata-repairs-1", "repairs": [entry]}
             args = (root / "raw", site, plan, root / "fixed", root / "backups")
@@ -72,8 +78,11 @@ class MetadataRepairTests(unittest.TestCase):
             report = repairs.run(*args, apply=True)
             self.assertEqual(report["raw_files_changed"], 1)
             self.assertEqual((root / "backups/song/maidata.txt").read_bytes(), original)
+            self.assertEqual(report["covers_copied"], 1)
+            self.assertEqual((root / "fixed/assets/covers/Grip.png").read_bytes(), b"original cover")
             repeated = repairs.run(root / "raw", root / "fixed", plan, root / "again", root / "backups", apply=True)
             self.assertEqual(repeated["raw_files_changed"], 0)
+            self.assertEqual((root / "again/assets/covers/Grip.png").read_bytes(), b"original cover")
 
     def test_preflight_failure_leaves_sources_unchanged(self):
         with tempfile.TemporaryDirectory() as temp:

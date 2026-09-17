@@ -506,9 +506,10 @@ function coverMarkup(cover, title, className) {
   if (!cover) {
     return `<span class="${className}">${placeholder}</span>`;
   }
+  const coverUrl = cover.split("/").map(encodeURIComponent).join("/");
   return `
     <span class="${className}">
-      <img src="${escapeHtml(cover)}" alt="${escapeHtml(title)} 曲绘" loading="lazy" decoding="async" />
+      <img src="${escapeHtml(coverUrl)}" alt="${escapeHtml(title)} 曲绘" loading="lazy" decoding="async" />
       ${placeholder}
     </span>`;
 }

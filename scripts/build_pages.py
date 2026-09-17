@@ -18,9 +18,10 @@ if sys.version_info < (3, 11):
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from mairadar.cli import main as analyze
-from mairadar.exporters.visualizer import SCHEMA_VERSION, TEMPLATE_DIRECTORY, TEMPLATE_FILES
-from mairadar.io import COVER_EXTENSIONS
+# Imports must follow the Python version check and local source-path bootstrap.
+from mairadar.cli import main as analyze  # noqa: E402
+from mairadar.exporters.visualizer import SCHEMA_VERSION, TEMPLATE_DIRECTORY, TEMPLATE_FILES  # noqa: E402
+from mairadar.io import COVER_EXTENSIONS, find_cover  # noqa: E402
 
 
 @contextmanager
@@ -105,20 +106,70 @@ def validate_payload(payload: dict, *, include_covers: bool = True) -> list[dict
     return charts
 
 
+def restore_covers(payload: dict, target: Path, cover_root: Path) -> None:
+    """Reattach raw artwork via retained sourceRef paths without running analysis."""
+    from mairadar.constants import chart_type
+    from mairadar.exporters.artwork import export_song_covers
+    from mairadar.model import Chart
+    from mairadar.reporting import AnalysisRecord
+
+    root = cover_root.resolve(strict=True)
+    records, charts = [], []
+    for song in payload["songs"]:
+        for chart in song["charts"]:
+            ref = chart.get("sourceRef")
+            if not isinstance(ref, str) or not ref or "\\" in ref:
+                raise ValueError("--cover-root requires sourceRef; use the original analysis bundle")
+            relative = PurePosixPath(ref)
+            if relative.is_absolute() or ".." in relative.parts or relative.as_posix() != ref:
+                raise ValueError(f"Invalid sourceRef: {ref}")
+            source = root / relative
+            if not source.resolve().is_relative_to(root) or not source.is_file():
+                raise ValueError(f"Source is missing or outside --cover-root: {ref}")
+            cover = find_cover(source.parent)
+            if cover is not None and not cover.resolve().is_relative_to(root):
+                raise ValueError(f"Cover is outside --cover-root: {ref}")
+            if cover is None and chart.get("exportIssues"):
+                raise ValueError(f"Cannot repair previous cover export failure: {ref}")
+            records.append(AnalysisRecord(ref, chart=Chart(
+                source_name=ref, title=song["title"], artist=song.get("artist"),
+                difficulty_index=chart["difficulty"], chart_type=chart_type(chart["kind"]),
+            ), cover_path=cover))
+            charts.append(chart)
+    (target / "assets/covers").mkdir(parents=True, exist_ok=True)
+    paths, issues, count = export_song_covers(records, target, Path("assets/covers"))
+    if issues:
+        raise ValueError(f"Cover restoration failed: {issues}")
+    for index, chart in enumerate(charts):
+        chart["cover"] = paths.get(index)
+        # visualizer-1 exportIssues describes artwork export only. Successful
+        # re-export supersedes those old failures; analysis status stays intact.
+        chart["exportIssues"] = []
+    for song in payload["songs"]:
+        song["cover"] = next((c["cover"] for c in song["charts"] if c["cover"]), None)
+    payload["stats"]["coverCount"] = count
+
+
 def prepare_site(
     source: Path, target: Path, *, no_covers: bool = False,
     constants_table: Path | None = None, constant_model: Path | None = None,
+    cover_root: Path | None = None,
 ) -> dict:
+    if no_covers and cover_root is not None:
+        raise ValueError("--no-covers and --cover-root cannot be combined")
     with site_reader(source) as read:
         payload = json.loads(read("data/songs.json"))
         # Cover export diagnostics do not block a package that omits artwork.
         # Keep the original diagnostics in the JSON for inspection.
-        charts = validate_payload(payload, include_covers=not no_covers)
+        charts = validate_payload(payload, include_covers=not no_covers and cover_root is None)
         if constants_table is not None or constant_model is not None:
             from mairadar.exporters.constants import ConstantAnnotations
             failures = ConstantAnnotations(constants_table, constant_model).payload(payload)
             if failures:
                 raise ValueError(f"Constant prediction failed for {failures} charts")
+        if cover_root is not None:
+            restore_covers(payload, target, cover_root)
+            validate_payload(payload)
         covers = set()
         for record in [*payload["songs"], *charts]:
             if no_covers:
@@ -129,10 +180,11 @@ def prepare_site(
         for chart in charts:
             chart.pop("sourceRef", None)
         payload["stats"]["coverCount"] = len(covers)
-        for name in sorted(covers):
-            destination = target / name
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(read(name))
+        if cover_root is None:
+            for name in sorted(covers):
+                destination = target / name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(read(name))
     for filename in TEMPLATE_FILES:
         shutil.copyfile(TEMPLATE_DIRECTORY / filename, target / filename)
     (target / "data").mkdir(exist_ok=True)
@@ -194,6 +246,7 @@ def build(args: argparse.Namespace) -> dict:
         stats = prepare_site(
             source, staging, no_covers=args.no_covers,
             constants_table=args.constants_table, constant_model=args.constant_model,
+            cover_root=args.cover_root,
         )
         # Put index.html at the ZIP root for both Cloudflare drag/drop and CI reuse.
         with ZipFile(archive, "x", compression=ZIP_DEFLATED) as bundle:
@@ -229,7 +282,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--difficulty", type=int, nargs="+")
     parser.add_argument("--include-utage", action="store_true")
     parser.add_argument("--chart-type", choices=("dx", "sd"))
-    parser.add_argument("--no-covers", action="store_true", help="omit artwork from the package")
+    covers = parser.add_mutually_exclusive_group()
+    covers.add_argument("--no-covers", action="store_true", help="omit artwork from the package")
+    covers.add_argument("--cover-root", type=Path, help="reattach artwork from this raw root using sourceRef; no analysis")
     args = parser.parse_args(argv)
     if args.site and (args.mode != "analysis_score" or args.mapping_profile or args.difficulty
                       or args.include_utage or args.chart_type):
