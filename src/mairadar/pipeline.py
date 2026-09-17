@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 from typing import Protocol
 
-from .analysis import AnalysisIssue, ChartAnalyzer
+from .analysis import AnalysisIssue, ChartAnalyzer, flatten_features
 from .batch import BatchResult, analyze_directory, analyze_source
 from .parse_export import ParseOnlyResult, parse_source_to_bundles
 from .scoring import FeatureScore, ScoreResult, ScoreTransformer
@@ -31,15 +31,16 @@ def _map_batch(batch: BatchResult, transformer: ScoreTransformer) -> None:
             continue
         try:
             scores = transformer.transform(deepcopy(record.analysis))
-            if not isinstance(scores, ScoreResult) or set(scores.features) != set(batch.feature_names):
-                raise ValueError("Mapper must return ScoreResult with the configured features")
+            raw = flatten_features(record.analysis)
+            if not isinstance(scores, ScoreResult) or not set(scores.features) <= set(raw):
+                raise ValueError("Mapper must return scores for available raw features")
             if not isinstance(scores.mapping_version, str) or not scores.mapping_version.strip():
                 raise ValueError("Mapper must identify its mapping_version")
             for name, score in scores.features.items():
                 if not isinstance(score, FeatureScore) or score.status not in {"ok", "error", "unavailable"}:
                     raise ValueError(f"Invalid score result: {name}")
                 if score.status == "ok":
-                    if not record.analysis.features[name].success:
+                    if not raw[name].success:
                         raise ValueError(f"Cannot score an unsuccessful feature: {name}")
                     if (isinstance(score.value, bool) or not isinstance(score.value, (float, int))
                             or not math.isfinite(score.value)):
@@ -57,10 +58,13 @@ def run_pipeline(
     exporter: ReportExporter | None = None,
     difficulties: list[int] | None = None, chart_type: str | None = None,
     include_utage: bool = False,
+    constant_model=None,
 ) -> tuple[BatchResult | ParseOnlyResult, ExportReport | None]:
     """analysis returns raw results only; scoring modes require an explicit mapper."""
     if mode not in MODES:
         raise ValueError(f"Unknown mode: {mode}")
+    if mode == "parse_only" and constant_model is not None:
+        raise ValueError("Constant prediction requires analysis")
     if mode not in RAW_MODES and chart_type is not None:
         raise ValueError("Chart type override is only supported in raw-input modes")
     if mode == "analysis":
@@ -113,6 +117,14 @@ def run_pipeline(
         )
     if not batch.records:
         raise ValueError("No raw chart files or child bundle directories found")
+    if constant_model is not None:
+        from .regression.derived import with_prediction
+        if "fitted_constant" in batch.feature_names:
+            raise ValueError("fitted_constant is reserved for model output")
+        for record in batch.records:
+            if record.analysis is not None:
+                record.analysis = with_prediction(record.analysis, constant_model)
+        batch.feature_names += ("fitted_constant",)
     if mode == "analysis":
         return batch, None
     _map_batch(batch, transformer)

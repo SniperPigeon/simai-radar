@@ -9,10 +9,7 @@ import json
 import math
 from pathlib import Path
 
-FEATURES = (
-    "note", "peak", "sweep", "slide_tricky", "slide_sequence", "jack", "slide_cumulate",
-)
-SCHEMA_VERSION = "mairadar-polynomial-1"
+SCHEMA_VERSION = "mairadar-polynomial-2"
 
 
 def _number(value):
@@ -25,13 +22,16 @@ class PolynomialModel:
     def __init__(self, data):
         if not isinstance(data, dict) or data.get("schema_version") != SCHEMA_VERSION:
             raise ValueError(f"Expected {SCHEMA_VERSION}")
-        if data.get("input_kind") != "raw" or data.get("features") != list(FEATURES):
-            raise ValueError("Model must use the seven raw features in the documented order")
-        self.features = FEATURES
+        names = data.get("features")
+        if (data.get("input_kind") != "raw" or not isinstance(names, list) or not names
+                or any(not isinstance(name, str) or not name for name in names)
+                or len(set(names)) != len(names)):
+            raise ValueError("Model must declare unique raw feature names in input order")
+        self.features = tuple(names)
         self.center = tuple(_number(v) for v in data.get("center", []))
         self.scale = tuple(_number(v) for v in data.get("scale", []))
-        if len(self.center) != len(FEATURES) or len(self.scale) != len(FEATURES) or min(self.scale) <= 0:
-            raise ValueError("Model center/scale must have seven values and positive scales")
+        if len(self.center) != len(names) or len(self.scale) != len(names) or min(self.scale) <= 0:
+            raise ValueError("Model center/scale must match its features and have positive scales")
         self.intercept = _number(data.get("intercept"))
         terms = data.get("terms")
         if not isinstance(terms, list) or not terms:
@@ -42,8 +42,8 @@ class PolynomialModel:
             if not isinstance(term, dict):
                 raise ValueError("Invalid polynomial term")
             powers = tuple(term.get("powers", []))
-            if len(powers) != len(FEATURES) or any(type(p) is not int or p < 0 for p in powers):
-                raise ValueError("Powers must be seven nonnegative integers")
+            if len(powers) != len(names) or any(type(p) is not int or p < 0 for p in powers):
+                raise ValueError("Powers must be nonnegative integers matching the features")
             if not 1 <= sum(powers) <= 4 or powers in seen:
                 raise ValueError("Terms must be unique and have degree 1 through 4")
             seen.add(powers)
@@ -59,13 +59,13 @@ class PolynomialModel:
 
     def predict(self, raw):
         if isinstance(raw, Mapping):
-            if any(name not in raw for name in FEATURES):
-                raise ValueError("Prediction requires all seven raw features")
-            values = [raw[name] for name in FEATURES]
+            if any(name not in raw for name in self.features):
+                raise ValueError("Prediction requires every model input feature")
+            values = [raw[name] for name in self.features]
         else:
             values = list(raw)
-        if len(values) != len(FEATURES):
-            raise ValueError("Prediction requires seven raw features in model order")
+        if len(values) != len(self.features):
+            raise ValueError("Prediction inputs must match model feature order and count")
         z = [(_number(v) - c) / s for v, c, s in zip(values, self.center, self.scale)]
         value = self.intercept
         try:

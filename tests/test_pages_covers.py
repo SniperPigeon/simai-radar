@@ -18,7 +18,7 @@ spec.loader.exec_module(pages)
 class PagesCoverTests(unittest.TestCase):
     def fixture(self, root):
         payload = {
-            "schemaVersion": "mairadar-visualizer-1", "dimensions": [{"key": "note"}],
+            "schemaVersion": "mairadar-visualizer-2", "dimensions": [{"key": "note"}],
             "stats": {"songCount": 2, "chartCount": 2, "coverCount": 1,
                       "failedChartCount": 0, "skippedRecordCount": 0},
             "songs": [],
@@ -33,6 +33,7 @@ class PagesCoverTests(unittest.TestCase):
                 "cover": "assets/covers/TRUST.png" if kind == "ST" else None,
                 "status": "ok", "exportIssues": [] if kind == "ST" else ["Conflicting cover filename: Trust.png"],
                 "rawScores": {"note": 1.23}, "scores": {"note": 123}, "fittedConstant": 13.45,
+                "rawFeatures": {"note": 1.23}, "mappedFeatures": {"note": 123},
             }]})
         site = root / "metadata"
         (site / "data").mkdir(parents=True)

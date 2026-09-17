@@ -92,7 +92,7 @@ class VisualizerExporterTests(unittest.TestCase):
                 "index.html", "app.js", "styles.css", "data/songs.json",
             )))
             payload = json.loads(report.data_path.read_text())
-            self.assertEqual(payload["schemaVersion"], "mairadar-visualizer-1")
+            self.assertEqual(payload["schemaVersion"], "mairadar-visualizer-2")
             self.assertEqual(payload["mappingVersions"], ["visualizer-test-v1"])
             self.assertEqual(payload["displayRange"], [0, 220])
             self.assertEqual(payload["stats"]["songCount"], 1)

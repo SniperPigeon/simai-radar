@@ -17,6 +17,7 @@ FEATURE_MAPPERS = {
     "slide_sequence": DummyPnMapper(p50=1.3, p100=2.9),
     "jack": IdentityMapper(),
     "slide_cumulate": DummyPnMapper(p50=0.36, p100=0.96),
+    "fitted_constant": IdentityMapper(),
 }
 
 

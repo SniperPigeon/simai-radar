@@ -8,7 +8,7 @@ import sys
 import tempfile
 
 from mairadar.constants import finite, read_rows, write_json, write_rows
-from .runtime import FEATURES, PolynomialModel
+from .runtime import PolynomialModel
 
 
 def main(argv=None):
@@ -37,7 +37,7 @@ def main(argv=None):
                 try:
                     if row.get("status", "ok") != "ok":
                         raise ValueError("input_not_ok")
-                    values = [finite(row.get(f"{name}_raw")) for name in FEATURES]
+                    values = [finite(row.get(f"{name}_raw")) for name in model.features]
                     row.update(fitted_constant=model.predict(values), prediction_status="ok")
                 except ValueError as exc:
                     failures += 1
@@ -59,7 +59,7 @@ def main(argv=None):
             write_json(staging / "model.json", model.to_dict())
             write_json(staging / "evaluation_model.json", evaluation.to_dict())
             write_json(staging / "report.json", report)
-            write_json(staging / "test_vectors.json", {"features": list(FEATURES), "tolerance": 1e-9, "vectors": vectors})
+            write_json(staging / "test_vectors.json", {"features": list(model.features), "tolerance": 1e-9, "vectors": vectors})
             write_rows(staging / "predictions.csv", predictions)
             staging.rename(args.output)
         finally:

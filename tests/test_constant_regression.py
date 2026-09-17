@@ -12,12 +12,15 @@ import sys
 import tempfile
 import unittest
 import warnings
+from unittest.mock import patch
 
 from mairadar.constants import write_json, write_rows
 from mairadar.cli import main as analyze
 from mairadar.exporters.constants import ConstantAnnotations
-from mairadar.regression import FEATURES, PolynomialModel
+from mairadar.regression import PolynomialModel
 from mairadar.regression.__main__ import main
+
+FEATURES = ("note", "peak", "sweep", "slide_tricky", "slide_sequence", "jack", "slide_cumulate")
 SKLEARN_AVAILABLE = importlib.util.find_spec("sklearn") is not None
 if SKLEARN_AVAILABLE:
     import numpy as np
@@ -29,7 +32,7 @@ if SKLEARN_AVAILABLE:
 
 def known_model():
     return {
-        "schema_version": "mairadar-polynomial-1", "features": list(FEATURES), "input_kind": "raw",
+        "schema_version": "mairadar-polynomial-2", "features": list(FEATURES), "input_kind": "raw",
         "center": [1] * 7, "scale": [2] * 7, "intercept": 10,
         "terms": [
             {"powers": [2, 0, 0, 0, 0, 0, 0], "coefficient": 2},
@@ -49,7 +52,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_rejects_invalid_schema_and_parameters(self):
         for key, value in (("schema_version", "unknown"), ("input_kind", "scores"),
-                           ("features", list(reversed(FEATURES))), ("scale", [0] * 7),
+                           ("features", ["duplicate"] * 7), ("scale", [0] * 7),
                            ("intercept", math.inf), ("center", [1] * 6),
                            ("terms", [{"powers": [1.0] * 7, "coefficient": 1}])):
             data = known_model()
@@ -164,14 +167,14 @@ class TrainingTests(unittest.TestCase):
             with self.subTest(degree=degree):
                 pipeline = make_pipeline(StandardScaler(), PolynomialFeatures(degree, include_bias=False),
                                          Ridge(alpha=1, solver="svd")).fit(x, y)
-                model = PolynomialModel(json.loads(json.dumps(export_model(pipeline).to_dict())))
+                model = PolynomialModel(json.loads(json.dumps(export_model(pipeline, FEATURES).to_dict())))
                 np.testing.assert_allclose([model.predict(row) for row in unseen], pipeline.predict(unseen),
                                            rtol=1e-10, atol=1e-10)
 
     def test_training_splits_rows_by_level_and_retains_excluded_predictions(self):
         rows = self.rows()
         rows.append({**rows[0], "match_status": "constant_estimated", "official_constant": None})
-        model, evaluation, report, predictions, vectors = train(rows, degrees=[1, 2], alphas=[0], folds=3)
+        model, evaluation, report, predictions, vectors = train(rows, features=FEATURES, degrees=[1, 2], alphas=[0], folds=3)
         self.assertLess(report["holdout"]["rmse"], 1e-8)
         development = set(report["development_row_numbers"])
         holdout = set(report["holdout_row_numbers"])
@@ -196,11 +199,11 @@ class TrainingTests(unittest.TestCase):
 
     def test_holdout_values_do_not_influence_preprocessing_or_model_selection(self):
         rows = self.rows()
-        _, before, report, _, _ = train(rows, degrees=[1, 2], alphas=[1], folds=3)
+        _, before, report, _, _ = train(rows, features=FEATURES, degrees=[1, 2], alphas=[1], folds=3)
         for number in report["holdout_row_numbers"]:
             for name in FEATURES:
                 rows[number - 1][f"{name}_raw"] += 100
-        _, after, repeated, _, _ = train(rows, degrees=[1, 2], alphas=[1], folds=3)
+        _, after, repeated, _, _ = train(rows, features=FEATURES, degrees=[1, 2], alphas=[1], folds=3)
         self.assertEqual(report["holdout_row_numbers"], repeated["holdout_row_numbers"])
         probe = [0.5] * len(FEATURES)
         self.assertAlmostEqual(before.predict(probe), after.predict(probe), places=12)
@@ -210,7 +213,7 @@ class TrainingTests(unittest.TestCase):
         rows = self.rows()
         rows.append({**rows[0], "level": "15"})
         with warnings.catch_warnings(record=True):
-            _, _, report, _, _ = train(rows, degrees=[1], alphas=[1], folds=3)
+            _, _, report, _, _ = train(rows, features=FEATURES, degrees=[1], alphas=[1], folds=3)
         self.assertIn(len(rows), report["development_row_numbers"])
         self.assertNotIn(len(rows), report["holdout_row_numbers"])
 
@@ -218,7 +221,7 @@ class TrainingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             write_rows(root / "constants.csv", self.rows())
-            with contextlib.redirect_stdout(io.StringIO()):
+            with contextlib.redirect_stdout(io.StringIO()), patch("mairadar.regression.training.TRAINING_FEATURES", FEATURES):
                 self.assertEqual(main(["fit", "--input", str(root / "constants.csv"),
                                        "--output", str(root / "fit"), "--degrees", "2", "--folds", "3"]), 0)
                 self.assertEqual(main(["predict", "--input", str(root / "constants.csv"),

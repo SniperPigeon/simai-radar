@@ -112,4 +112,6 @@ def load_mapping_profile(path: str | Path) -> FeatureScoreTransformer:
             )
         except ValueError as exc:
             raise ValueError(f"Invalid mapping profile dimension {name}: {exc}") from exc
+    from .linear import IdentityMapper
+    mappers.setdefault("fitted_constant", IdentityMapper())
     return FeatureScoreTransformer(mappers, mapping_version=mapping_version)

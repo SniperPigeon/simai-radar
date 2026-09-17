@@ -71,11 +71,12 @@ class ScoringTests(unittest.TestCase):
         }).transform(source)
         skipped.map.assert_not_called()
         self.assertEqual(scores.features["skipped"].status, "unavailable")
-        for name in ("broken", "missing", "nonfinite"):
+        for name in ("broken", "nonfinite"):
             self.assertEqual(scores.features[name].status, "error")
             self.assertIsNone(scores.features[name].value)
             self.assertEqual(scores.features[name].diagnostics[0].feature, name)
-        self.assertEqual(scores.features["missing"].diagnostics[0].code, "MAPPER_MISSING")
+        self.assertNotIn("missing", scores.features)
+        self.assertEqual(source.features["missing"].data, 1.0)
         self.assertEqual(scores.features["good"].value, 50)
 
 

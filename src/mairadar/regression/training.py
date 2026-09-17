@@ -14,14 +14,21 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 
 from mairadar.constants import finite
-from .runtime import FEATURES, SCHEMA_VERSION, PolynomialModel
+from .runtime import SCHEMA_VERSION, PolynomialModel
 
 
-def export_model(pipeline):
+# Edit these raw field names to choose training inputs, in model input order.
+# Stats use flattened names such as note_density_mean or sweep_motion_density.
+TRAINING_FEATURES = (
+    "note", "peak", "sweep", "slide_tricky", "slide_sequence", "jack", "slide_cumulate",
+)
+
+
+def export_model(pipeline, feature_names):
     """Export fitted sklearn parameters; inference never imports sklearn."""
     scaler, polynomial, ridge = pipeline.steps[0][1], pipeline.steps[1][1], pipeline.steps[2][1]
     return PolynomialModel({
-        "schema_version": SCHEMA_VERSION, "input_kind": "raw", "features": list(FEATURES),
+        "schema_version": SCHEMA_VERSION, "input_kind": "raw", "features": list(feature_names),
         "center": scaler.mean_.tolist(), "scale": scaler.scale_.tolist(),
         "intercept": float(ridge.intercept_), "degree": polynomial.degree, "alpha": ridge.alpha,
         "terms": [{"powers": powers, "coefficient": coefficient}
@@ -39,14 +46,18 @@ def metrics(actual, predicted):
     }
 
 
-def train(rows, *, degrees=(1, 2, 3, 4), alphas=(0.1, 1.0, 10.0), seed=42, folds=5):
+def train(rows, *, features=None, degrees=(1, 2, 3, 4), alphas=(0.1, 1.0, 10.0), seed=42, folds=5):
     """Fit on level-stratified rows, evaluate holdout, then refit for deployment."""
     if not degrees or any(type(d) is not int or not 1 <= d <= 4 for d in degrees):
         raise ValueError("Provide polynomial degrees from 1 through 4")
+    features = tuple(TRAINING_FEATURES if features is None else features)
+    if (not features or any(not isinstance(name, str) or not name for name in features)
+            or len(set(features)) != len(features) or "fitted_constant" in features):
+        raise ValueError("Choose unique raw inputs; fitted_constant cannot be its own training input")
     eligible, raw, targets, levels, reasons = [], [], [], [], {}
     for index, row in enumerate(rows):
         target = finite(row.get("official_constant"))
-        values = [finite(row.get(f"{name}_raw")) for name in FEATURES]
+        values = [finite(row.get(f"{name}_raw")) for name in features]
         if row.get("status", "ok") != "ok":
             reasons[index] = "input_not_ok"
         elif row.get("match_status") != "matched" or target is None or not 0 < target <= 20:
@@ -82,7 +93,7 @@ def train(rows, *, degrees=(1, 2, 3, 4), alphas=(0.1, 1.0, 10.0), seed=42, folds
     ).fit(x[development], y[development])
     evaluation = search.best_estimator_
     deployed = clone(evaluation).fit(x, y)
-    model, evaluation_model = export_model(deployed), export_model(evaluation)
+    model, evaluation_model = export_model(deployed, features), export_model(evaluation, features)
     candidates = [
         {"degree": params["poly__degree"], "alpha": params["ridge__alpha"],
          "rmse": float(-rmse), "mae": float(-mae)}
@@ -94,7 +105,7 @@ def train(rows, *, degrees=(1, 2, 3, 4), alphas=(0.1, 1.0, 10.0), seed=42, folds
     development_counts, holdout_counts = Counter(levels[development]), Counter(levels[holdout])
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(), "trainer": f"scikit-learn {sklearn.__version__}",
-        "seed": seed, "input_rows": len(rows), "training_rows": len(eligible), "excluded": dict(Counter(reasons.values())),
+        "seed": seed, "features": list(features), "input_rows": len(rows), "training_rows": len(eligible), "excluded": dict(Counter(reasons.values())),
         "selection": "minimum mean CV RMSE; holdout untouched during selection",
         "split_method": "level_stratified_rows", "holdout_fraction": 0.2,
         "actual_holdout_fraction": len(holdout) / len(eligible), "folds": len(cv),
@@ -133,7 +144,7 @@ def train(rows, *, degrees=(1, 2, 3, 4), alphas=(0.1, 1.0, 10.0), seed=42, folds
         try:
             if row.get("status", "ok") != "ok":
                 raise ValueError("input_not_ok")
-            values = [finite(row.get(f"{name}_raw")) for name in FEATURES]
+            values = [finite(row.get(f"{name}_raw")) for name in features]
             result.update(fitted_constant=model.predict(values), prediction_status="ok")
             if len(vectors) < 8:
                 vectors.append({"raw": values, "expected": result["fitted_constant"]})

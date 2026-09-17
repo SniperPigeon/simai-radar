@@ -12,17 +12,23 @@ import shutil
 import tempfile
 
 from mairadar.reporting import AnalysisRecord
+from mairadar.analysis import flatten_features
 
 from .artwork import export_song_covers
 
 
-SCHEMA_VERSION = "mairadar-visualizer-1"
+SCHEMA_VERSION = "mairadar-visualizer-2"
 TEMPLATE_DIRECTORY = Path(__file__).resolve().parents[3] / "res" / "visualizer"
 TEMPLATE_FILES = ("index.html", "app.js", "styles.css")
 DEFAULT_COLORS = (
     "#ef476f", "#ff9f1c", "#2a9d8f", "#3a86ff",
     "#8338ec", "#d1495b", "#00a6a6", "#6c757d",
 )
+
+# Edit this tuple to choose radar axes and order, independently of ML inputs.
+# None keeps the default axes (or the current axes when repackaging a site).
+# Example: ("note", "peak", "sweep", "slide_tricky", "jack", "fitted_constant")
+RADAR_FEATURES: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -42,7 +48,36 @@ DIMENSION_PRESENTATION = {
     "slide_sequence": DimensionPresentation("星星阵", "星星阵"),
     "jack": DimensionPresentation("纵连", "纵连"),
     "slide_cumulate": DimensionPresentation("持续星星压力", "持续星星"),
+    "fitted_constant": DimensionPresentation("拟合定数", "拟合定数"),
 }
+
+
+def select_dimensions(payload, names=None):
+    """Project mapped values onto radar axes, retaining the complete raw inputs."""
+    if names is None:
+        names = RADAR_FEATURES
+    if names is None:
+        return
+    names = tuple(names)
+    if not names or len(set(names)) != len(names):
+        raise ValueError("Radar dimensions must be nonempty and unique")
+    charts = [chart for song in payload["songs"] for chart in song["charts"]]
+    available = {name for chart in charts for name in chart["mappedFeatures"]}
+    missing = set(names) - available
+    if missing:
+        raise ValueError(f"Radar features need a score mapping: {', '.join(sorted(missing))}")
+    previous = {item["key"]: item for item in payload["dimensions"]}
+    payload["dimensions"] = [previous.get(name, {
+        "key": name, "label": DIMENSION_PRESENTATION.get(name, DimensionPresentation(name)).label,
+        "shortLabel": DIMENSION_PRESENTATION.get(name, DimensionPresentation(name)).short_label or name,
+        "color": DEFAULT_COLORS[index % len(DEFAULT_COLORS)],
+    }) for index, name in enumerate(names)]
+    for chart in charts:
+        raw = chart["rawFeatures"]
+        scores = chart["mappedFeatures"]
+        chart["rawScores"] = {name: raw.get(name) for name in names}
+        chart["scores"] = {name: scores.get(name) for name in names}
+        chart["dominantDimension"] = VisualizerExporter._dominant(chart["scores"], names)
 
 
 @dataclass(frozen=True)
@@ -65,14 +100,20 @@ class VisualizerExporter:
         *,
         constants_table: str | Path | None = None,
         constant_model: str | Path | None = None,
+        radar_features: Sequence[str] | None = None,
     ) -> None:
         self._presentation = dict(DIMENSION_PRESENTATION)
         if dimension_presentation is not None:
             self._presentation.update(dimension_presentation)
         self._constants = None
-        if constants_table is not None or constant_model is not None:
+        self._radar_features = radar_features
+        self._model = None
+        if constant_model is not None:
+            from mairadar.regression import PolynomialModel
+            self._model = PolynomialModel.load(constant_model)
+        if constants_table is not None:
             from .constants import ConstantAnnotations
-            self._constants = ConstantAnnotations(constants_table, constant_model)
+            self._constants = ConstantAnnotations(constants_table)
 
     def export(
         self,
@@ -93,8 +134,12 @@ class VisualizerExporter:
         for record in records:
             if record.analysis is not None and tuple(record.analysis.features) != names:
                 raise ValueError("Analysis features must match the configured export order")
-            if record.scores is not None and set(record.scores.features) != set(names):
-                raise ValueError("Score features must match the configured export features")
+            if record.scores is not None and record.analysis is not None and not (
+                set(record.scores.features) <= set(flatten_features(record.analysis))
+            ):
+                raise ValueError("Score features must refer to available raw features")
+            if self._model is not None and record.analysis is not None and "fitted_constant" not in record.analysis.features:
+                raise ValueError("Compute fitted_constant before scoring; pass constant_model to run_pipeline")
         self._validate_template()
 
         output = Path(output).absolute()
@@ -114,10 +159,9 @@ class VisualizerExporter:
             payload, failures = self._payload(records, names, staging)
             if self._constants is not None:
                 self._constants.payload(payload)
-                failures += sum(
-                    chart["status"] == "ok" and chart.get("constantPredictionStatus", "ok") != "ok"
-                    for song in payload["songs"] for chart in song["charts"]
-                )
+            if self._model is not None:
+                payload["constantModel"] = self._model.to_dict()
+            select_dimensions(payload, self._radar_features)
             data_path = staging / "data" / "songs.json"
             data_path.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
@@ -165,6 +209,10 @@ class VisualizerExporter:
         names: tuple[str, ...],
         staging: Path,
     ) -> tuple[dict, int]:
+        mapped_names = tuple(dict.fromkeys(
+            name for record in records if record.scores is not None for name in record.scores.features
+        )) or names
+        axes = tuple(name for name in names if name != "fitted_constant" and name in mapped_names) or mapped_names
         groups: OrderedDict[tuple, list[tuple[int, AnalysisRecord]]] = OrderedDict()
         skipped = 0
         for index, record in enumerate(records):
@@ -191,9 +239,12 @@ class VisualizerExporter:
                 chart = record.chart
                 cover = cover_paths.get(record_index)
                 export_issues = cover_issues.get(record_index, [])
-                raw_scores = self._raw_scores(record, names)
-                scores = self._scores(record, names)
-                dominant = self._dominant(scores, names)
+                raw_names = tuple(flatten_features(record.analysis)) if record.analysis is not None else names
+                raw_features = self._raw_scores(record, raw_names)
+                mapped_features = self._scores(record, mapped_names)
+                raw_scores = {name: raw_features.get(name) for name in axes}
+                scores = {name: mapped_features.get(name) for name in axes}
+                dominant = self._dominant(scores, axes)
                 metadata = chart.metadata_json if isinstance(chart.metadata_json, dict) else {}
                 duration = max(chart.chart_end_time_s or 0, chart.last_event_end_s or 0)
                 if not math.isfinite(duration) or duration <= 0:
@@ -213,6 +264,11 @@ class VisualizerExporter:
                     "cover": cover,
                     "scores": scores,
                     "rawScores": raw_scores,
+                    "rawFeatures": raw_features,
+                    "mappedFeatures": mapped_features,
+                    **({"fittedConstant": raw_features["fitted_constant"],
+                        "constantPredictionStatus": "ok" if raw_features["fitted_constant"] is not None else "unavailable"}
+                       if "fitted_constant" in raw_features else {}),
                     "dominantDimension": dominant,
                     "totalNotes": None,
                     "durationSeconds": duration,
@@ -247,7 +303,7 @@ class VisualizerExporter:
             "mappingVersions": mapping_versions,
             "scoreScale": 100,
             "displayRange": [0, 220],
-            "dimensions": self._dimensions(names),
+            "dimensions": self._dimensions(axes),
             "stats": {
                 "songCount": len(songs),
                 "chartCount": sum(len(song["charts"]) for song in songs),
@@ -257,13 +313,19 @@ class VisualizerExporter:
             },
             "songs": songs,
         }
+        predicted = [chart for song in songs for chart in song["charts"] if "fittedConstant" in chart]
+        if predicted:
+            payload["stats"]["constantPredictionFailedCount"] = sum(
+                chart["constantPredictionStatus"] != "ok" for chart in predicted
+            )
         return payload, len(failed_indexes)
 
     @staticmethod
     def _raw_scores(record: AnalysisRecord, names: tuple[str, ...]) -> dict[str, float | None]:
         values = {}
+        raw = flatten_features(record.analysis) if record.analysis is not None else {}
         for name in names:
-            item = record.analysis.features.get(name) if record.analysis is not None else None
+            item = raw.get(name)
             value = item.data if item is not None and item.success else None
             values[name] = value if VisualizerExporter._finite(value) else None
         return values

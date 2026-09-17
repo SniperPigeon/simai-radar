@@ -145,9 +145,9 @@ class ConstantsTests(unittest.TestCase):
             root = Path(temp)
             (root / "data").mkdir()
             write_json(root / "data/songs.json", {
-                "schemaVersion": "mairadar-visualizer-1", "songs": [
+                "schemaVersion": "mairadar-visualizer-2", "songs": [
                     {"title": "X", "artist": "Test artist", "charts": [{"difficulty": 6, "kind": "ST", "status": "ok",
-                                                "rawScores": {"note": 3.5}}]},
+                                                "rawFeatures": {"note": 3.5}}]},
                 ],
             })
             [row] = read_rows(root)

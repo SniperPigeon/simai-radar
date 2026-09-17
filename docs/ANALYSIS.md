@@ -36,7 +36,19 @@ analyzer = ChartAnalyzer(features=features)
 
 AnalysisContext 提供事件元组、chart_end_time_s、last_event_end_s 和 duration_s。各维度应只读事件；调度器为每个维度复制输入快照，防止意外修改影响调用方或其他维度。MVP 不预先建立窗口索引或几何缓存。
 
-FeatureResult 仅包含 data 和 success 两个字段，不携带单位、中间统计量或诊断。成功时 data 为有限数值；失败时 data=None、success=False。维度抛出的异常由主分析器记录到 AnalysisResult.diagnostics，其他维度仍执行；汇总状态为 ok、partial 或 error。
+FeatureResult 包含 `data`、`success` 和默认空的 `stats`。成功时 data 为有限数值；失败时
+data=None、success=False。stats 为有名字的有限数值或 None；诊断仍在 AnalysisResult 中。
+`flatten_features(result)` 统一展开综合量及 `<feature>_<stat>` 字段，不改变原始结果。
+未配置 scorer 的统计量仍可用于回归训练，缺少模型要求的输入时明确失败。
+
+本轮在原计算上附带以下量，原综合值保持不变：
+
+- Note：1.5 秒窗口密度的 count、mean、std（总体）、median、max、rms、p95。
+- Sweep：当前选定爆发窗口的加权 base_density、motion_density、raw_motion_density；不是整曲均值。
+- Slide Tricky：配置点 internal、launch 的上述统计及 total_load。
+- Slide Sequence：连续段 cadence、concurrency、length factor 的上述统计。
+
+p95 使用 inclusive 线性分位数；一个样本返回自身。没有对应模式时统计为零；不可计算时为 None。
 
 ## 纵连口径
 
@@ -497,7 +509,8 @@ outputs/analysis/
     曲名-5-dx.png
 ```
 
-CSV 使用 UTF-8 BOM，固定列为 title、artist、designer、difficulty_index、level、chart_type、cover_path、status、diagnostics，后面追加配置中的 `<feature>_raw`。失败值留空，diagnostics 为 JSON，包含源子目录、解析和主分析器诊断、各维成功与否。普通 metadata 缺失时留空；DX/SD 缺失时按下述独立检测规则补全。
+CSV 使用 UTF-8 BOM，固定 metadata 列后追加综合量和展开统计量的 `<feature>_raw`，以及有 scorer
+配置的 `<feature>_score`。两类列不要求一一对应。失败值留空，diagnostics 保存解析与分析诊断。
 
 曲绘按原样复制，cover_path 相对 CSV 所在目录。导出期按来源、标题和曲师临时归组，同曲全部难度及 DX/SD 谱面共享一份按标题命名的曲绘；不创建歌曲注册表或稳定身份。同名文件字节完全相同时复用；不同歌曲同名但内容冲突，或同一歌曲内出现不同曲绘时，保留导出诊断且不覆盖已有文件，不改变分析/评分状态或增加失败计数。CSV 与 visualizer 使用相同策略，不追加 hash，也不去重报告行。
 
@@ -584,11 +597,14 @@ batch, report = run_pipeline(
 exit_code = max(batch.exit_code, report.exit_code)
 ```
 
-原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
+scorer 在模型预测之后执行，输入是综合量、展开的 stats 和可选 `fitted_constant`，都未经雷达映射。
+只映射同时存在原始字段及 mapper 配置的项目；未配置字段保留 raw，不生成 score，也不使分析失败。
+已配置字段的原始值失败时标准分留空；mapper 报错或返回非有限值时记录映射错误，其他字段继续处理。
+默认及旧 mapping profile 对 `fitted_constant` 使用 identity；在 profile 中显式配置该字段即可覆盖。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
 `provisional-sweep-2s-top3-cumulate-star8-top5-20260916-v51`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
-输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
+输出字段来自可用原始特征，禁止为失败的 raw 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 
 pipeline 将评分输出附在 AnalysisRecord.scores 上，导出器追加 `<feature>_score` 并保留映射诊断和版本。映射全部失败时仍保留分数列，以空值表示失败。直接调用导出组件输出原始分析时，可省略评分结果及标准分数列。

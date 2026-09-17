@@ -393,7 +393,9 @@ class PipelineTests(unittest.TestCase):
                 for row in rows:
                     for name in raw_columns:
                         self.assertTrue(row[name])
-                        self.assertTrue(row[name.removesuffix("_raw") + "_score"])
+                    for name in (column for column in row if column.endswith("_score")):
+                        self.assertTrue(row[name])
+                        self.assertIn(name.removesuffix("_score") + "_raw", row)
                     self.assertTrue(json.loads(row["diagnostics"])["scoring"]["mapping_version"])
                 self.assertTrue(all((root / mode / row["cover_path"]).is_file() for row in rows))
 
