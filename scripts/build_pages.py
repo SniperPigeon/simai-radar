@@ -20,7 +20,9 @@ sys.path.insert(0, str(ROOT / "src"))
 
 # Imports must follow the Python version check and local source-path bootstrap.
 from mairadar.cli import main as analyze  # noqa: E402
-from mairadar.exporters.visualizer import SCHEMA_VERSION, TEMPLATE_DIRECTORY, TEMPLATE_FILES  # noqa: E402
+from mairadar.exporters.visualizer import (  # noqa: E402
+    SCHEMA_VERSION, TEMPLATE_DIRECTORY, TEMPLATE_FILES, select_dimensions,
+)
 from mairadar.io import COVER_EXTENSIONS, find_cover  # noqa: E402
 
 
@@ -95,6 +97,8 @@ def validate_payload(payload: dict, *, include_covers: bool = True) -> list[dict
     for chart in charts:
         if chart.get("status") != "ok" or (include_covers and chart.get("exportIssues")):
             raise ValueError(f"Refusing to publish incomplete chart: {chart.get('id')}")
+        if not all(isinstance(chart.get(field), dict) for field in ("rawFeatures", "mappedFeatures")):
+            raise ValueError("Charts require rawFeatures and mappedFeatures")
         for field in ("scores", "rawScores"):
             values = chart.get(field)
             if not isinstance(values, dict) or set(values) != set(keys):
@@ -142,7 +146,7 @@ def restore_covers(payload: dict, target: Path, cover_root: Path) -> None:
         raise ValueError(f"Cover restoration failed: {issues}")
     for index, chart in enumerate(charts):
         chart["cover"] = paths.get(index)
-        # visualizer-1 exportIssues describes artwork export only. Successful
+        # exportIssues describes artwork export only. Successful
         # re-export supersedes those old failures; analysis status stays intact.
         chart["exportIssues"] = []
     for song in payload["songs"]:
@@ -154,6 +158,7 @@ def prepare_site(
     source: Path, target: Path, *, no_covers: bool = False,
     constants_table: Path | None = None, constant_model: Path | None = None,
     cover_root: Path | None = None,
+    mapping_profile: Path | None = None,
 ) -> dict:
     if no_covers and cover_root is not None:
         raise ValueError("--no-covers and --cover-root cannot be combined")
@@ -162,11 +167,13 @@ def prepare_site(
         # Cover export diagnostics do not block a package that omits artwork.
         # Keep the original diagnostics in the JSON for inspection.
         charts = validate_payload(payload, include_covers=not no_covers and cover_root is None)
-        if constants_table is not None or constant_model is not None:
+        if constants_table is not None or constant_model is not None or mapping_profile is not None:
             from mairadar.exporters.constants import ConstantAnnotations
-            failures = ConstantAnnotations(constants_table, constant_model).payload(payload)
+            failures = ConstantAnnotations(constants_table, constant_model, mapping_profile).payload(payload)
             if failures:
-                raise ValueError(f"Constant prediction failed for {failures} charts")
+                raise ValueError(f"Feature prediction/mapping failed for {failures} charts")
+        select_dimensions(payload)
+        validate_payload(payload, include_covers=not no_covers and cover_root is None)
         if cover_root is not None:
             restore_covers(payload, target, cover_root)
             validate_payload(payload)
@@ -234,6 +241,8 @@ def build(args: argparse.Namespace) -> dict:
             ]
             if args.mapping_profile:
                 command += ["--mapping-profile", str(args.mapping_profile)]
+            if args.constant_model:
+                command += ["--constant-model", str(args.constant_model)]
             if args.difficulty:
                 command += ["--difficulty", *map(str, args.difficulty)]
             if args.include_utage:
@@ -245,8 +254,9 @@ def build(args: argparse.Namespace) -> dict:
             source = generated
         stats = prepare_site(
             source, staging, no_covers=args.no_covers,
-            constants_table=args.constants_table, constant_model=args.constant_model,
+            constants_table=args.constants_table, constant_model=args.constant_model if args.site else None,
             cover_root=args.cover_root,
+            mapping_profile=args.mapping_profile if args.site else None,
         )
         # Put index.html at the ZIP root for both Cloudflare drag/drop and CI reuse.
         with ZipFile(archive, "x", compression=ZIP_DEFLATED) as bundle:
@@ -278,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode", choices=("full", "analysis_score"), default="analysis_score")
     parser.add_argument("--mapping-profile", type=Path)
     parser.add_argument("--constants-table", type=Path, help="attach a matched constant table")
-    parser.add_argument("--constant-model", type=Path, help="predict from seven raw dimensions")
+    parser.add_argument("--constant-model", type=Path, help="predict using the model's raw feature list")
     parser.add_argument("--difficulty", type=int, nargs="+")
     parser.add_argument("--include-utage", action="store_true")
     parser.add_argument("--chart-type", choices=("dx", "sd"))
@@ -286,7 +296,7 @@ def main(argv: list[str] | None = None) -> int:
     covers.add_argument("--no-covers", action="store_true", help="omit artwork from the package")
     covers.add_argument("--cover-root", type=Path, help="reattach artwork from this raw root using sourceRef; no analysis")
     args = parser.parse_args(argv)
-    if args.site and (args.mode != "analysis_score" or args.mapping_profile or args.difficulty
+    if args.site and (args.mode != "analysis_score" or args.difficulty
                       or args.include_utage or args.chart_type):
         parser.error("--site reuses scores; analysis options require --input or --demo")
     if args.difficulty and any(value < 1 for value in args.difficulty):

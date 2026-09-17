@@ -8,16 +8,15 @@ import sys
 import tempfile
 
 from mairadar.constants import finite, read_rows, write_json, write_rows
-from .runtime import FEATURES, PolynomialModel
+from .runtime import PolynomialModel
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    fit = commands.add_parser("fit", help="fit a joined constants.csv; export portable parameters")
+    fit = commands.add_parser("fit", help="fit seven raw inputs with a quadratic model; export parameters")
     fit.add_argument("--input", type=Path, required=True)
     fit.add_argument("--output", type=Path, required=True, help="new output directory")
-    fit.add_argument("--degrees", type=int, nargs="+", default=[1, 2, 3, 4])
     fit.add_argument("--alphas", type=float, nargs="+", default=[0.1, 1.0, 10.0])
     fit.add_argument("--seed", type=int, default=42)
     fit.add_argument("--folds", type=int, default=5)
@@ -37,7 +36,7 @@ def main(argv=None):
                 try:
                     if row.get("status", "ok") != "ok":
                         raise ValueError("input_not_ok")
-                    values = [finite(row.get(f"{name}_raw")) for name in FEATURES]
+                    values = [finite(row.get(f"{name}_raw")) for name in model.features]
                     row.update(fitted_constant=model.predict(values), prediction_status="ok")
                 except ValueError as exc:
                     failures += 1
@@ -50,7 +49,7 @@ def main(argv=None):
         except ImportError as exc:
             raise RuntimeError("Training requires scikit-learn: pip install 'simai-radar[regression]'") from exc
         model, evaluation, report, predictions, vectors = train(
-            rows, degrees=args.degrees, alphas=args.alphas, seed=args.seed, folds=args.folds,
+            rows, alphas=args.alphas, seed=args.seed, folds=args.folds,
         )
         report["input"] = str(args.input)
         args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -59,7 +58,7 @@ def main(argv=None):
             write_json(staging / "model.json", model.to_dict())
             write_json(staging / "evaluation_model.json", evaluation.to_dict())
             write_json(staging / "report.json", report)
-            write_json(staging / "test_vectors.json", {"features": list(FEATURES), "tolerance": 1e-9, "vectors": vectors})
+            write_json(staging / "test_vectors.json", {"features": list(model.features), "tolerance": 1e-9, "vectors": vectors})
             write_rows(staging / "predictions.csv", predictions)
             staging.rename(args.output)
         finally:

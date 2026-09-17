@@ -306,7 +306,7 @@ def read_rows(source):
             return rows
     if source.suffix.lower() == ".json":
         data = json.loads(source.read_text(encoding="utf-8-sig"))
-        if data.get("schemaVersion") != "mairadar-visualizer-1":
+        if data.get("schemaVersion") != "mairadar-visualizer-2":
             raise ValueError("Expected visualizer songs.json or a charts CSV")
         rows = []
         for song in data["songs"]:
@@ -317,7 +317,7 @@ def read_rows(source):
                     "chart_type": chart_type(chart.get("kind")), "level": chart.get("level"),
                     "source_ref": chart.get("sourceRef", ""), "status": chart.get("status", ""),
                 }
-                row.update({f"{key}_raw": value for key, value in chart.get("rawScores", {}).items()})
+                row.update({f"{key}_raw": value for key, value in chart["rawFeatures"].items()})
                 rows.append(row)
     else:
         rows = _csv_rows(source)

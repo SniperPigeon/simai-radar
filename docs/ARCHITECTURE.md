@@ -18,11 +18,25 @@ model.py 定义 Event、Diagnostic、ParseResult、Chart、ChartBundle；validat
 
 io.py 读取文件、保存 CSV、解码 JSON 单元格，并可原样复制曲绘为包内附件。曲绘只通过 manifest 和外围 read_cover_path 暴露，不加入 Event、ParseResult 或解析必需参数。source_name 只在 metadata 中用于展示。导出目录 `<title>-<difficulty_index>-dx/sd` 不含 hash，不维护歌曲注册表、输入缓存或去重索引。CSV hash 只校验文件完整性；不属于解析 API。目录替换是外围文件写入事务，不能扩展成歌曲管理逻辑。
 
-analysis 读取 ParseResult 的事件与时间字段，按显式配置调用 Note、Peak、扫键、错位压力、
-星星阵和纵连六个独立维度分析器；不重新扫描 Simai 来计数。每个维度使用独立实例和事件快照，失败
+analysis 读取 ParseResult 的事件与时间字段，按显式配置调用独立分析器；每项返回标量综合值，
+不重新扫描 Simai 来计数。每个分析器使用独立实例和事件快照，失败
 后继续其他维度。baseline、难度权重和映射算法不进入 parser；scoring 提供
 ScoreTransformer 接口与按 feature 分发的 FeatureScoreTransformer；每个 feature 独立配置
 映射器实例及其参数。
+
+完整次序为 `analysis(七维 raw) → 可选 fitted_constant → scoring → 雷达选轴`。
+拟合定数由 `regression.derived.with_prediction` 根据未映射的输入生成，再作为普通原始特征附加。
+模型内部的 StandardScaler 与雷达 scorer 独立，映射结果不回流模型。
+scorer 仅映射已配置的可用字段；未配置的 raw 仍可用于 ML。拟合定数默认 identity，
+显式 mapping profile 可以覆盖。雷达只选映射后的维度，不裁剪 `rawFeatures` 或 `mappedFeatures`。
+CSV 输出完整的原始字段及已映射字段；visualizer 保留全量 raw/mapped 数据，`rawScores` / `scores`
+只是展示投影。模型参数中的 features 列表确定输入维度和顺序。
+训练固定为七维 raw、二次 PolynomialFeatures 和 Ridge，sklearn 只搜索正则强度。
+展示选轴定义在 `exporters/visualizer.py` 的 `RADAR_FEATURES`；没有选列、选阶 CLI 或额外配置加载层。
+推理使用模型冻结的输入顺序，scorer 映射仍由评分层负责。
+模型统一使用 `mairadar-polynomial-2`，站点统一使用 `mairadar-visualizer-2`，不在运行链路中
+迁移旧七维模型或从展示投影补回原始特征。历史产物按当前格式重新生成。
+子特征提取和消融工具留在 `constant_regression` 分支；beta 的分析接口不包含 stats 或特征展开层。
 
 batch 复用 read_bundle，将根目录的每个直接子文件夹作为一张谱面；原始文件适配则解析一次，在内存中逐张分析并保留失败记录。chart_type 在解析完成后独立检测 DX 特征，仅补全缺失的类型，不修改 parser 或事件；reporting 在外围组合 metadata、分析结果、可选评分结果与曲绘引用；exporters.CsvExporter 接收这些记录，输出总表和 covers 文件夹。
 

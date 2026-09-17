@@ -7,7 +7,8 @@ simai-radar 是一个面向 maimai 谱面雷达图评分研究的数据分析 co
 映射也不应被当作正式评分标准。
 
 `constant_regression` 分支增加了独立的定数实验管线：从 OTOGE DB 采集定数，按规范化曲名
-为指定 bundle 生成总表，以七维 raw 拟合多项式，并导出只依赖标准库的推理参数。
+为指定 bundle 生成总表，以七维 raw 综合量拟合二次多项式，并导出只依赖标准库的推理参数。
+子特征实验保留在 `constant_regression` 分支，结果见[消融报告](docs/REGRESSION_ABLATION.md)。
 Visualizer 可选显示官方定数和拟合定数。使用方式、匹配规则及评估结果见
 [定数采集与回归](docs/CONSTANT_REGRESSION.md)。
 
@@ -20,10 +21,13 @@ Visualizer 可选显示官方定数和拟合定数。使用方式、匹配规则
 parser：Simai 文本 → 统一事件时间轴 + 解析诊断
         │
         ▼
-analysis：事件时间轴 → 各维独立的原始特征值
+analysis：事件时间轴 → 七维原始综合量
         │
         ▼
-scoring：原始特征值 → 标准化雷达分数
+可选预测：原始量 → fitted_constant（仍是 raw）
+        │
+        ▼
+scoring：显式配置的 raw → 标准分；雷达再独立选轴
         │
         ▼
 exporter：谱面 metadata + 原始值 + 标准分 → charts.csv / 曲绘
@@ -413,7 +417,11 @@ Touch 连通组最多计两组，启动拍统一将物件负荷除以二，并�
 - `chart_end_time_s` 与 `last_event_end_s`；
 - `duration_s`：两者的有效最大值。
 
-成功结果必须是有限数值 `FeatureResult(value)`；无法计算时返回 `FeatureResult(None, success=False)`。某个维度抛出异常只会将该维标为失败，其余维度仍会继续。当前结果契约是一维一个标量；单位和中间统计量应由特征实现或实验代码自行管理。
+成功结果是标量 `FeatureResult(value)`，只包含 data 和 success。
+无法计算时返回 `FeatureResult(None, success=False)`；某个维度抛出异常只会将该维标为失败。
+scorer 只映射有配置的原始字段。回归训练使用固定七维 raw 和二次多项式；预测结果可附加为
+`fitted_constant`。雷达展示维度独立修改 `src/mairadar/exporters/visualizer.py` 中的
+`RADAR_FEATURES`，不会改变回归输入，不需要选列 CLI 参数或额外配置文件。
 
 要让默认 CLI 长期启用一个特征，在 `src/mairadar/analysis/config.py` 中导入类并加入 `FEATURES`。字典键也是导出的列名前缀，必须以字母开头，且只能包含字母、数字和下划线；字典顺序决定输出顺序。
 

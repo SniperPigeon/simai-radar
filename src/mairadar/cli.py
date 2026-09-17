@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
         help="frozen mapping_profile.json exported by the visualizer",
     )
     parser.add_argument("--constants-table", type=Path, help="visualizer: matched constants.csv")
-    parser.add_argument("--constant-model", type=Path, help="visualizer: frozen raw polynomial model.json")
+    parser.add_argument("--constant-model", type=Path, help="append fitted_constant before score mapping")
     parser.add_argument(
         "--difficulty", "-d", type=_difficulty, nargs="+",
         help="chart indexes; analysis defaults to Master/5 and Re:Master/6",
@@ -93,9 +93,13 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
                 transformer = TRANSFORMER()
         if args.mode not in SCORING_MODES and args.format != "csv":
             raise ValueError("--format is only available in scoring modes")
-        if args.constants_table or args.constant_model:
+        if args.constants_table:
             if args.format != "visualizer" or exporter is not None:
                 raise ValueError("Constant annotations require --format visualizer without an injected exporter")
+        constant_model = None
+        if args.constant_model is not None:
+            from .regression import PolynomialModel
+            constant_model = PolynomialModel.load(args.constant_model)
         if exporter is None and args.format == "visualizer":
             from .exporters import VisualizerExporter
             exporter = VisualizerExporter(
@@ -106,6 +110,7 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
             transformer=transformer, exporter=exporter,
             difficulties=args.difficulty, chart_type=args.chart_type,
             include_utage=args.include_utage,
+            constant_model=constant_model,
         )
         if args.mode == "parse_only":
             print(

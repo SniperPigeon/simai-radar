@@ -22,17 +22,16 @@ class FeatureScoreTransformer:
 
     def transform(self, result: AnalysisResult) -> ScoreResult:
         scores = {}
-        for name, feature in result.features.items():
+        raw = result.features
+        for name, mapper in self._mappers.items():
+            if name not in raw:
+                continue
+            feature = raw[name]
             if not feature.success:
                 scores[name] = FeatureScore(None, "unavailable")
                 continue
-            if name not in self._mappers:
-                scores[name] = FeatureScore(None, "error", (
-                    AnalysisIssue("MAPPER_MISSING", "No mapper configured for this feature", name),
-                ))
-                continue
             try:
-                value = self._mappers[name].map(feature.data)
+                value = mapper.map(feature.data)
                 if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
                     raise ValueError("Mapper must return a finite numeric score")
                 scores[name] = FeatureScore(value)

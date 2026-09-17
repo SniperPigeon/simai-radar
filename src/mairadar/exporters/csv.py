@@ -43,11 +43,15 @@ class CsvExporter:
         records = list(records)
         if not records:
             raise ValueError("No bundle records to export")
+        raw_names = names
+        score_names = tuple(dict.fromkeys(
+            name for record in records if record.scores is not None for name in record.scores.features
+        )) or (names if include_scores else ())
         for record in records:
             if record.analysis is not None and tuple(record.analysis.features) != names:
                 raise ValueError("Analysis features must match the configured export order")
-            if record.scores is not None and set(record.scores.features) != set(names):
-                raise ValueError("Score features must match the configured export features")
+            if record.scores is not None and not set(record.scores.features) <= set(raw_names):
+                raise ValueError("Score features must refer to available raw features")
 
         output = Path(output).absolute()
         if output.is_symlink() or (output.exists() and (
@@ -59,10 +63,8 @@ class CsvExporter:
         emptied = False
         try:
             (staging / "covers").mkdir()
-            score_columns = include_scores or any(record.scores is not None for record in records)
-            columns = list(FIXED_COLUMNS) + [f"{name}_raw" for name in names]
-            if score_columns:
-                columns += [f"{name}_score" for name in names]
+            columns = list(FIXED_COLUMNS) + [f"{name}_raw" for name in raw_names]
+            columns += [f"{name}_score" for name in score_names]
             cover_paths, cover_issues, _ = export_song_covers(
                 records, staging, Path("covers"),
             )
@@ -71,7 +73,7 @@ class CsvExporter:
                 writer = csv.DictWriter(stream, fieldnames=columns)
                 writer.writeheader()
                 for index, record in enumerate(records):
-                    row = self._row(record, names, score_columns)
+                    row = self._row(record, raw_names, score_names)
                     row["cover_path"] = cover_paths.get(index)
                     issues = [
                         AnalysisIssue("COVER_EXPORT_FAILED", message)
@@ -98,7 +100,7 @@ class CsvExporter:
                 shutil.rmtree(staging)
 
     @staticmethod
-    def _row(record: AnalysisRecord, names: tuple[str, ...], scores: bool) -> dict:
+    def _row(record: AnalysisRecord, names: tuple[str, ...], score_names: tuple[str, ...]) -> dict:
         chart = record.chart
         row = {key: None for key in FIXED_COLUMNS}
         if chart is not None:
@@ -116,17 +118,18 @@ class CsvExporter:
                 name: item.success
                 for name, item in record.analysis.features.items()
             }
+        raw = record.analysis.features if record.analysis is not None else {}
         for name in names:
-            item = record.analysis.features[name] if record.analysis is not None else None
+            item = raw.get(name)
             row[f"{name}_raw"] = item.data if item is not None and item.success else None
-            if scores:
-                score = record.scores.features[name] if record.scores is not None else None
-                if score is not None and score.status == "ok" and (
-                    isinstance(score.value, bool) or not isinstance(score.value, (int, float))
-                    or not math.isfinite(score.value)
-                ):
-                    raise ValueError(f"Non-finite or missing standard score: {name}")
-                row[f"{name}_score"] = score.value if score is not None and score.status == "ok" else None
+        for name in score_names:
+            score = record.scores.features.get(name) if record.scores is not None else None
+            if score is not None and score.status == "ok" and (
+                isinstance(score.value, bool) or not isinstance(score.value, (int, float))
+                or not math.isfinite(score.value)
+            ):
+                raise ValueError(f"Non-finite or missing standard score: {name}")
+            row[f"{name}_score"] = score.value if score is not None and score.status == "ok" else None
         if record.scores is not None:
             detail["scoring"] = asdict(record.scores)
         row["diagnostics"] = detail
