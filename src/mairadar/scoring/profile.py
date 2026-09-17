@@ -12,7 +12,7 @@ from .transformer import FeatureScoreTransformer
 
 PROFILE_SCHEMA_VERSION = "mairadar-mapping-profile-1"
 SCORE_ANCHORS = (50.0, 100.0, 150.0, 200.0)
-MAXIMUM_SCORE = 220.0
+MAXIMUM_SCORE = 250.0
 
 
 def _finite_number(value: object, field: str) -> float:
@@ -85,13 +85,6 @@ def load_mapping_profile(path: str | Path) -> FeatureScoreTransformer:
         raise ValueError("Mapping profile root must be an object")
     if payload.get("schemaVersion") != PROFILE_SCHEMA_VERSION:
         raise ValueError(f"Unsupported mapping profile schema: {payload.get('schemaVersion')!r}")
-    if payload.get("scoreAnchors") != [50, 100, 150, 200]:
-        raise ValueError("Mapping profile scoreAnchors must be [50, 100, 150, 200]")
-    if payload.get("maximumScore") != 220:
-        raise ValueError("Mapping profile maximumScore must be 220")
-    mapping_version = payload.get("mappingVersion")
-    if not isinstance(mapping_version, str) or not mapping_version.strip():
-        raise ValueError("Mapping profile mappingVersion must be a nonempty string")
     dimensions = payload.get("dimensions")
     if not isinstance(dimensions, dict) or not dimensions:
         raise ValueError("Mapping profile dimensions must be a nonempty object")

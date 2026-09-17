@@ -6,7 +6,7 @@ simai-radar 是一个面向 maimai 谱面雷达图评分研究的数据分析 co
 占位维度；`jack`、`sweep` 与 `slide_tricky` 暂时使用 identity 映射，便于先观察 raw 分布，其余临时
 映射也不应被当作正式评分标准。
 
-`constant_regression` 分支增加了独立的定数实验管线：从 OTOGE DB 采集定数，按规范化曲名
+当前 `regression_beta` 分支提供独立的定数回归管线：从 OTOGE DB 采集定数，按规范化曲名
 为指定 bundle 生成总表，以七维 raw 综合量拟合二次多项式，并导出只依赖标准库的推理参数。
 子特征实验保留在 `constant_regression` 分支，结果见[消融报告](docs/REGRESSION_ABLATION.md)。
 Visualizer 可选显示官方定数和拟合定数。使用方式、匹配规则及评估结果见
@@ -153,6 +153,93 @@ python scripts/mairadar.py \
 现有旧版 `events-0.2` bundle 不能交给当前 `events-0.3` reader，需要从原始谱面重新生成。
 报告输出必须是新目录或空目录。分析默认只选择 5 号 Master 与 6 号 Re:Master；需要在
 默认集合上纳入 7 号宴谱时添加 `--include-utage`。
+
+## 定数回归使用示例
+
+以下命令在仓库根目录执行，使用 Python 3.11+。`fit` 的输出目录和 `predict` 的输出 CSV
+必须是新路径；visualizer 输出目录可以是新目录或空目录。
+
+### 1. Fit：用官谱拟合回归并导出模型
+
+先安装训练依赖：
+
+```bash
+python -m pip install -e '.[regression]'
+```
+
+假设已有 `outputs/constants.csv`：它包含分析得到的七维 `<feature>_raw`，以及匹配得到的
+`official_constant`、`match_status`。定数表的生成方式见[定数采集与回归](docs/CONSTANT_REGRESSION.md#定数总表和训练)。
+
+```bash
+python scripts/constant_regression.py fit \
+  --input outputs/constants.csv \
+  --output outputs/constant-fit-quadratic
+```
+
+训练固定使用七维 raw、二次多项式，并通过等级分层交叉验证选择 Ridge 正则强度。
+输出中的 `model.json` 已经是可供推理的参数，无需再执行 export：
+
+| 产物 | 用途 |
+| --- | --- |
+| `model.json` | 用全部有效标签重拟合的部署模型 |
+| `evaluation_model.json` | 开发集训练的模型，用于复现留出评估 |
+| `report.json` | 划分、参数选择和误差指标 |
+| `predictions.csv` | 逐谱面的拟合定数和留出预测 |
+| `test_vectors.json` | 无依赖推理的对照输入与输出 |
+
+### 2. 仅 Predict：使用已有分析结果
+
+例如对快速开始生成的 `outputs/demo/charts.csv` 预测：
+
+```bash
+python scripts/constant_regression.py predict \
+  --input outputs/demo/charts.csv \
+  --model outputs/constant-fit-quadratic/model.json \
+  --output outputs/demo-predictions.csv
+```
+
+输入需包含模型要求的七维 raw，自制谱无需官方定数标签。命令直接消费已有 raw 并应用冻结参数，
+生成包含 `fitted_constant`、`prediction_status` 的 CSV，只依赖标准库。
+`--input` 也可以指向当前格式的 visualizer 目录或其 `data/songs.json`。
+
+### 3. Predict 新谱，并生成 visualizer
+
+下面用仓库内的合成谱演示；把 `--input` 替换为新谱的 `maidata.txt`、`.simai` 文件，
+或原始谱面根目录即可：
+
+```bash
+python scripts/mairadar.py \
+  --mode full \
+  --input "res/examples/schema_v0.3/Schema Prototype-5-sd/maidata.txt" \
+  --constant-model outputs/constant-fit-quadratic/model.json \
+  --format visualizer \
+  --output outputs/predicted-visualizer
+```
+
+这一步依次解析新谱、计算七维 raw、预测定数、执行 scorer，再导出页面和曲绘。
+默认分析 Master/5、Re:Master/6，其他难度可用 `--difficulty` 指定。
+已有事件 bundle 时，改用 `--mode analysis_score`，并把 `--input` 指向 bundle 根目录。
+
+可以按需追加：
+
+- `--mapping-profile data/mapping_profile.json`：使用已保存的雷达分数映射；不改变模型预测。
+- `--constants-table outputs/constants.csv`：同时显示能匹配上的官方定数，自制谱可省略。
+
+启动本地预览：
+
+```bash
+python -m http.server 8000 --bind 127.0.0.1 --directory outputs/predicted-visualizer
+```
+
+浏览器打开 <http://localhost:8000>。页面详情显示拟合定数；如需把它也作为雷达轴，修改
+`src/mairadar/exporters/visualizer.py` 中的 `RADAR_FEATURES`，例如：
+
+```python
+RADAR_FEATURES = ("note", "peak", "sweep", "slide_tricky", "jack", "fitted_constant")
+```
+
+修改后重新导出。`fitted_constant` 默认使用 identity 映射，可在 mapping profile 中配置其
+雷达尺度；详情里的原始拟合定数保持不变。
 
 ## 解析器 API
 
