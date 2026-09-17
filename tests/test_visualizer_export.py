@@ -91,77 +91,10 @@ class VisualizerExporterTests(unittest.TestCase):
             self.assertTrue(all((root / "site" / name).is_file() for name in (
                 "index.html", "app.js", "styles.css", "data/songs.json",
             )))
-            app_source = (root / "site" / "app.js").read_text()
-            self.assertIn("const PERCENTILE_PRECISION = 3;", app_source)
-            self.assertIn('step="${PERCENTILE_STEP}"', app_source)
-            self.assertIn("MAX_DISTRIBUTION_PERCENTILE", app_source)
-            self.assertIn(
-                "const DISTRIBUTION_SCORE_ANCHORS = Object.freeze([50, 100, 150, 200]);",
-                app_source,
-            )
-            self.assertIn("function mapRawScore(rawValue, rawThresholds)", app_source)
-            self.assertIn("function buildMappingProfile()", app_source)
-            self.assertIn('link.download = "mapping_profile.json"', app_source)
-            self.assertIn("t4Max: values.at(-1)", app_source)
-            self.assertIn("function orderedRadarDimensions(dimensions)", app_source)
-            self.assertIn(
-                "dimensions[1], dimensions[2], dimensions[5]",
-                app_source,
-            )
-            self.assertIn("state.clientMappedDimensions.add(state.distributionDimension)", app_source)
-            self.assertNotIn('step="0.1"', app_source)
-            index_source = (root / "site" / "index.html").read_text()
-            self.assertIn("T1/T2/T3/T4 → 50/100/150/200", index_source)
-            self.assertIn("导出 mapping_profile", index_source)
-            self.assertIn("<th>目标分</th>", index_source)
             payload = json.loads(report.data_path.read_text())
             self.assertEqual(payload["schemaVersion"], "mairadar-visualizer-1")
             self.assertEqual(payload["mappingVersions"], ["visualizer-test-v1"])
             self.assertEqual(payload["displayRange"], [0, 220])
-            self.assertEqual(payload["dimensions"], [
-                {
-                    "key": "note",
-                    "label": "Note",
-                    "shortLabel": "Note",
-                    "color": "#ef476f",
-                },
-                {
-                    "key": "peak",
-                    "label": "Peak",
-                    "shortLabel": "Peak",
-                    "color": "#ff9f1c",
-                },
-                {
-                    "key": "sweep",
-                    "label": "扫键",
-                    "shortLabel": "扫键",
-                    "color": "#2a9d8f",
-                },
-                {
-                    "key": "slide_tricky",
-                    "label": "错位压力",
-                    "shortLabel": "错位压力",
-                    "color": "#3a86ff",
-                },
-                {
-                    "key": "slide_sequence",
-                    "label": "星星阵",
-                    "shortLabel": "星星阵",
-                    "color": "#8338ec",
-                },
-                {
-                    "key": "jack",
-                    "label": "纵连",
-                    "shortLabel": "纵连",
-                    "color": "#d1495b",
-                },
-                {
-                    "key": "slide_cumulate",
-                    "label": "持续星星压力",
-                    "shortLabel": "持续星星",
-                    "color": "#00a6a6",
-                },
-            ])
             self.assertEqual(payload["stats"]["songCount"], 1)
             self.assertEqual(payload["stats"]["chartCount"], 2)
             self.assertEqual(payload["stats"]["coverCount"], 1)

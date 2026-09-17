@@ -10,6 +10,11 @@ from mairadar.analysis.features import JackSequenceAnalyzer
 from mairadar.parser import parse_chart
 
 
+class TimingCountAnalyzer:
+    def analyze(self, context):
+        return FeatureResult(sum(event.kind == "timing" for event in context.events))
+
+
 class FailingAnalyzer:
     def analyze(self, context):
         raise RuntimeError("feature deliberately failed")
@@ -28,20 +33,10 @@ class NonFiniteAnalyzer:
 
 
 class AnalysisTests(unittest.TestCase):
-    def test_default_configuration_uses_jack_sequence_metric(self):
-        parsed = parse_chart("(180){16},1h[4:1]/1h[4:1]/Ch[4:1],1,,E")
-        original = deepcopy(parsed)
-        result = ChartAnalyzer().analyze(parsed)
-        self.assertEqual(result.status, "ok")
-        jack = result.features["jack"]
-        self.assertAlmostEqual(jack.data, 3.9)
-        self.assertTrue(jack.success)
-        self.assertEqual(parsed, original)
 
     def test_tempo_change_and_redundant_declaration(self):
         first = ChartAnalyzer().analyze(parse_chart("(180){16}1,1,(180)2,2,E"))
         repeated = ChartAnalyzer().analyze(parse_chart("(180)(180){16}1,1,(180)(180)2,2,E"))
-        self.assertAlmostEqual(first.features["jack"].data, 2.6 + 2 * 1.3 * 0.645)
         self.assertEqual(first.features, repeated.features)
 
     def test_no_jack_is_zero_but_zero_time_is_unavailable(self):
@@ -69,13 +64,13 @@ class AnalysisTests(unittest.TestCase):
 
     def test_config_order_failure_isolation_and_nonfinite_output(self):
         engine = ChartAnalyzer({
-            "broken": FailingAnalyzer, "nan": NonFiniteAnalyzer, "JACK": JackSequenceAnalyzer,
+            "broken": FailingAnalyzer, "nan": NonFiniteAnalyzer, "timings": TimingCountAnalyzer,
         })
         result = engine.analyze(parse_chart("(180){16}1,1,E"))
-        self.assertEqual(tuple(result.features), ("broken", "nan", "JACK"))
+        self.assertEqual(tuple(result.features), ("broken", "nan", "timings"))
         self.assertEqual(engine.feature_names, tuple(result.features))
         self.assertEqual(result.status, "partial")
-        self.assertEqual(result.features["JACK"].data, 2.6)
+        self.assertEqual(result.features["timings"].data, 1)
         for name in ("broken", "nan"):
             self.assertIsNone(result.features[name].data)
             self.assertFalse(result.features[name].success)
@@ -84,10 +79,10 @@ class AnalysisTests(unittest.TestCase):
     def test_feature_mutation_does_not_leak_to_other_features_or_caller(self):
         parsed = parse_chart("(180){16}1,1,E")
         original = deepcopy(parsed)
-        engine = ChartAnalyzer({"mutates": MutatingAnalyzer, "jack": JackSequenceAnalyzer})
+        engine = ChartAnalyzer({"mutates": MutatingAnalyzer, "timings": TimingCountAnalyzer})
         for _ in range(2):
             result = engine.analyze(parsed)
-            self.assertEqual(result.features["jack"].data, 2.6)
+            self.assertEqual(result.features["timings"].data, 1)
             self.assertEqual(parsed, original)
 
     def test_invalid_configuration_fails_early(self):

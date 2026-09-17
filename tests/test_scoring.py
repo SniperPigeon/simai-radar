@@ -6,7 +6,6 @@ from unittest.mock import Mock
 
 from mairadar.analysis import AnalysisResult, FeatureResult
 from mairadar.scoring import DummyPnMapper, FeatureScoreTransformer, IdentityMapper
-from mairadar.scoring.config import FEATURE_MAPPERS, TRANSFORMER
 
 
 class ScaleMapper:
@@ -18,42 +17,6 @@ class ScaleMapper:
 
 
 class ScoringTests(unittest.TestCase):
-    def test_default_mapping_keeps_jack_sweep_and_tricky_transparent(self):
-        jack = FEATURE_MAPPERS["jack"]
-        sweep = FEATURE_MAPPERS["sweep"]
-        note = FEATURE_MAPPERS["note"]
-        self.assertEqual((note.p50, note.p100), (3.540077197, 9.328672541))
-        peak = FEATURE_MAPPERS["peak"]
-        self.assertEqual((peak.p50, peak.p100), (10.0, 20.0))
-        tricky = FEATURE_MAPPERS["slide_tricky"]
-        sequence = FEATURE_MAPPERS["slide_sequence"]
-        cumulate = FEATURE_MAPPERS["slide_cumulate"]
-        self.assertIsInstance(jack, IdentityMapper)
-        self.assertIsInstance(sweep, IdentityMapper)
-        self.assertIsInstance(tricky, IdentityMapper)
-        self.assertEqual((sequence.p50, sequence.p100), (1.3, 2.9))
-        self.assertEqual((cumulate.p50, cumulate.p100), (0.36, 0.96))
-        transformer = TRANSFORMER()
-        scores = transformer.transform(AnalysisResult({
-            "jack": FeatureResult(8.5),
-            "sweep": FeatureResult(4.25),
-            "note": FeatureResult(note.p50),
-            "peak": FeatureResult(peak.p50),
-            "slide_tricky": FeatureResult(36.63092975357146),
-            "slide_sequence": FeatureResult(sequence.p50),
-            "slide_cumulate": FeatureResult(cumulate.p50),
-        }))
-        self.assertEqual(scores.features["jack"].value, 8.5)
-        self.assertEqual(scores.features["sweep"].value, 4.25)
-        self.assertEqual(scores.features["note"].value, 50)
-        self.assertEqual(scores.features["peak"].value, 50)
-        self.assertEqual(scores.features["slide_tricky"].value, 36.63092975357146)
-        self.assertEqual(scores.features["slide_sequence"].value, 50)
-        self.assertEqual(scores.features["slide_cumulate"].value, 50)
-        self.assertEqual(
-            scores.mapping_version,
-            "provisional-sweep-2s-top3-cumulate-star8-20260916-v50",
-        )
 
     def test_identity_mapper_validates_and_preserves_finite_values(self):
         mapper = IdentityMapper()

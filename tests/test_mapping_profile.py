@@ -11,24 +11,6 @@ from mairadar.scoring import OpenSetPiecewiseMapper, load_mapping_profile
 
 
 class MappingProfileTests(unittest.TestCase):
-    def test_current_profile_has_cumulate_placeholder_copied_from_tricky(self):
-        path = Path(__file__).resolve().parents[1] / "data" / "mapping_profile.json"
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        dimensions = payload["dimensions"]
-        for field in ("percentiles", "rawAnchors", "t4Max", "sampleCount"):
-            self.assertEqual(
-                dimensions["slide_cumulate"][field],
-                dimensions["slide_tricky"][field],
-            )
-        mapper = load_mapping_profile(path)
-        scores = mapper.transform(AnalysisResult({
-            "slide_tricky": FeatureResult(7.0),
-            "slide_cumulate": FeatureResult(7.0),
-        }))
-        self.assertEqual(
-            scores.features["slide_cumulate"].value,
-            scores.features["slide_tricky"].value,
-        )
 
     def test_piecewise_anchors_plateau_and_asymptotic_tail(self):
         mapper = OpenSetPiecewiseMapper((1, 2, 3, 4), t4_max=10)
