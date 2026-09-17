@@ -44,8 +44,8 @@ class PolynomialModel:
             powers = tuple(term.get("powers", []))
             if len(powers) != len(names) or any(type(p) is not int or p < 0 for p in powers):
                 raise ValueError("Powers must be nonnegative integers matching the features")
-            if not 1 <= sum(powers) <= 4 or powers in seen:
-                raise ValueError("Terms must be unique and have degree 1 through 4")
+            if sum(powers) < 1 or powers in seen:
+                raise ValueError("Terms must be unique and have positive degree")
             seen.add(powers)
             self.terms.append((powers, _number(term.get("coefficient"))))
         self._data = deepcopy(data)

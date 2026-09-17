@@ -15,6 +15,7 @@ from mairadar.io import bundle_directory_name, parse_file, read_bundle, write_bu
 from mairadar.model import Chart
 from mairadar.validation import validate_bundle, validate_result
 from mairadar.parser import parse_chart, parse_text
+from mairadar.parser.source import number
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests/fixtures/parser"
@@ -152,6 +153,12 @@ class TimelineTests(unittest.TestCase):
                 b = chart(text)
                 self.assertFalse(b.complete)
                 self.assertIsNone(b.chart.chart_end_time_s)
+
+    def test_representable_subnormal_number_is_not_rejected_by_exponent(self):
+        self.assertGreater(number("1e-309"), 0)
+        self.assertEqual(number("0e-400", zero=True), 0)
+        with self.assertRaises(ValueError):
+            number("1e-400", zero=True)
 
     def test_default_subdivision_is_upstream_four(self):
         b = chart("(120)1,2,E")

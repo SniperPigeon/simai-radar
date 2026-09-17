@@ -242,8 +242,6 @@ class SweepScoringConfig:
             or self.minimum_family_attack_count <= 0
         ):
             raise ValueError("minimum_family_attack_count must be a positive integer")
-        if not math.isclose(self.mean_weight + self.peak_weight, 1.0):
-            raise ValueError("mean_weight and peak_weight must sum to one")
 
 
 @dataclass(frozen=True)

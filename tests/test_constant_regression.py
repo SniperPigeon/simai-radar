@@ -50,6 +50,11 @@ class RuntimeTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 model.predict(bad)
 
+        higher_degree = known_model()
+        higher_degree["degree"] = 5
+        higher_degree["terms"] = [{"powers": [5, 0, 0, 0, 0, 0, 0], "coefficient": 2}]
+        self.assertEqual(PolynomialModel(higher_degree).predict([5, 1, 1, 1, 1, 1, 1]), 74)
+
     def test_rejects_invalid_schema_and_parameters(self):
         for key, value in (("schema_version", "unknown"), ("input_kind", "scores"),
                            ("features", ["duplicate"] * 7), ("scale", [0] * 7),

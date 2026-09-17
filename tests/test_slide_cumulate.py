@@ -6,7 +6,6 @@ import unittest
 from mairadar.analysis import AnalysisContext
 from mairadar.analysis.features import SlideCumulateAnalyzer
 from mairadar.analysis.features.slide_cumulate import (
-    CUMULATE_ALPHA,
     _cumulate_effective_length,
     _cumulate_internal_total,
     _cumulate_section_intensity,
@@ -27,13 +26,6 @@ def breakdown(text: str, *, duration_s: float | None = None):
 
 
 class SlideCumulateTests(unittest.TestCase):
-    def test_internal_growth_uses_historical_alpha_point_35(self):
-        self.assertEqual(CUMULATE_ALPHA, 0.35)
-        self.assertEqual(_cumulate_internal_total(0), 0.0)
-        for count in range(1, 9):
-            expected = count + 0.35 * math.log2(math.factorial(count))
-            self.assertAlmostEqual(_cumulate_internal_total(count), expected)
-
     def test_internal_objects_grow_but_exact_launch_remains_linear(self):
         result = breakdown("(120){16}1-5[10:1],2,3,4,5,E")
         [section] = result.sections

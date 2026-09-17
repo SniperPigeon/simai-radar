@@ -19,15 +19,14 @@ def number(text: str, *, zero: bool = False) -> Fraction:
     ):
         raise SyntaxProblem("INVALID_NUMBER", f"Invalid number: {text!r}")
     try:
-        if not math.isfinite(float(text)):
-            raise ValueError()
-        # Bound exponents before Fraction allocation, including huge negative exponents.
-        if "e" in text.lower() and abs(int(text.lower().split("e")[1])) > 308:
+        approximate = float(text)
+        if not math.isfinite(approximate) or (
+            approximate == 0
+            and (not zero or any(digit in "123456789" for digit in text.lower().split("e", 1)[0]))
+        ):
             raise ValueError()
         value = Fraction(text)
         if value < 0 or (not zero and value == 0):
-            raise ValueError()
-        if value and float(value) == 0:
             raise ValueError()
     except (ValueError, OverflowError) as exc:
         raise SyntaxProblem("INVALID_NUMBER", f"Expected a finite {'nonnegative' if zero else 'positive'} number: {text!r}") from exc

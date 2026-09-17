@@ -385,25 +385,13 @@ def score_sweep_burst(
         raise ValueError("window_count must be a positive integer")
     if not isinstance(takeover_same_direction_only, bool):
         raise ValueError("takeover_same_direction_only must be a boolean")
-    if pattern_motion_floor > 1:
-        raise ValueError("pattern_motion_floor must be at most one")
-    if eighth_gap_group_bonus > 1:
-        raise ValueError("eighth_gap_group_bonus must be at most one")
     if alternating_idle_multiplier is not None and (
         isinstance(alternating_idle_multiplier, bool)
         or not isinstance(alternating_idle_multiplier, (int, float))
         or not math.isfinite(alternating_idle_multiplier)
-        or not 0 <= alternating_idle_multiplier <= 1
+        or alternating_idle_multiplier < 0
     ):
-        raise ValueError("alternating_idle_multiplier must be in [0, 1]")
-    if any(
-        multiplier > 1 for multiplier in (
-            solo_fast_base_multiplier,
-            solo_fast_motion_multiplier,
-            solo_fast_long_base_multiplier,
-        )
-    ):
-        raise ValueError("solo fast multipliers must be at most one")
+        raise ValueError("alternating_idle_multiplier must be non-negative and finite")
     if (
         isinstance(solo_fast_min_batches, bool)
         or not isinstance(solo_fast_min_batches, int)

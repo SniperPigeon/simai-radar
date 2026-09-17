@@ -603,7 +603,7 @@ pipeline 将评分输出附在 AnalysisRecord.scores 上，导出器追加 `<fea
 
 visualizer 的分布页可以导出 `mapping_profile.json`。导出时，对每个默认维度记录当前筛选
 范围内 T1–T4 对应的 raw 值、百分位、样本数和最大 raw 值 `t4Max`；profile 顶层记录
-`mappingVersion`、固定目标分 `[50, 100, 150, 200]` 与开放集上限 220。所有 raw 锚点
+`mappingVersion`、目标分锚点（默认 `[50, 100, 150, 200]`）与开放集上限（默认 220）。所有 raw 锚点
 必须严格递增且 T1 大于 0，否则页面会拒绝导出，避免产生有歧义的分段。
 `data/mapping_profile.json` 中各维度的 raw 锚点可在 GUI 中分别调整；更改分析算法后
 旧锚点可能不再适合新的 raw 分布，需重新检查。
@@ -615,7 +615,8 @@ mairadar --mode analysis_score \
   --output outputs/test-scored
 ```
 
-CLI 校验 profile 后构造 `OpenSetPiecewiseMapper`。设 T3→T4 的斜率
+CLI 校验 profile 后构造 `OpenSetPiecewiseMapper`，使用其中的 `scoreAnchors` 和
+`maximumScore`。以默认目标分为例，设 T3→T4 的斜率
 `s = 50 / (T4 - T3)`，则 T4 到 `T4_max`（含端点）统一为 200；超过
 `T4_max` 时使用：
 

@@ -416,6 +416,15 @@ class SweepTests(unittest.TestCase):
             details.value,
             0.6 * details.mean_load + 0.4 * details.peak_score,
         )
+        independent_weights = replace(SweepScoringConfig(), mean_weight=0.7, peak_weight=0.4)
+        adjusted = score_sweep_sequences(
+            sweep_sequences(tuple(parsed.events)), config=independent_weights,
+            duration_s=context.duration_s,
+        )
+        self.assertAlmostEqual(
+            adjusted.value,
+            0.7 * adjusted.mean_load + 0.4 * adjusted.peak_score,
+        )
 
     def test_chord_objects_receive_local_one_point_three_multiplier(self):
         chart = events("(180){16}1,2/6,3,4,E")
@@ -437,7 +446,6 @@ class SweepTests(unittest.TestCase):
             {"reference_interval_seconds": 0},
             {"speed_exponent": True},
             {"protected_note_weight": float("inf")},
-            {"mean_weight": 0.7},
             {"duration_reference_seconds": 0},
         ):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):

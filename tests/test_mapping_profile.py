@@ -33,8 +33,8 @@ class MappingProfileTests(unittest.TestCase):
         payload = {
             "schemaVersion": "mairadar-mapping-profile-1",
             "mappingVersion": "test-profile-v1",
-            "scoreAnchors": [50, 100, 150, 200],
-            "maximumScore": 220,
+            "scoreAnchors": [40, 80, 120, 160],
+            "maximumScore": 240,
             "dimensions": {
                 "note": {"rawAnchors": [1, 2, 3, 4], "t4Max": 8},
                 "peak": {"rawAnchors": [2, 4, 6, 8], "t4Max": 9},
@@ -50,9 +50,18 @@ class MappingProfileTests(unittest.TestCase):
             "peak": FeatureResult(8),
         }))
         self.assertEqual(scores.mapping_version, "test-profile-v1")
-        self.assertGreater(scores.features["note"].value, 200)
-        self.assertLess(scores.features["note"].value, 220)
-        self.assertEqual(scores.features["peak"].value, 200)
+        self.assertGreater(scores.features["note"].value, 160)
+        self.assertLess(scores.features["note"].value, 240)
+        self.assertEqual(scores.features["peak"].value, 160)
+
+    def test_custom_score_anchors_and_tail_limit_are_used(self):
+        mapper = OpenSetPiecewiseMapper(
+            (1, 2, 3, 4), t4_max=5,
+            score_anchors=(10, 20, 30, 40), maximum_score=60,
+        )
+        self.assertEqual(mapper.map(2.5), 25)
+        self.assertEqual(mapper.map(5), 40)
+        self.assertAlmostEqual(mapper.map(1_000_000), 60)
 
     def test_invalid_profiles_and_mapping_inputs_are_rejected(self):
         for anchors, t4_max in (

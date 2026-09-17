@@ -119,8 +119,7 @@ class SweepBurstTests(unittest.TestCase):
 
     def test_same_direction_chord_handoff_gets_local_bonus(self):
         parsed = parse_chart("(180){16}3,4,56,7,8,E")
-        result = score_sweep_burst(
-            tuple(parsed.events),
+        options = dict(
             duration_s=parsed.chart_end_time_s,
             window_seconds=3,
             window_count=1,
@@ -129,7 +128,15 @@ class SweepBurstTests(unittest.TestCase):
             fast_jump_weight=0,
             same_direction_connection_bonus=0,
         )
+        result = score_sweep_burst(
+            tuple(parsed.events),
+            **options,
+        )
         self.assertAlmostEqual(result.base_density, (6 + 2 * 0.2) / 3)
+        amplified = score_sweep_burst(
+            tuple(parsed.events), **options, same_direction_handoff_bonus=2,
+        )
+        self.assertAlmostEqual(amplified.base_density, (6 + 2 * 2) / 3)
 
     def test_same_direction_family_connection_gets_local_bonus(self):
         parsed = parse_chart("(180){16}1,2,3,8,1,2,E")
