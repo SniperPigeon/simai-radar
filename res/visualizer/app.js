@@ -48,6 +48,7 @@ const elements = {
   chartCountLabel: document.querySelector("#chartCountLabel"),
   chartSwitcher: document.querySelector("#chartSwitcher"),
   chartMetadata: document.querySelector("#chartMetadata"),
+  constantInfo: document.querySelector("#constantInfo"),
   radarTitle: document.querySelector("#radarTitle"),
   radarChart: document.querySelector("#radarChart"),
   scoreBreakdown: document.querySelector("#scoreBreakdown"),
@@ -696,11 +697,23 @@ function renderDetail() {
   elements.chartMetadata.innerHTML = [
     metadataItem("谱面", metadataText(chart.kindLabel)),
     metadataItem("难度", `${metadataText(chart.difficultyLabel)} ${metadataText(chart.level)}`),
+    metadataItem("官方定数 · OTOGE DB", scoreText(chart.officialConstant)),
+    metadataItem("拟合定数", Number.isFinite(chart.fittedConstant) ? chart.fittedConstant.toFixed(2) : "—"),
     metadataItem("谱师", metadataText(chart.charter)),
     metadataItem("BPM", metadataText(chart.bpm)),
     metadataItem("收录版本", metadataText(chart.version)),
     metadataItem("主导维度", dominant?.label || "—"),
   ].join("");
+
+  const constantInfo = [];
+  if (chart.constantSource) {
+    constantInfo.push(`定数来源：OTOGE DB · ${chart.constantRegion === "intl" ? "国际版" : "日本版"}`);
+  }
+  if (state.data.constantModel) {
+    constantInfo.push("拟合基于七维原始值；调整雷达映射不改变拟合定数");
+  }
+  elements.constantInfo.textContent = constantInfo.join("。 ");
+  elements.constantInfo.hidden = !constantInfo.length;
 
   renderRadar(chart);
   renderScoreBreakdown(chart);

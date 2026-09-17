@@ -6,6 +6,11 @@ simai-radar 是一个面向 maimai 谱面雷达图评分研究的数据分析 co
 占位维度；`jack`、`sweep` 与 `slide_tricky` 暂时使用 identity 映射，便于先观察 raw 分布，其余临时
 映射也不应被当作正式评分标准。
 
+`constant_regression` 分支增加了独立的定数实验管线：从 OTOGE DB 采集定数，按精确曲名
+为指定 bundle 生成总表，以七维 raw 拟合多项式，并导出只依赖标准库的推理参数。
+Visualizer 可选显示官方定数和拟合定数。使用方式、匹配规则及评估结果见
+[定数采集与回归](docs/CONSTANT_REGRESSION.md)。
+
 ## 管线如何构成
 
 ```text

@@ -62,10 +62,17 @@ class VisualizerExporter:
     def __init__(
         self,
         dimension_presentation: Mapping[str, DimensionPresentation] | None = None,
+        *,
+        constants_table: str | Path | None = None,
+        constant_model: str | Path | None = None,
     ) -> None:
         self._presentation = dict(DIMENSION_PRESENTATION)
         if dimension_presentation is not None:
             self._presentation.update(dimension_presentation)
+        self._constants = None
+        if constants_table is not None or constant_model is not None:
+            from .constants import ConstantAnnotations
+            self._constants = ConstantAnnotations(constants_table, constant_model)
 
     def export(
         self,
@@ -105,6 +112,12 @@ class VisualizerExporter:
             covers = staging / "assets" / "covers"
             covers.mkdir(parents=True)
             payload, failures = self._payload(records, names, staging)
+            if self._constants is not None:
+                self._constants.payload(payload)
+                failures += sum(
+                    chart["status"] == "ok" and chart.get("constantPredictionStatus", "ok") != "ok"
+                    for song in payload["songs"] for chart in song["charts"]
+                )
             data_path = staging / "data" / "songs.json"
             data_path.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n",

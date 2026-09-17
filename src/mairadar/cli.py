@@ -54,6 +54,8 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
         "--mapping-profile", type=Path,
         help="frozen mapping_profile.json exported by the visualizer",
     )
+    parser.add_argument("--constants-table", type=Path, help="visualizer: exact-match constants.csv")
+    parser.add_argument("--constant-model", type=Path, help="visualizer: frozen raw polynomial model.json")
     parser.add_argument(
         "--difficulty", "-d", type=_difficulty, nargs="+",
         help="chart indexes; analysis defaults to Master/5 and Re:Master/6",
@@ -91,9 +93,14 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
                 transformer = TRANSFORMER()
         if args.mode not in SCORING_MODES and args.format != "csv":
             raise ValueError("--format is only available in scoring modes")
+        if args.constants_table or args.constant_model:
+            if args.format != "visualizer" or exporter is not None:
+                raise ValueError("Constant annotations require --format visualizer without an injected exporter")
         if exporter is None and args.format == "visualizer":
             from .exporters import VisualizerExporter
-            exporter = VisualizerExporter()
+            exporter = VisualizerExporter(
+                constants_table=args.constants_table, constant_model=args.constant_model,
+            )
         batch, report = run_pipeline(
             args.mode, args.input, output=args.output, analyzer=analyzer,
             transformer=transformer, exporter=exporter,

@@ -13,6 +13,8 @@ import tempfile
 import unittest
 
 from mairadar.constants import write_json, write_rows
+from mairadar.cli import main as analyze
+from mairadar.exporters.constants import ConstantAnnotations
 from mairadar.regression import FEATURES, PolynomialModel
 from mairadar.regression.__main__ import main
 from mairadar.regression.training import fit_polynomial, powers_for_degree, train
@@ -63,6 +65,21 @@ class RuntimeTests(unittest.TestCase):
                                     capture_output=True, text=True, check=True)
             self.assertEqual(float(result.stdout), 12)
 
+    def test_visualizer_uses_raw_and_leaves_missing_values_null(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            write_json(root / "model.json", known_model())
+            write_rows(root / "constants.csv", [
+                {"title": "X", "difficulty_index": 5, "chart_type": "sd",
+                 "official_constant": 12.4, "match_status": "matched"},
+            ])
+            annotation = ConstantAnnotations(root / "constants.csv", root / "model.json")
+            raw = dict(zip(FEATURES, [5, 3, 1, 1, 1, 1, 1]))
+            result = annotation.chart("X", 5, "ST", raw)
+            self.assertEqual((result["officialConstant"], result["fittedConstant"]), (12.4, 12))
+            missing = annotation.chart("Y", 5, "DX", {})
+            self.assertIsNone(missing["officialConstant"])
+            self.assertIsNone(missing["fittedConstant"])
 
     def test_predict_cli_partial_failure_is_nonzero(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -77,6 +94,44 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(result, 1)
             self.assertTrue((root / "predictions.csv").is_file())
 
+    def test_pipeline_exports_both_constants_and_reuses_site_without_analysis(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "maidata.txt"
+            source.write_text("&title=Synthetic\n&cabinet=SD\n&lv_5=12\n&inote_5=(120){4}1,2,3,4,E\n")
+            write_json(root / "model.json", known_model())
+            write_rows(root / "constants.csv", [
+                {"title": "Synthetic", "difficulty_index": 5, "chart_type": "sd",
+                 "official_constant": 12.4, "match_status": "matched"},
+            ])
+            with contextlib.redirect_stdout(io.StringIO()):
+                result = analyze([
+                    "--mode", "full", "--input", str(source), "--output", str(root / "site"),
+                    "--format", "visualizer", "--constants-table", str(root / "constants.csv"),
+                    "--constant-model", str(root / "model.json"),
+                ])
+            self.assertEqual(result, 0)
+            payload = json.loads((root / "site/data/songs.json").read_text())
+            chart = payload["songs"][0]["charts"][0]
+            self.assertEqual(chart["officialConstant"], 12.4)
+            self.assertEqual(chart["fittedConstant"], PolynomialModel(known_model()).predict(chart["rawScores"]))
+            self.assertEqual(payload["stats"]["constantPredictionFailedCount"], 0)
+            script = Path(__file__).resolve().parents[1] / "scripts/build_pages.py"
+            spec = importlib.util.spec_from_file_location("test_build_pages", script)
+            pages = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(pages)
+            chart["exportIssues"] = ["Conflicting cover filename: Synthetic.png"]
+            with self.assertRaisesRegex(ValueError, "incomplete chart"):
+                pages.validate_payload(payload)
+            self.assertEqual(len(pages.validate_payload(payload, include_covers=False)), 1)
+            chart["status"] = "partial"
+            with self.assertRaisesRegex(ValueError, "incomplete chart"):
+                pages.validate_payload(payload, include_covers=False)
+            target = root / "updated"
+            target.mkdir()
+            pages.prepare_site(root / "site", target, no_covers=True,
+                               constants_table=root / "constants.csv", constant_model=root / "model.json")
+            self.assertTrue((target / "data/songs.json").is_file())
 
 
 @unittest.skipUnless(importlib.util.find_spec("numpy"), "optional NumPy training dependency unavailable")
