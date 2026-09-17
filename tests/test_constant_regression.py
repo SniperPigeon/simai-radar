@@ -11,13 +11,20 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import warnings
 
 from mairadar.constants import write_json, write_rows
 from mairadar.cli import main as analyze
 from mairadar.exporters.constants import ConstantAnnotations
 from mairadar.regression import FEATURES, PolynomialModel
 from mairadar.regression.__main__ import main
-from mairadar.regression.training import fit_polynomial, powers_for_degree, train
+SKLEARN_AVAILABLE = importlib.util.find_spec("sklearn") is not None
+if SKLEARN_AVAILABLE:
+    import numpy as np
+    from sklearn.linear_model import Ridge
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import PolynomialFeatures, StandardScaler
+    from mairadar.regression.training import export_model, train
 
 
 def known_model():
@@ -134,77 +141,93 @@ class RuntimeTests(unittest.TestCase):
             self.assertTrue((target / "data/songs.json").is_file())
 
 
-@unittest.skipUnless(importlib.util.find_spec("numpy"), "optional NumPy training dependency unavailable")
+@unittest.skipUnless(SKLEARN_AVAILABLE, "optional sklearn training dependency unavailable")
 class TrainingTests(unittest.TestCase):
-    def samples(self):
+    def rows(self):
         rng = random.Random(21)
-        x = [[rng.uniform(-2, 2) for _ in FEATURES] for _ in range(160)]
-        y = [12 + 0.4 * r[0] ** 2 - 0.3 * r[1] * r[2] + 0.2 * r[6] for r in x]
-        return x, y
+        rows = []
+        for i in range(160):
+            raw = [rng.uniform(-2, 2) for _ in FEATURES]
+            target = 12 + 0.4 * raw[0] ** 2 - 0.3 * raw[1] * raw[2] + 0.2 * raw[-1]
+            rows.append({"title": "Same Song", "difficulty_index": 5, "level": "13+" if i < 80 else "14",
+                         "status": "ok", "match_status": "matched", "official_constant": target,
+                         **{f"{name}_raw": value for name, value in zip(FEATURES, raw)}})
+        return rows
 
-    def test_recovers_known_quadratic_on_unseen_samples(self):
-        x, y = self.samples()
-        model = fit_polynomial(x[:120], y[:120], degree=2, alpha=0)
-        self.assertEqual(len(powers_for_degree(2)), 35)
-        for raw, expected in zip(x[120:], y[120:]):
-            self.assertAlmostEqual(model.predict(raw), expected, places=9)
+    def test_exported_formula_matches_sklearn_on_unseen_inputs(self):
+        rng = np.random.default_rng(21)
+        x = rng.normal(size=(180, len(FEATURES)))
+        x[:, -1] = 3  # A constant column must export a usable scale.
+        y = 12 + x[:, 0] ** 2 - x[:, 1] * x[:, 2]
+        unseen = rng.normal(size=(25, len(FEATURES)))
+        for degree in (1, 2, 3, 4):
+            with self.subTest(degree=degree):
+                pipeline = make_pipeline(StandardScaler(), PolynomialFeatures(degree, include_bias=False),
+                                         Ridge(alpha=1, solver="svd")).fit(x, y)
+                model = PolynomialModel(json.loads(json.dumps(export_model(pipeline).to_dict())))
+                np.testing.assert_allclose([model.predict(row) for row in unseen], pipeline.predict(unseen),
+                                           rtol=1e-10, atol=1e-10)
 
-    def test_constant_feature_and_singular_design_remain_finite(self):
-        model = fit_polynomial([[3] * 7] * 20, [12.5] * 20, degree=3, alpha=1)
-        self.assertAlmostEqual(model.predict([3] * 7), 12.5)
-        self.assertEqual(model.scale, (1,) * 7)
-
-    def test_recovers_cubic_and_three_way_interactions_on_unseen_samples(self):
-        x, _ = self.samples()
-        y = [12 + 0.05 * row[0] ** 3 - 0.15 * row[1] * row[2] * row[3] + 0.2 * row[6]
-             for row in x]
-        model = fit_polynomial(x[:140], y[:140], degree=3, alpha=0)
-        self.assertEqual(len(model.terms), 119)
-        for raw, expected in zip(x[140:], y[140:]):
-            self.assertAlmostEqual(model.predict(raw), expected, places=8)
-
-    def test_group_holdout_and_export_roundtrip(self):
-        x, y = self.samples()
-        rows = [{"title": f"Song {i // 2}", "difficulty_index": 5 + i % 2,
-                 "status": "ok", "official_constant": target, "match_status": "matched",
-                 **{f"{f}_raw": v for f, v in zip(FEATURES, raw)}}
-                for i, (raw, target) in enumerate(zip(x, y))]
-        rows.append({**rows[0], "title": "Unknown", "match_status": "title_not_found"})
+    def test_training_splits_rows_by_level_and_retains_excluded_predictions(self):
+        rows = self.rows()
+        rows.append({**rows[0], "match_status": "constant_estimated", "official_constant": None})
         model, evaluation, report, predictions, vectors = train(rows, degrees=[1, 2], alphas=[0], folds=3)
-        self.assertEqual(report["selected"]["degree"], 2)
-        self.assertEqual(report["training_rows"], 160)
-        self.assertEqual(report["excluded"], {"no_matched_constant": 1})
-        self.assertLess(report["holdout"]["rmse"], 1e-9)
-        self.assertTrue(set(report["development_titles"]).isdisjoint(report["holdout_titles"]))
-        for title in report["holdout_titles"]:
-            selected = [p for p in predictions if p["title"] == title]
-            self.assertEqual(len(selected), 2)
-            self.assertTrue(all(p["evaluation_split"] == "holdout" for p in selected))
-        restored = PolynomialModel(json.loads(json.dumps(model.to_dict())))
+        self.assertLess(report["holdout"]["rmse"], 1e-8)
+        development = set(report["development_row_numbers"])
+        holdout = set(report["holdout_row_numbers"])
+        self.assertFalse(development & holdout)
+        self.assertEqual(development | holdout, set(range(1, len(rows))))
+        validation = report["cv_validation_row_numbers"]
+        self.assertEqual(set().union(*map(set, validation)), development)
+        self.assertEqual(sum(map(len, validation)), len(development))
+        for level in {row["level"] for row in rows[:-1]}:
+            total = sum(row["level"] == level for row in rows[:-1])
+            selected = sum(rows[i - 1]["level"] == level for i in holdout)
+            self.assertLessEqual(abs(selected - total * 0.2), 1)
+        self.assertEqual(predictions[-1]["evaluation_split"], "excluded")
+        self.assertIsNone(predictions[-1]["holdout_prediction"])
+        self.assertTrue(math.isfinite(predictions[-1]["fitted_constant"]))
+        for number in holdout:
+            row = predictions[number - 1]
+            raw = [row[f"{name}_raw"] for name in FEATURES]
+            self.assertAlmostEqual(evaluation.predict(raw), row["holdout_prediction"], places=9)
         for vector in vectors:
-            self.assertAlmostEqual(restored.predict(vector["raw"]), vector["expected"], places=9)
-        self.assertEqual(predictions[-1]["prediction_status"], "ok")
-        for row in predictions:
-            if row["evaluation_split"] == "holdout":
-                raw = [row[f"{f}_raw"] for f in FEATURES]
-                self.assertAlmostEqual(evaluation.predict(raw), row["holdout_prediction"], places=9)
+            self.assertAlmostEqual(model.predict(vector["raw"]), vector["expected"], places=9)
 
-    def test_normalized_aliases_share_one_evaluation_group_and_estimates_are_excluded(self):
-        x, y = self.samples()
-        rows = [{"title": f"Song {i // 2}" + (" [DX]" if i % 2 else ""),
-                 "matched_title": f"Song {i // 2}", "difficulty_index": 5,
-                 "status": "ok", "official_constant": target, "match_status": "matched",
-                 **{f"{f}_raw": v for f, v in zip(FEATURES, raw)}}
-                for i, (raw, target) in enumerate(zip(x, y))]
-        rows.append({**rows[0], "title": "Estimated", "official_constant": None,
-                     "display_constant": 13.0, "match_status": "constant_estimated"})
-        model, _, report, predictions, _ = train(rows, degrees=[1], alphas=[1], folds=3)
-        self.assertEqual(report["excluded"], {"no_matched_constant": 1})
-        self.assertNotIn("regions", report)
-        self.assertNotIn("label_regions", model.to_dict()["training"])
-        self.assertNotIn("label_source_counts", model.to_dict()["training"])
-        for i in range(0, 160, 2):
-            self.assertEqual(predictions[i]["evaluation_split"], predictions[i + 1]["evaluation_split"])
+    def test_holdout_values_do_not_influence_preprocessing_or_model_selection(self):
+        rows = self.rows()
+        _, before, report, _, _ = train(rows, degrees=[1, 2], alphas=[1], folds=3)
+        for number in report["holdout_row_numbers"]:
+            for name in FEATURES:
+                rows[number - 1][f"{name}_raw"] += 100
+        _, after, repeated, _, _ = train(rows, degrees=[1, 2], alphas=[1], folds=3)
+        self.assertEqual(report["holdout_row_numbers"], repeated["holdout_row_numbers"])
+        probe = [0.5] * len(FEATURES)
+        self.assertAlmostEqual(before.predict(probe), after.predict(probe), places=12)
+        self.assertEqual(before.to_dict(), after.to_dict())
+
+    def test_singleton_level_can_still_be_used_for_training(self):
+        rows = self.rows()
+        rows.append({**rows[0], "level": "15"})
+        with warnings.catch_warnings(record=True):
+            _, _, report, _, _ = train(rows, degrees=[1], alphas=[1], folds=3)
+        self.assertIn(len(rows), report["development_row_numbers"])
+        self.assertNotIn(len(rows), report["holdout_row_numbers"])
+
+    def test_fit_cli_exports_a_model_usable_by_the_prediction_cli(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            write_rows(root / "constants.csv", self.rows())
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(["fit", "--input", str(root / "constants.csv"),
+                                       "--output", str(root / "fit"), "--degrees", "2", "--folds", "3"]), 0)
+                self.assertEqual(main(["predict", "--input", str(root / "constants.csv"),
+                                       "--model", str(root / "fit/model.json"),
+                                       "--output", str(root / "predictions.csv")]), 0)
+            expected = json.loads((root / "fit/test_vectors.json").read_text())["vectors"]
+            restored = PolynomialModel.load(root / "fit/model.json")
+            for vector in expected:
+                self.assertAlmostEqual(restored.predict(vector["raw"]), vector["expected"], places=9)
 
 
 if __name__ == "__main__":

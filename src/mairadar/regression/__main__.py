@@ -17,7 +17,7 @@ def main(argv=None):
     fit = commands.add_parser("fit", help="fit a joined constants.csv; export portable parameters")
     fit.add_argument("--input", type=Path, required=True)
     fit.add_argument("--output", type=Path, required=True, help="new output directory")
-    fit.add_argument("--degrees", type=int, nargs="+", default=[1, 2, 3])
+    fit.add_argument("--degrees", type=int, nargs="+", default=[1, 2, 3, 4])
     fit.add_argument("--alphas", type=float, nargs="+", default=[0.1, 1.0, 10.0])
     fit.add_argument("--seed", type=int, default=42)
     fit.add_argument("--folds", type=int, default=5)
@@ -45,7 +45,10 @@ def main(argv=None):
             write_rows(args.output, rows)
             print(json.dumps({"charts": len(rows), "failed": failures, "output": str(args.output)}))
             return int(failures > 0)
-        from .training import train
+        try:
+            from .training import train
+        except ImportError as exc:
+            raise RuntimeError("Training requires scikit-learn: pip install 'simai-radar[regression]'") from exc
         model, evaluation, report, predictions, vectors = train(
             rows, degrees=args.degrees, alphas=args.alphas, seed=args.seed, folds=args.folds,
         )

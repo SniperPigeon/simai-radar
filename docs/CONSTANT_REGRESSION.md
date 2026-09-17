@@ -4,7 +4,7 @@
 统一使用日本定数：两份日本数据自动一起读取，不配置 region，不按删除状态筛选、分组或展示。
 匹配到明确的定数就纳入训练；没有定数或只有网页估值的谱面保留记录但不训练。
 
-需要 Python 3.11+。训练需要 NumPy，采集和推理只依赖标准库：
+需要 Python 3.11+。训练使用 scikit-learn（及其数值计算依赖），采集和推理只依赖标准库：
 
 ```bash
 python -m pip install -e '.[regression]'
@@ -25,11 +25,11 @@ python scripts/constants.py match \
   --snapshot data/constants/otoge-japan.json \
   --output outputs/constants.csv
 
-# 3. 固定三次多项式并自动导出模型
+# 3. 固定四次多项式并自动导出模型
 python scripts/constant_regression.py fit \
   --input outputs/constants.csv \
-  --output outputs/constant-fit-cubic \
-  --degrees 3
+  --output outputs/constant-fit-quartic \
+  --degrees 4
 ```
 
 `match` 存在未匹配行时会写出完整总表并返回 1，所以这几步分开运行。
@@ -46,19 +46,19 @@ python scripts/constant_regression.py fit \
 **没有额外的 export 步骤。** 训练完成后复制 `model.json` 即可；模型推理不需要 CSV、
 曲名、歌曲 metadata、联网或训练环境。
 
-`--degrees 2` 固定二次，`--degrees 3` 固定三次；`--degrees 1 2 3` 自动比较三种阶数，
-默认也是这三种。`--alphas 0.1 1 10` 设置 ridge 候选，默认即这三个；`--alphas 0` 为普通最小二乘。
+`--degrees 2` / `--degrees 3` / `--degrees 4` 分别固定二、三、四次；
+`--degrees 1 2 3 4` 自动比较四种阶数，默认也是这四种。`--alphas 0.1 1 10` 设置 ridge 候选，默认即这三个；`--alphas 0` 为普通最小二乘。
 安装包后也可使用 `mairadar-constants`、`mairadar-regression`，或
 `python -m mairadar.constants`、`python -m mairadar.regression`。
 
 ## 批量预测与 visualizer 导出
 
-使用已导出的参数预测另一份 raw 结果，不需要 NumPy：
+使用已导出的参数预测另一份 raw 结果，不需要 sklearn 或 NumPy：
 
 ```bash
 python scripts/constant_regression.py predict \
   --input outputs/new-analysis/charts.csv \
-  --model outputs/constant-fit-cubic/model.json \
+  --model outputs/constant-fit-quartic/model.json \
   --output outputs/new-predictions.csv
 ```
 
@@ -68,7 +68,7 @@ python scripts/constant_regression.py predict \
 ```bash
 python scripts/constant_regression.py predict \
   --input outputs/visualizer-fanmade-4 \
-  --model outputs/constant-fit-cubic/model.json \
+  --model outputs/constant-fit-quartic/model.json \
   --output outputs/fanmade-predictions.csv
 ```
 
@@ -81,13 +81,21 @@ python scripts/constant_regression.py predict \
 python scripts/build_pages.py \
   --site outputs/constant-regression-v50-3-repaired/metadata-bundle \
   --constants-table outputs/constants.csv \
-  --constant-model outputs/constant-fit-cubic/model.json \
-  --output outputs/constant-preview --no-covers
+  --constant-model outputs/constant-fit-quartic/model.json \
+  --cover-root data/raw \
+  --output outputs/constant-preview
 ```
 
-`--no-covers` 省略曲绘；需要保留曲绘时，`--site` 应指向具有对应 assets 的完整 visualizer。
-上面的 metadata-bundle 是只修正 metadata 的轻量输入，使用它时保留 `--no-covers`。
-该命令只生成本地目录和 ZIP。没有官方标签的谱面也能显示拟合值；调整雷达映射不影响拟合值。
+`--cover-root data/raw` 根据原始分析结果保留的 `sourceRef` 定位歌曲目录，重新附带 `bg.*` 曲绘，
+不解析谱面、不重新计算 raw、分数或定数。适合修复早期只复制 metadata 的 bundle，以及原来
+存在曲绘文件名冲突的导出。文件名冲突时使用标题、难度编号、类型区分，例如 `Trust-5-dx.png`，
+不覆盖另一首歌、不追加 hash。
+
+已有完整 assets 的 visualizer 可以省略 `--cover-root`，直接复制随包曲绘。
+`--no-covers` 仅在确实想省略封面时使用，与 `--cover-root` 互斥。
+缺少 `sourceRef` 的发布版 ZIP 无法定位 raw，应改用原始分析 bundle。
+原始目录也没有曲绘的谱面保留占位图。该命令只生成本地目录和 ZIP，所有图片都随包附带。
+没有官方标签的谱面也能显示拟合值；调整雷达映射不影响拟合值。
 
 新分析也可直接通过原 CLI 的 `--format visualizer --constants-table PATH --constant-model PATH`
 附加定数。两项各自可选。
@@ -130,19 +138,30 @@ python scripts/build_pages.py \
 note, peak, sweep, slide_tricky, slide_sequence, jack, slide_cumulate
 ```
 
-每次仅用训练子集计算均值和总体标准差；常量列 scale=1。二次有 35 个非截距项，
-三次有 119 个非截距项，包括所有交互项。截距不正则化，ridge 通过增广最小二乘和 SVD 求解。
+训练直接使用 sklearn 的 `Pipeline(StandardScaler, PolynomialFeatures, Ridge)` 和
+`GridSearchCV`。多项式展开、标准化、岭回归求解、交叉验证和指标计算均由 sklearn 完成，
+项目只保留输入表筛选、等级标签、参数导出与结果记录。
+二次、三次、四次分别有 35、119、329 个非截距项，截距由 Ridge 单独拟合。
 
-默认 seed=42，按匹配到的来源曲名分组，同曲的不同写法、DX/SD、难度和重复行位于同一组。
-旧表没有 `matched_title` 时才回退到输入曲名。先留出 20% 曲名，其余默认五折交叉验证，
-按 CV RMSE 选参数；选型完成后评估留出集，再用所有有效标签重拟合 `model.json`。
-至少需要六个可训练曲名。`predictions.csv` 的 `fitted_constant` 是重拟合模型输出；
-泛化误差应看 `holdout_prediction` 和报告中的 `holdout`，不能用训练误差代替。
+默认 seed=42，`train_test_split(..., stratify=level)` 划分约 80% 开发集和 20% 留出集，
+`StratifiedKFold` 在开发集内生成等级分层的 CV 划分；不按歌曲分组。
+没有 `level` 时使用官方定数的整数部分。单样本等级不能用于 sklearn 的分层二分，
+因此只追加到开发集；当某等级少于折数时 sklearn 会提示部分折缺少该等级。
+样本数、类别数和折数必须满足 sklearn 的划分条件。
+
+整个 Pipeline 在每折训练部分拟合。GridSearchCV 按**各折 RMSE 的均值**选择参数，
+不使用留出集选型；选型后评估留出集，再 clone 最优 Pipeline 并用全部有效标签重拟合部署模型。
+报告保存 sklearn 版本、各等级数量、开发/留出行号和每折验证行号。
+`predictions.csv` 的 `fitted_constant` 是部署模型输出；泛化误差看 `holdout_prediction` 和 `holdout`。
+
+导出时直接读取 StandardScaler 的 `mean_` / `scale_`、PolynomialFeatures 的 `powers_`，
+以及 Ridge 的 `coef_` / `intercept_`。输出仍为简单 JSON 参数，运行时公式不变，
+不需要保存或加载 pickle/joblib，也不需要在 Play 中接入 sklearn。
 
 ```python
 from mairadar.regression import PolynomialModel
 
-model = PolynomialModel.load("outputs/constant-fit-cubic/model.json")
+model = PolynomialModel.load("outputs/constant-fit-quartic/model.json")
 constant = model.predict({
     "note": 4.0, "peak": 6.0, "sweep": 0.5,
     "slide_tricky": 1.0, "slide_sequence": 2.0,
@@ -151,7 +170,7 @@ constant = model.predict({
 ```
 
 也可将内存字典传给 `PolynomialModel(parameters)`。`runtime.py` 可单独复制使用，不依赖
-NumPy 或 mairadar 其他模块。模型 schema 为 `mairadar-polynomial-1`，公式为：
+sklearn、NumPy 或 mairadar 其他模块。模型 schema 为 `mairadar-polynomial-1`，公式为：
 
 ```text
 z[j] = (raw[j] - center[j]) / scale[j]
@@ -164,20 +183,17 @@ constant = intercept + Σ(term.coefficient × Π(z[j] ** term.powers[j]))
 ## 一次性 metadata 修复
 
 `repair_constant_metadata.py` 根据已核对的清单修复 raw metadata，默认只预览，`--apply` 执行。
-它先校验全部预期值、备份原始文件，再修改 raw 并生成新的 metadata bundle；保留 BOM、换行、
+它先校验全部预期值及曲绘路径、备份原始文件，再修改 raw 并生成附带曲绘的新 metadata bundle；保留 BOM、换行、
 音符及七维 raw，不修改 parser，也不隐式重写其他 bundle。实际修复计划和备份保存在
 `outputs/constant-regression-v50-3-repaired/`，涵盖 8 个标题、13 个类型，共 21 个原始文件。
 
-## 本次二次／三次对比
+## sklearn 训练验证
 
-使用已缓存的日本数据重新封装为 `data/constants/otoge-japan-20260917.json`，沿用原始抓取时间。
-输入为修复后的 1,886 张谱面；匹配 1,690 张明确定数，176 张未命中、20 张仅估值。
-新总表和对比模型位于 `outputs/constant-regression-japan/`。
+复用 `outputs/constant-regression-japan/constants.csv`，不重新抓取或分析曲库。
+训练结果保存在 `outputs/constant-regression-sklearn/fit/`。首次改用 sklearn 后，随机划分由
+其实现负责，行号与此前手写划分可能不同，因此不直接拿旧实验误差比较后端优劣。
+此前的四次试验和带封面 visualizer 仍保留在 `outputs/constant-regression-level-stratified/`。
 
-| 模型 | ridge alpha | 留出集 MAE | 留出集 RMSE |
-| --- | --- | --- | --- |
-| 二次，degree-2 | 10 | 0.278390 | 0.363040 |
-| 三次，degree-3 | 10 | 0.278999 | 0.362965 |
-
-两次实验的训练与 341 张留出谱面完全相同。三次在留出集上与二次基本持平，两个模型各自
-导出到对应子目录；没有用留出集调整参数。
+测试重点是导出公式与 sklearn 在新输入上的预测一致、留出集不影响预处理或选型、
+输入与输出文件的往返，以及关闭第三方包后仍可推理。默认校准参数、临时映射版本号、
+前端函数名和源码字符串不作为测试契约。
