@@ -12,6 +12,7 @@ dependencies = []
 
 [project.scripts]
 mairadar = "mairadar.cli:main"
+mairadar-constants = "mairadar.constants:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
