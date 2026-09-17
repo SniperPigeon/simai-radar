@@ -150,8 +150,8 @@ class BatchTests(unittest.TestCase):
                     "note": False,
                     "peak": False,
                     "slide_tricky": False,
-                    "slide_cumulate": False,
                     "slide_sequence": False,
+                    "slide_cumulate": False,
                 },
             )
             self.assertEqual(json.loads(rows[-1]["diagnostics"])["source"], "broken")

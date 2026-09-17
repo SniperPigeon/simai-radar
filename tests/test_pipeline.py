@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from mairadar.analysis import AnalysisResult, FeatureResult
+from mairadar.analysis.features.sweep_burst import score_sweep_burst
 from mairadar.cli import main
 from mairadar.exporters import ExportResult
 from mairadar.io import parse_file, read_bundle, write_bundle
@@ -53,6 +54,82 @@ def read_csv(report):
 
 
 class PipelineTests(unittest.TestCase):
+    def test_cli_default_uses_two_second_top_three_sweep(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "maidata.txt"
+            body = ",".join("12345678" * 3)
+            source.write_text(
+                f"&title=扫键入口测试\n&cabinet=DX\n"
+                f"&inote_5=(180){{16}}{body},E\n",
+                encoding="utf-8",
+            )
+            [bundle] = parse_file(source, difficulties=[5])
+            write_bundle(bundle, root / "bundles")
+
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                code = main([
+                    "--mode", "analysis_score",
+                    "--input", str(root / "bundles"),
+                    "--output", str(root / "scored"),
+                ])
+
+            self.assertEqual(code, 0, stderr.getvalue())
+            with (root / "scored" / "charts.csv").open(
+                encoding="utf-8-sig", newline="",
+            ) as stream:
+                [row] = list(csv.DictReader(stream))
+            expected = score_sweep_burst(
+                tuple(bundle.events),
+                duration_s=bundle.chart.chart_end_time_s,
+            ).value
+            self.assertAlmostEqual(float(row["sweep_raw"]), expected)
+            self.assertEqual(row["sweep_raw"], row["sweep_score"])
+            self.assertEqual(
+                json.loads(row["diagnostics"])["scoring"]["mapping_version"],
+                "provisional-sweep-2s-top3-cumulate-star8-20260916-v50",
+            )
+
+    def test_cli_loads_frozen_mapping_profile_for_scoring(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fixtures(root)
+            profile = root / "mapping_profile.json"
+            profile.write_text(json.dumps({
+                "schemaVersion": "mairadar-mapping-profile-1",
+                "mappingVersion": "cli-profile-v1",
+                "scoreAnchors": [50, 100, 150, 200],
+                "maximumScore": 220,
+                "dimensions": {
+                    name: {"rawAnchors": [1, 2, 3, 4], "t4Max": 5}
+                    for name in (
+                        "note", "peak", "sweep", "slide_tricky", "slide_sequence",
+                        "jack", "slide_cumulate",
+                    )
+                },
+            }), encoding="utf-8")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                code = main([
+                    "--mode", "analysis_score",
+                    "--input", str(root / "bundles"),
+                    "--output", str(root / "profile-scored"),
+                    "--mapping-profile", str(profile),
+                ])
+
+            self.assertEqual(code, 0, stderr.getvalue())
+            with (root / "profile-scored" / "charts.csv").open(
+                encoding="utf-8-sig", newline="",
+            ) as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual(len(rows), 2)
+            self.assertTrue(all(
+                json.loads(row["diagnostics"])["scoring"]["mapping_version"]
+                == "cli-profile-v1"
+                for row in rows
+            ))
+
     def test_parse_only_writes_bundles_without_analysis_mapping_or_report_export(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -359,12 +436,12 @@ class PipelineTests(unittest.TestCase):
                     and row["sweep_raw"] and row["sweep_score"]
                     and row["peak_raw"] and row["peak_score"]
                     and row["slide_tricky_raw"] and row["slide_tricky_score"]
-                    and row["slide_cumulate_raw"] and row["slide_cumulate_score"]
                     and row["slide_sequence_raw"] and row["slide_sequence_score"]
+                    and row["slide_cumulate_raw"] and row["slide_cumulate_score"]
                     for row in rows
                 ))
                 self.assertTrue(all(json.loads(row["diagnostics"])["scoring"]["mapping_version"]
-                                    == "provisional-jack-sweep-tricky-identity-20260915-v30"
+                                    == "provisional-sweep-2s-top3-cumulate-star8-20260916-v50"
                                     for row in rows))
                 self.assertTrue(all((root / mode / row["cover_path"]).is_file() for row in rows))
 

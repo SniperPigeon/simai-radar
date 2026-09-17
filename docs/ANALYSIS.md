@@ -1,9 +1,11 @@
 # 谱面分析 MVP
 
-核心按显式配置调用独立维度分析器，返回原始指标；当前默认配置包含纵连、扫键、整体物量、
-Peak 爆发和 Slide 压力。评分层按 feature 独立配置映射器：纵连、扫键和 Slide Tricky 暂时
+核心按显式配置调用独立维度分析器，返回原始指标；当前默认七维依次为 Note、Peak、扫键、
+错位压力、星星阵、纵连和持续星星压力。评分层按 feature 独立配置映射器：纵连、扫键和 Slide Tricky 暂时
 identity 直通，整体物量暂用 2026-09-13 观察批次的中位数与 P99，Peak 使用宽松的探索
-锚点，其他 Slide 维度使用有限普通谱抽样的取整探索锚点；这些都不代表官方校准。
+锚点，Slide Sequence 使用有限普通谱抽样的取整探索锚点；这些都不代表官方校准。
+`slide_cumulate` 已重新启用，默认使用临时 DummyPn 锚点；mapping profile
+可为它独立保存 GUI 调整后的锚点，不代表该维度已正式校准。
 
 ## 直接调用
 
@@ -39,7 +41,8 @@ FeatureResult 仅包含 data 和 success 两个字段，不携带单位、中间
 ## 纵连口径
 
 ```text
-sequence_strength = 主键 Tap/Hold 数 + 1.5 * 有效打断 Tap 数
+note_weight = 0.3 if is_ex else 1
+sequence_strength = sum(主键 Tap/Hold 的 note_weight) + 1.5 * sum(有效打断 Tap 的 note_weight)
 equivalent_sixteenth_bpm = 15 * (主键时间点数 - 1) / (末次主键秒数 - 首次主键秒数)
 speed_factor = (equivalent_sixteenth_bpm / 180) ^ 1.5
 weighted_strength = sequence_strength * speed_factor
@@ -62,6 +65,9 @@ jack_raw = sum(weighted_strength_(x) * rank_weight_(x),
   边界值恰好八分音符时保留。
 - 异键 Hold 不能作为打断，会结束当前键位候选。与主键同拍的其他位置物件不位于两个
   主键时间点之间，不计打断权重。
+- EX 主键 Tap/Hold 的强度权重为 0.3，EX 打断 Tap 的强度权重为 `1.5 * 0.3 = 0.45`；
+  同时带 Break 标记的 EX 也按此规则降权。物件数量、连续性、飞键数量上限和主键速度
+  仍按实际声明与时间点计算；同拍重复声明逐个使用各自的 EX 权重。
 
 速度使用主键不同时间点的实际秒数计算，因此自然包含 BPM 变化；同时重复声明增加主键
 物件权重，但不增加速度采样点。180 BPM 等效十六分的系数为 1，快慢两侧均按 1.5 次方
@@ -79,50 +85,136 @@ jack_raw = sum(weighted_strength_(x) * rank_weight_(x),
 
 ## 扫键口径
 
-`SweepAnalyzer` 在全谱外键 Tap/Hold 起按中识别相邻键扫键。显式 Slide 头已经由 parser
-表示成独立 Tap，因此会进入识别；Slide 体、无头 Slide、Touch 和 TouchHold 不进入。
-同拍同键的重复声明在识别图中形成一个物理起按，但保留其全部事件 ID，不删除或修改
-原事件；scorer 的物件数 `N` 按物理起按数计算。
+旧版 `SweepAnalyzer` 按全局拍轴把外键攻击组成时间批次，再用动态规划选择一条最长合法主干。
+同一时间批次的其他一至两个物件直接作为辅助物件附在主干上；它们与第二条扫键 Strand
+计分等价，因此不再枚举左右手匹配。到达相同末键、方向、速度和连续步数的历史状态只
+保留主干更长、变速及折返更少、事件序更早的解释。候选最终按事件覆盖最大、组数最少
+选择，不重复计数。
 
-候选的相邻键按 1–8 环形连接，每步拍长必须为正且不超过一拍。连接两个相邻键时，中间
-最多允许出现一个其他外键起按；如果同键重复先于目标相邻键出现，则不能跳过该重复制造
-扫键。首个步长固定候选周期，后续步长与它的误差最多为 `1/16 beat`。候选至少覆盖三个
-不同键位；每段同方向运行至少包含两步，满足这一条件后允许折返。先移除被更长候选完整
-包含的前后缀，再选择互斥候选；不同组只有在共享物件同时是两组最后一个起按时才允许
-重叠。选择目标依次为组数最多、总物理起按数最多，完全并列时确定性选择字典序较早者。
+普通 Tap 和不超过十六分音符（`end_beat-start_beat <= 1/4`）的 Hold 进入攻击流；显式
+Slide 头已经是 Tap，也会进入。长 Hold 不作攻击，但保留占位区间：若中间键在整个空隙
+内被长 Hold 占据，允许同方向跨两个键且用时恰好两个单位间隔。Slide 体、无头 Slide、
+Touch 和 TouchHold 不进入。每个普通声明权重为 1，每个 EX 声明权重为 0.3；同拍同键
+只形成一个物理速度点，但所有重复声明及其权重都保留。
 
-识别直接使用 `events-0.3` 的精确有理拍轴，不使用 detector 原实现重新编译 Simai 的固定
-1 ms 伪 EACH 偏移；因此伪 EACH 遵循本项目固定上游语义的 `1/32 beat`。候选枚举和组
-选择各有 100,000 状态上限，超过时整项失败，不返回看似完整的部分结果。
+基础识别门槛是十二分或更快，即每单位键距 `unit_gap_beats <= 1/3`。独立八分扫不识别；
+只有已有合法扫键减速至 `1/2 beat` 时，八分段才可进入，并可继续保持八分。单位间隔按
+实际键距归一化，因此 Hold 跨键的两键移动使用 `gap/2`。实际秒速度一旦变化立即记录
+变速切换；加速、普通减速和减速至八分均增加 0.2。相邻单位秒间隔使用 0.5% 相对容差
+（并保留 `1e-9` 秒绝对容差），避免换算抖动伪造反复变速；十二/十六/二十四分等真实
+节奏档位差异远大于该容差。
 
-对每个选中组，`N` 为物理起按数，平均键间秒数与基础权重为：
+实验开关 `include_paired_sweeps=True` 可识别交替出现的短邻键对：至少四对、组内两键
+相邻、组间跨越不相邻键、节奏稳定且每步满足原有十二分门槛。相邻两对须有不同键位，
+并要求双手两相扫向稳定且起点逐步移动，或存在周期 2/4 的成对键位重复。由此
+`2,3,6,5` 的重复可纳入，普通 `2,3,2,3` 和独立八分交互仍排除。成对短扫的预期
+左右手交替不另计 `free_hand_takeover`，但实际空转位移仍由双手 DP 计入。
+独立严格消融可指定 `strict_opposite_pairs=True`，额外要求相邻短扫方向相反，且双手 DP
+能以“一手完成每对、两手逐对交替、无高速跳跃违规”执行。该条件不能单独识别谱师意图：
+Λzure Vixen 的散打配置也满足。再设 `paired_max_interval_seconds=1/12`（180 BPM
+十六分）可从本轮正反例中剔除该较慢配置；7 Wonders 的同向两键段会被严格规则排除，
+即使其后接双押扫键，因此仍属于需要另行判断的边界例。
+
+实验配置 `eighth_gap_family_bridge=True` 仅允许形状完全相同、速度一致、至少四批且
+各有至少三个双押批次的快速扫键组跨越**精确半拍（八分）**空隙形成同一 family；
+这不放宽组内八分物件的基础识别门槛。桥接处的双手移动按整段空隙时间计作 idle
+reposition，而不是硬判为连续快扫的跳跃违规。两个实验开关默认均关闭；成对短扫的
+用手解释属于谱面几何启发式，不能唯一断言玩家实际采用哪只手。
+
+另一个独立消融 `eighth_gap_similar_speed_bridge=True` 只要求两组间隔精确半拍、内部
+单位速度差不超过 10%，不要求键位形状相同。它将两组合为新 family，按新首尾时长重新
+计算 family 密度；默认三窗 burst 仍按时间点负荷计算，但跨组双手移位会进入该 family。
+
+当前默认 burst 改用更局部的八分接续：若下一组尚无其他前驱，且存在一组恰好在半拍前
+结束、单位秒速度差不超过 10%，只给**下一组全部物理键基础负荷 +5%**。该奖励与 EX
+声明权重分离，最多计一次，不向后继承，也不合并 family 或将空隙中的双手移动加入 DP。
+启用上述实验性 family 桥接时，这项局部奖励不再叠加。
+
+每个时间批次包含一个主干键和最多两个辅助物件；辅助物件参与普通/EX 物件权重，但不
+参与速度或方向计算。双押节点可用不同键位进入和离开，例如 `3,4,56,7,8` 以 5 接收
+前段、以 6 发出后段；这是同拍换手而非 5 到 6 的瞬时单手移动。同向、异向双扫及单双扫
+切换只要存在贯穿的合法最长主干就不会中断；
+批次宽度仍保留作审计，但自然扩张、收束及双押交棒都不额外增加权重。双扫批次本身已按
+两个物件贡献基础负荷，不再因第二 Strand 或宽度变化重复奖励。
+折返只有前一方向已完成至少两步时才成立，最后一段也必须完成两步；转向轴心的 0.2 从
+轴心批次开始生效。
+
+速度以 180 BPM 十六分的 `1/12` 秒为单位，使用平方根系数：
 
 ```text
-interval_g = (end_seconds_g - start_seconds_g) / (N_g - 1)
-speed_g = (0.1 / interval_g) ^ 1.0
-base_g = N_g * speed_g
+speed_factor = sqrt((1/12 second) / unit_interval_seconds)
+batch_note_weight = normal_declarations + 0.3 * ex_declarations
+if physical_button_count >= 2: batch_note_weight *= 1.3
+batch_base = batch_note_weight * speed_factor
 ```
 
-随后检查其他扫键组。时间间隔使用当前组自己的 `interval_g` 作为单位；起始键距离取
-1–8 环上的最短距离。符合多项时只使用最大倍率，并以更早的 follower 起点和组 ID 打破
-并列：
-
-- follower 在当前组结束后 0–1 个单位内：起始键距离不超过 1 时为 4 倍，否则为 2 倍；
-- 若同时恰好首尾相接且起始键距离不超过 1，则为 8 倍；
-- follower 在 2–4 个单位内为 1.2 倍；严格位于 1–2 个单位之间不加成；
-- 多个组在同一秒时刻开始时为 1.6 倍；连续倍率与同起点倍率只取较大者，不相乘。
-
-将加成后的组权重从高到低排列，第 `k` 组乘 `k^-0.5`，全部组求和。默认 analyser 使用
-完整谱面有效时长作 per-second 归一化：
+同一候选内的变速和折返按发生顺序累加倍率，不作音符尾部衰减。不能直接延长
+成同一候选、但在上一组一个单位间隔内开始的组仍可组成 family。单押接续若没有同向近
+起点或合法折返，只维持 family 关系而不加权；满足方向条件时基础增加 0.2。同拍双押
+交棒只维持 family 而不加权。同向且两组起点环形距离不超过一键时再增加 0.1，合法折返仍增加 0.2；
+实际变速另增加 0.2。多个前驱可用时取能产生最大线性倍率的前驱，避免乘算次幂爆炸。
 
 ```text
-boosted_g = base_g * max(continuation_multiplier_g, simultaneous_multiplier_g)
-sweep_weighted_total = sum(boosted_(k) * k^-0.5)
-sweep_raw = sweep_weighted_total / max(chart_end_time_s, last_event_end_s or 0)
+multiplier_child = multiplier_parent + connection_increment
+family_load = sum(batch_base * current_additive_multiplier)
+family_duration = family_end_seconds - family_start_seconds
+family_density = family_load / family_duration
+eligible = physical_attack_count > 8
+family_mean = mean(all_family_density)
+duration_factor = sqrt(max(chart_end_time_s, last_event_end_s or 0) / 150 seconds)
+mean_load = family_mean * duration_factor
+peak = sum(eligible_family_density_(k) / sqrt(k), k=1..min(5, eligible_count))
+sweep_raw = 0.6 * mean_load + 0.4 * peak
 ```
 
-正时长无扫键谱面为 0；零时长返回 `FeatureResult(None, success=False)`。当前 raw 公式对应
-`sweep_weighted_v5_per_second`，默认评分映射暂用 identity，等待观察分布后再校准。
+识别只读取 `events-0.3`，伪 EACH 因而沿用 parser 的精确 `1/32 beat`。动态规划状态和
+最终候选选择各有 100,000 状态上限，超限时整项失败而不返回部分分数。正时长无扫键为 0；零时长不可用。
+每个 family 只用自身首尾覆盖时长归一化，不使用谱面总长度；所有 family 按密度从高到低
+排序。物理攻击数不超过 8 的 family 在排名前排除；边界恰好 9 个攻击时
+保留，不另设持续时间门槛。Peak 只取合格 family 前五并使用 `1/sqrt(k)` 名次衰减；Mean
+则对所有已识别 family（包括物量不超过 8 的短 family）的 density 取算术平均，再乘
+`sqrt(chart_duration / 150 seconds)` 作温和总时长补正。最终按
+`0.6 * Mean + 0.4 * Peak` 混合。当前公式版本为
+`sweep_family_blend_v7_family_mean_duration_sqrt`，识别版本为
+`main_spine_v2_chord_handoff`，默认映射暂用 identity。
+
+实验 API `two_hand_motion(times_s, lanes_by_batch)` 使用动态规划最小化双手位移。状态保留
+两只手最后位置和最后使用批次；若连续快速批次要求当前手跨越超过可用步数，优先改由
+空闲手处理，但空闲手从上次位置到新键位的环形距离仍计入 idle reposition。目标按被迫
+快速跳跃次数、自由手接管次数、双手总位移依次最小化。Family 可通过
+`sweep_family_hand_motion(family, groups)` 直接计算，返回 active/idle 位移、接管、违规、
+每秒和每物件位移及逐批手部分配。Family 起点前的手位未知，因此每只手第一次参与不计
+初始放置距离；一旦参与，之后所有空转移位均计入。默认 SweepBurst 以此分配双手动作。
+
+当前默认 `score_sweep_burst` / `SweepBurstAnalyzer` 取全谱三个互不重叠的 2 秒窗口，按
+`1/sqrt(k)` 排名衰减后除以权重和，保持每秒强度量纲。窗口基础负荷
+只保留普通/EX 物件权重与速度平方根系数，双押倍率固定为 1.0，不继承 family、折返、
+变速或接续的累积倍率。全程单押、无变速、无换向的单一 sequence 前 16 个攻击保持
+全权，第 `n` 个超额攻击按 `1/sqrt(n+1)` 衰减。双押批次自身保持全权并将连续单押计数
+清零，之后从 1 重新累计；换向和变速同样开始新的计数段。同向 family 接续与保持方向的
+双押换手只在切换批次局部增加 20%，不向后累乘；结构奖励按物理键数与速度计算，
+EX 的 `0.3` 只扣减基础物量，不扣减接续奖励。
+空转位移按每只手上次触键到本次触键的完整可用时间计算速度，以 150 BPM 八分音符
+移动 2 个键距，即 `10 键/秒` 为参考：
+`weighted_idle = distance * sqrt(max(1, (distance / idle_time) / 10))`。
+再将 `0.5 * weighted_idle + 1.0 * takeover + 2.0 * fast_jump` 作为等效物量，随后除以
+2 秒。Family 内连续简单单押 group 另以 `(hand, direction)` 建立 1 至 4 组的短周期模板；
+模板至少覆盖 6 组、重复三轮且匹配率达到 80% 时，符合模板的 group 起点运动负荷只保留
+10%，反手或其他不匹配 group 保持全权。双押、换向和变速 group 切断模板；同向 family
+接续 group 可参与模板判断但运动负荷受保护、不应用折扣，双押 handoff 同样保持全权。
+旧版 `SweepAnalyzer` 仍可由调用方显式注入以作对照。
+
+消融参数可关闭长单押逐项衰减（`simple_run_decay_exponent=0`），改为两类独立模板。
+`alternating_idle_multiplier` 启用真正左右交替的两相 group 模板，只缩放匹配组起点的
+空转位移项，接管和高速跳跃项保持全权；该参数启用时不再叠加旧的整体运动模板折扣。
+可选 `takeover_same_direction_only=True` 进一步限制接管奖励：只在 DP 实际换手且当前组
+与父组同向时给 `+1`，反向规律交替没有独立接管奖励，空转位移仍单独计算。
+连续至少 16 批、单手、单押、同方向，且单位间隔不慢于 180 BPM 24 分音符的 section
+可用 `solo_fast_base_multiplier` 和 `solo_fast_motion_multiplier` 分别缩放基础与运动项。
+同类 section 若连续至少 48 批，可用 `solo_fast_long_base_multiplier` 单独覆盖基础倍率，
+防止超长循环在取消旧的逐项衰减后重新冲到榜首。
+这些参数默认关闭，不改变当前 CLI 算法；首轮消融取交替空转 `0.2`、单手快扫基础 `0.85`、
+超长单手快扫基础 `0.4`、运动 `0.5`。
 
 ## 整体物量口径
 
@@ -317,8 +409,16 @@ slide_cumulate = sum(L_r) / (D / 0.5)
 ```
 
 `slide_sequence` 仍独立按声明拍分连续段：相邻启动配置满足 `0 < delta_beat <= 1` 即连续，
-夹杂其他物件不打断。它使用实际秒间隔的 `mean(0.5/delta_time)`、从第四个时间点后增长
-放缓的长度因子，以及 `0.5 * mean(max(0,U_j-1))` 并发加项；全局取非零段强度的 RMS。
+夹杂其他物件不打断。星星阵从每段挑选最长的合法启动主干，相邻保留启动的间隔必须
+`1/2 <= delta_beat <= 1`；严格快于八分的插入启动可以跳过，不使已有正常阵列归零或断开。
+纯快速流若没有任何原始相邻合法间隔，不通过隔项采样伪造八分阵；恰好八分保留，
+同拍并发配置没有相邻间隔，不受此门槛影响。此规则不改变独立的 `slide_tricky` 或
+`slide_cumulate`。设合格主干有 `n` 个启动：节奏项是实际秒间隔的
+`C = mean(0.5/delta_time)`（`n=1` 时不计节奏）；长度系数 `L` 在 `n<=4` 时为 1，
+`4<n<=16` 时为 `1+(n-4)/6`，之后为 `3*sqrt(n/16)`。同拍并发项
+`P = mean(max(0,U_j-1))`，其中 `U_j` 为同拍各 Slide 头路径数的平方根之和；
+主干同拍的另一条 Slide 已纳入，普通 Tap 不计入这一项。段强度为 `C*L+0.5*P`。
+全谱取最强五段，名次权重 `1/log2(k+1)`，不足五段补零，并除以固定五项权重和。
 正时长无 Slide 谱面三个维度均为 0，零时长返回失败。
 
 ## 统一 CLI 与模式
@@ -427,20 +527,20 @@ from mairadar.scoring import DummyPnMapper, IdentityMapper
 
 
 FEATURE_MAPPERS = {
-    "jack": IdentityMapper(),
-    "sweep": IdentityMapper(),
     "note": DummyPnMapper(p50=3.540077197, p100=9.328672541),
     "peak": DummyPnMapper(p50=10.0, p100=20.0),
+    "sweep": IdentityMapper(),
     "slide_tricky": IdentityMapper(),
-    "slide_cumulate": DummyPnMapper(p50=0.36, p100=0.96),
     "slide_sequence": DummyPnMapper(p50=1.3, p100=2.9),
+    "jack": IdentityMapper(),
+    "slide_cumulate": DummyPnMapper(p50=0.36, p100=0.96),
 }
 
 class DefaultScoreTransformer(FeatureScoreTransformer):
     def __init__(self):
         super().__init__(
             FEATURE_MAPPERS,
-            mapping_version="provisional-jack-sweep-tricky-identity-20260915-v30",
+            mapping_version="provisional-sweep-2s-top3-cumulate-star8-top5-20260916-v51",
         )
 
 TRANSFORMER = DefaultScoreTransformer
@@ -452,7 +552,7 @@ p50、p100 是 `DummyPnMapper` 的原始指标阈值，要求 `0 < p50 < p100` �
 样本的中位数和 P99；Peak 的 10、20 是首轮观察用宽松锚点。当前 1888 张难度索引 5/6
 观察样本中，`slide_tricky` 曾使用中位数 27.5、P99.9 约 116.06 作为临时锚点；当前默认
 改用 `IdentityMapper`，使 `slide_tricky_score` 原样等于 analyser 的 raw 值；
-`slide_cumulate` 独立复刻版本中位数约 0.363、P99 约 0.960，临时取 0.36、0.96；
+已重启的 `slide_cumulate` 独立复刻版本暂取 0.36、0.96；
 `slide_sequence` 暂取 1.3、2.9。它们都是固定临时配置，后续批次不会自动重新拟合。
 
 DummyPnMapper 使用两段线性变换：
@@ -465,8 +565,7 @@ x >= p100:        200
 ```
 
 即 0→0、P50→50、P100→200，范围外截断到 0–200，保留浮点分数、不取整。整体物量在当前临时映射下
-3.540077197→50、9.328672541→200；Peak 为 10→50、20→200；`slide_cumulate` 为
-0.36→50、0.96→200。NaN、无穷值及无效
+3.540077197→50、9.328672541→200；Peak 为 10→50、20→200。NaN、无穷值及无效
 阈值明确报错。
 
 同一映射器类可以配置不同阈值，也可以替换为其他实现 map 的类。调用方可以直接注入自己的配置：
@@ -488,11 +587,38 @@ exit_code = max(batch.exit_code, report.exit_code)
 原始 feature 失败时不调用其映射器，标准分数留空。缺少某个 feature 的配置，或它的映射器报错、返回非有限值时，只将该 feature 标为失败，其他 feature 继续映射，原始数据保留；批次返回非零。多余配置允许存在，便于分析器选择特征子集。
 
 ScoreResult 独立存储标准分数与 mapping_version。默认版本为
-`provisional-jack-sweep-tricky-identity-20260915-v30`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
+`provisional-sweep-2s-top3-cumulate-star8-top5-20260916-v51`；后续调整指标或参数时应同步维护版本。pipeline 校验映射
 输出维度与特征配置一致，禁止为失败的原始 feature 生成成功分数。若手动将 TRANSFORMER
 设为 None，映射模式仍会明确报错；analysis 不需要评分配置。
 
 pipeline 将评分输出附在 AnalysisRecord.scores 上，导出器追加 `<feature>_score` 并保留映射诊断和版本。映射全部失败时仍保留分数列，以空值表示失败。直接调用导出组件输出原始分析时，可省略评分结果及标准分数列。
+
+### 冻结 mapping profile 并用于开放集
+
+visualizer 的分布页可以导出 `mapping_profile.json`。导出时，对每个默认维度记录当前筛选
+范围内 T1–T4 对应的 raw 值、百分位、样本数和最大 raw 值 `t4Max`；profile 顶层记录
+`mappingVersion`、固定目标分 `[50, 100, 150, 200]` 与开放集上限 220。所有 raw 锚点
+必须严格递增且 T1 大于 0，否则页面会拒绝导出，避免产生有歧义的分段。
+`data/mapping_profile.json` 中各维度的 raw 锚点可在 GUI 中分别调整；更改分析算法后
+旧锚点可能不再适合新的 raw 分布，需重新检查。
+
+```bash
+mairadar --mode analysis_score \
+  --mapping-profile mapping_profile.json \
+  --input data/test-parsed \
+  --output outputs/test-scored
+```
+
+CLI 校验 profile 后构造 `OpenSetPiecewiseMapper`。设 T3→T4 的斜率
+`s = 50 / (T4 - T3)`，则 T4 到 `T4_max`（含端点）统一为 200；超过
+`T4_max` 时使用：
+
+```text
+score(x) = 200 + 20 * (1 - exp(-s * (x - T4_max) / 20))
+```
+
+因此开放集尾部在 `T4_max` 右侧的初始斜率仍为 `s`，随后连续衰减并渐近 220。
+新测试集只应用冻结的 raw 锚点，不使用自身分布重新拟合；这也避免测试数据泄漏到校准过程。
 
 ## 验证
 

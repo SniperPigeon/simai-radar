@@ -272,6 +272,35 @@ class SlidePressureTests(unittest.TestCase):
         self.assertEqual(section.sequence_intensity, 1.0)
         self.assertEqual(result.sequence, 1.0)
 
+    def test_sub_eighth_gap_excludes_whole_star_array_but_not_tricky(self):
+        short = breakdown("(120){16}1-5[10:1],2-6[10:1],E")
+        self.assertEqual(short.sections[0].cadence_factor, 4.0)
+        self.assertEqual(short.sections[0].sequence_intensity, 0.0)
+        self.assertEqual(short.sequence, 0.0)
+        self.assertGreater(short.tricky, 0.0)
+
+        mixed = breakdown(
+            "(120){16}1-5[10:1],2-6[10:1],{8}3-7[10:1],E"
+        )
+        self.assertEqual(mixed.sections[0].onset_count, 3)
+        self.assertEqual(mixed.sections[0].sequence_intensity, 0.0)
+        self.assertEqual(mixed.sequence, 0.0)
+
+    def test_exact_eighth_gap_remains_eligible_and_other_sections_survive(self):
+        eighth = breakdown("(120){8}1-5[10:1],2-6[10:1],E")
+        self.assertEqual(eighth.sections[0].sequence_intensity, 2.0)
+        self.assertEqual(eighth.sequence, 2.0)
+
+        separate = breakdown(
+            "(120){16}1-5[10:1],2-6[10:1],{4},,"
+            "{8}3-7[10:1],4-8[10:1],E"
+        )
+        self.assertEqual(
+            [section.sequence_intensity for section in separate.sections],
+            [0.0, 2.0],
+        )
+        self.assertEqual(separate.sequence, 2.0)
+
     def test_dotted_eighth_sequence_survives_interleaved_objects(self):
         result = breakdown("(120){16}1-5[10:1],3,A1,2-6[10:1],E")
         [section] = result.sections

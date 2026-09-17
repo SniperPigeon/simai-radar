@@ -15,7 +15,14 @@ from .note_density import _simultaneous_touch_components
 
 CADENCE_REFERENCE_SECONDS = 0.5
 SIMULTANEOUS_ONSET_SECONDS = 1 / 60
-SEQUENCE_FULL_ONSETS = 3
+SEQUENCE_MIN_INTERVAL_BEATS = Fraction(1, 2)
+SEQUENCE_LENGTH_BASE_ONSETS = 4
+SEQUENCE_LENGTH_KNEE_ONSETS = 16
+SEQUENCE_LENGTH_KNEE_FACTOR = 3.0
+SEQUENCE_TOP_COUNT = 5
+SEQUENCE_TOP_WEIGHTS = tuple(
+    1 / math.log2(rank + 1) for rank in range(1, SEQUENCE_TOP_COUNT + 1)
+)
 CONCURRENCY_WEIGHT = 0.5
 TRICKY_OBJECT_CAP = 16
 TRICKY_TOP_COUNT = 5
@@ -113,6 +120,7 @@ class SlideSectionMetrics:
 
     slide_count: int
     onset_count: int
+    sequence_onset_count: int
     internal_interference: float
     launch_interference: float
     tricky_intensity: float
@@ -710,20 +718,20 @@ def _cadence_factor(section: list[_SlideOnsetCluster]) -> float:
     return math.fsum(factors) / len(factors)
 
 
-def _log_length(count: int, full_count: int) -> float:
-    if count <= 0 or full_count <= 0:
-        raise ValueError("Length counts must be positive")
-    if count <= full_count:
-        return float(count)
-    excess = (count - full_count) / full_count
-    return full_count * (1 + math.log1p(excess))
-
-
 def _sequence_length_factor(onset_count: int) -> float:
-    if onset_count <= SEQUENCE_FULL_ONSETS:
+    if onset_count <= 0:
+        raise ValueError("Sequence length must be positive")
+    if onset_count <= SEQUENCE_LENGTH_BASE_ONSETS:
         return 1.0
-    effective = _log_length(onset_count, SEQUENCE_FULL_ONSETS)
-    return math.sqrt(effective / SEQUENCE_FULL_ONSETS)
+    if onset_count <= SEQUENCE_LENGTH_KNEE_ONSETS:
+        progress = (
+            (onset_count - SEQUENCE_LENGTH_BASE_ONSETS)
+            / (SEQUENCE_LENGTH_KNEE_ONSETS - SEQUENCE_LENGTH_BASE_ONSETS)
+        )
+        return 1.0 + (SEQUENCE_LENGTH_KNEE_FACTOR - 1.0) * progress
+    return SEQUENCE_LENGTH_KNEE_FACTOR * math.sqrt(
+        onset_count / SEQUENCE_LENGTH_KNEE_ONSETS
+    )
 
 
 def _cluster_concurrency(cluster: _SlideOnsetCluster) -> float:
@@ -732,6 +740,56 @@ def _cluster_concurrency(cluster: _SlideOnsetCluster) -> float:
     # Utage structures defined without special cases.
     workload = math.fsum(math.sqrt(len(group.events)) for group in cluster.groups)
     return max(0.0, workload - 1)
+
+
+def _sequence_onsets(
+    section: list[_SlideOnsetCluster],
+) -> list[_SlideOnsetCluster]:
+    """Keep a legal onset spine without promoting an all-fast stream."""
+    best_at: list[dict[bool, tuple[tuple[int, ...], int, float, float]]] = []
+
+    def rank(path: tuple[tuple[int, ...], int, float, float]) -> tuple:
+        indexes, direct_links, cadence_sum, concurrency_sum = path
+        return (
+            len(indexes), direct_links, cadence_sum, concurrency_sum,
+            tuple(-index for index in indexes),
+        )
+
+    for index, cluster in enumerate(section):
+        concurrency = _cluster_concurrency(cluster)
+        current = {False: ((index,), 0, 0.0, concurrency)}
+        for previous in range(index - 1, -1, -1):
+            gap = cluster.declaration_beat - section[previous].declaration_beat
+            if gap > 1:
+                break
+            if gap < SEQUENCE_MIN_INTERVAL_BEATS:
+                continue
+            elapsed = cluster.declaration_time_s - section[previous].declaration_time_s
+            if elapsed <= 0:
+                raise ValueError("Distinct Slide onsets must advance in time")
+            for had_direct_link, prior in best_at[previous].items():
+                prior_indexes, prior_links, prior_cadence, prior_concurrency = prior
+                direct_link = previous == index - 1
+                candidate = (
+                    prior_indexes + (index,),
+                    prior_links + int(direct_link),
+                    prior_cadence + CADENCE_REFERENCE_SECONDS / elapsed,
+                    prior_concurrency + concurrency,
+                )
+                key = had_direct_link or direct_link
+                incumbent = current.get(key)
+                if incumbent is None or rank(candidate) > rank(incumbent):
+                    current[key] = candidate
+        best_at.append(current)
+    eligible = [paths[True] for paths in best_at if True in paths]
+    selected = (
+        max(eligible, key=rank)[0] if eligible
+        else (max(
+            range(len(section)),
+            key=lambda index: (_cluster_concurrency(section[index]), -index),
+        ),)
+    )
+    return [section[index] for index in selected]
 
 
 def _section_metrics(
@@ -755,16 +813,19 @@ def _section_metrics(
     tricky_effective_length = float(onset_count)
     tricky_load = math.fsum(tricky_values)
 
-    cadence = _cadence_factor(section)
+    sequence_section = _sequence_onsets(section)
+    sequence_onset_count = len(sequence_section)
+    cadence = _cadence_factor(sequence_section)
     concurrency = math.fsum(
-        _cluster_concurrency(cluster) for cluster in section
-    ) / onset_count
-    sequence_length = _sequence_length_factor(onset_count)
-    continuous = cadence * sequence_length if onset_count >= 2 else 0.0
+        _cluster_concurrency(cluster) for cluster in sequence_section
+    ) / sequence_onset_count
+    sequence_length = _sequence_length_factor(sequence_onset_count)
+    continuous = cadence * sequence_length if sequence_onset_count >= 2 else 0.0
     sequence_intensity = continuous + CONCURRENCY_WEIGHT * concurrency
     return SlideSectionMetrics(
         slide_count=slide_count,
         onset_count=onset_count,
+        sequence_onset_count=sequence_onset_count,
         internal_interference=internal_total,
         launch_interference=launch_total,
         tricky_intensity=tricky_intensity,
@@ -793,6 +854,14 @@ def _top_tricky_load(loads: list[float]) -> float:
     """Zero-pad missing loads, retaining the fixed five-rank weight denominator."""
     top = sorted(loads, reverse=True)[:TRICKY_TOP_COUNT]
     return math.fsum(q * w for q, w in zip(top, TRICKY_TOP_WEIGHTS)) / math.fsum(TRICKY_TOP_WEIGHTS)
+
+
+def _top_sequence_intensity(intensities: list[float]) -> float:
+    """Log-discount the five strongest arrays, zero-padding missing ranks."""
+    top = sorted((value for value in intensities if value > 0), reverse=True)[:SEQUENCE_TOP_COUNT]
+    return math.fsum(
+        value * weight for value, weight in zip(top, SEQUENCE_TOP_WEIGHTS)
+    ) / math.fsum(SEQUENCE_TOP_WEIGHTS)
 
 
 def _modal_slide_wait_s(groups: list[_SlideGroup]) -> float | None:
@@ -920,16 +989,9 @@ def slide_feature_breakdown(
     tricky_total_load = math.fsum(top_loads)
     tricky = _top_tricky_load(top_loads)
 
-    sequence_sections = [
-        section for section in sections
-        if section.sequence_intensity > 0
-    ]
-    sequence = (
-        math.sqrt(math.fsum(
-            section.sequence_intensity ** 2 for section in sequence_sections
-        ) / len(sequence_sections))
-        if sequence_sections else 0.0
-    )
+    sequence = _top_sequence_intensity([
+        section.sequence_intensity for section in sections
+    ])
     return SlideFeatureBreakdown(
         tricky=tricky,
         tricky_total_load=tricky_total_load,

@@ -116,6 +116,21 @@ python scripts/mairadar.py \
   --output outputs/visualizer-new
 ```
 
+在 visualizer 的“原始值分布”页调好各维 T1–T4 后，可以导出
+`mapping_profile.json`。该文件冻结的是校准集 raw 锚点，而不是让新数据集重新计算百分位：
+
+```bash
+python scripts/mairadar.py \
+  --mode analysis_score \
+  --mapping-profile mapping_profile.json \
+  --input data/test-parsed \
+  --output outputs/test-scored
+```
+
+profile 将 T1/T2/T3/T4 映射到 50/100/150/200，并记录校准集最大 raw 值
+`T4_max`。T4 到 T4_max 保持 200；开放集 raw 超过 T4_max 后，以 T3→T4
+的斜率起步并渐近到 220，不会在新测试集上重新拟合。
+
 若只想检查 analyser 的原始指标，不执行评分映射或生成报告：
 
 ```bash
@@ -345,26 +360,43 @@ analyzer = ChartAnalyzer({"note_density": NoteDensityAnalyzer})
 八分音符；形成至少两个主键时间点后才允许飞键，每次飞键可包含同拍最多四个异键普通
 Tap，允许分布在多个连续时间点；每次从首个异键到返回主键的跨度不超过八分音符。
 回到主键后又要累计两个主键时间点才能再次飞出，下一次飞键重新获得独立的数量和时间
-预算。主键物件权重为 1，打断 Tap 权重为 1.5；序列再按实际主键速度相对
+预算。主键物件基础权重为 1，打断 Tap 基础权重为 1.5；EX 物件在对应基础权重上乘
+0.3（EX 主键为 0.3，EX 打断为 0.45），不改变连续性、飞键数量上限或速度计算。序列再按实际主键速度相对
 180 BPM 等效十六分的 1.5 次方加权。候选按速度加权后的强度取前五，名次权重为
 `1.3 × 0.645^(x−1)`；五条等强候选时 Top‑1 约占全部名次权重的 40%，后排按几何级数
 快速衰减。完整边界规则见
 [分析说明](docs/ANALYSIS.md#纵连口径)。
 
-`SweepAnalyzer` 从 Tap/Hold 起按（包含显式 Slide 头）识别至少三个不同相邻外键组成的
-最大扫键；允许最多一个中间攻击、`1/16 beat` 周期误差，以及每段至少两步后的折返。
-每组按物理起按数与平均键间秒数计算速度权重，再应用连续组最高 8 倍、同起点组 1.6 倍
-加成；全部组按 `rank^-0.5` 衰减求和，最后除以谱面有效秒数，输出每秒扫键强度。
+旧版 `SweepAnalyzer` 按时间批次用动态规划选择最长主干，并把同拍另外一至两个物件作为辅助
+物件纳入；双押节点可以一键接收前段、由另一键发出后段，因此 `3,4,56,7,8` 一类换手扫键
+不会在双押处截断。支持双扫、单扫/双扫互切、复合双押、折返、变速和长 Hold 占位跨键。基础门槛为十二分，
+八分只允许作为减速后继；短 Hold 按 Tap，EX 声明为 0.3。变速比较使用 0.5% 相对容差；
+速度相对 180 BPM 十六分取
+平方根系数，连接倍率只作线性增量，不进行音符降权；单双宽度变化和双押接续不额外加权。
+双押批次内物件局部乘 1.3。每个 family 以自身负荷除以自身持续时间；物理攻击
+不超过 8 的 family 只从 Peak 候选排除，不另设时长门槛，最终取合格 family 中强度最高五组按
+`1/sqrt(k)` 得到 Peak；所有 family density 的均值乘 `sqrt(chart_duration/150)` 得到 Mean，最终以
+`0.6 × Mean + 0.4 × Peak` 混合。
 识别只读取 parser 事件，不重新扫描 Simai；完整公式见
 [分析说明](docs/ANALYSIS.md#扫键口径)。
+另外提供双手位移 DP，可计算 family 内两手总位移、连续动作位移、空转移位和
+自由手接管；空转位移以 150 BPM 八分音符内移动 2 个键距（10 键/秒）为参考施加速度压力，EX 只扣减
+基础物量而不削弱接续奖励。当前默认 CLI 使用 `SweepBurstAnalyzer`，将速度基础物量和双手负荷放进
+三个互不重叠的 2 秒窗口，按 `1/√k` 衰减后除以权重和。旧版 `SweepAnalyzer` 仍保留用于对照。
+两组扫键若恰好隔半拍且单位速度相近，后组物理基础负荷局部增加 5%，不合并 family。
 
-Slide 分为三个独立维度：`slide_tricky` 取五个最高单配置负荷，按 `1/log₂(k+1)`
+Slide 当前默认启用两个维度：`slide_tricky` 取五个最高单配置负荷，按 `1/log₂(k+1)`
 作归一化加权平均（不足五项补零），每个配置
 最多按 16 个逻辑干扰物件计；
 Tricky 按全谱正等待时长的 0.05 秒众数桶建立基准，排除等待严格超过基准四倍的路径；
-`slide_cumulate` 由独立 analyser 按历史确认口径计算，
-不复用当前 Tricky helper，中文显示为“持续星星压力”；`slide_sequence` 只分析连续阵、
-同拍双押和同头多路径。`slide_tricky` 的 Tap 干扰包含同位、扫键和实际 Slide 头修正，
+`slide_cumulate` 的独立 analyser 已重新加入默认分析和评分链路；当前
+`data/mapping_profile.json` 可为它单独保存 GUI 调整后的锚点；
+`slide_sequence` 只分析连续阵、
+同拍双押和同头多路径；严格快于八分音符的 Slide 启动不进入星星阵主干，
+但不打断前后正常间隔的阵列，纯快速流也不降采样成八分阵；恰好八分保留。
+每段以 4 个启动点为长度基准，16 点达到 3 倍，之后开方放缓；全谱取最强五段，
+按 `1/log₂(k+1)` 衰减并用固定五项权重和归一化。同拍额外 Slide 已计入并发项。
+`slide_tricky` 的 Tap 干扰包含同位、扫键和实际 Slide 头修正，
 Touch 连通组最多计两组，启动拍统一将物件负荷除以二，并只追加启动后一拍以内的运动
 交互；普通 Tap/Hold 以 180 BPM 等效八分为中性点，更慢时按平方根下降，更快时线性提升
 并在 1.5 封顶。每个外部物件只归属一个最近的相关配置。完整公式见
@@ -382,13 +414,13 @@ Touch 连通组最多计两组，启动拍统一将物件负荷除以二，并�
 
 ```python
 FEATURES = {
-    "jack": JackSequenceAnalyzer,
-    "sweep": SweepAnalyzer,
     "note": NoteDensityAnalyzer,
     "peak": PeakDensityAnalyzer,
+    "sweep": SweepBurstAnalyzer,
     "slide_tricky": SlideTrickyAnalyzer,
-    "slide_cumulate": SlideCumulateAnalyzer,
     "slide_sequence": SlideSequenceAnalyzer,
+    "jack": JackSequenceAnalyzer,
+    "slide_cumulate": SlideCumulateAnalyzer,
 }
 ```
 

@@ -35,13 +35,13 @@ class DimensionPresentation:
 # Edit this mapping to configure labels and colors for known analysis feature keys.
 # Unlisted keys are exported unchanged so a newly added feature remains visible.
 DIMENSION_PRESENTATION = {
+    "note": DimensionPresentation("Note", "Note"),
+    "peak": DimensionPresentation("Peak", "Peak"),
+    "sweep": DimensionPresentation("扫键", "扫键"),
+    "slide_tricky": DimensionPresentation("错位压力", "错位压力"),
+    "slide_sequence": DimensionPresentation("星星阵", "星星阵"),
     "jack": DimensionPresentation("纵连", "纵连"),
-    "sweep": DimensionPresentation("扫键强度", "扫键"),
-    "note": DimensionPresentation("总体物量", "Note"),
-    "peak": DimensionPresentation("Peak爆发", "Peak"),
-    "slide_tricky": DimensionPresentation("Slide错位", "错位"),
     "slide_cumulate": DimensionPresentation("持续星星压力", "持续星星"),
-    "slide_sequence": DimensionPresentation("Slide阵强度", "Slide阵"),
 }
 
 
@@ -233,7 +233,7 @@ class VisualizerExporter:
             "generatedAt": datetime.now(timezone.utc).isoformat(),
             "mappingVersions": mapping_versions,
             "scoreScale": 100,
-            "displayRange": [0, 200],
+            "displayRange": [0, 220],
             "dimensions": self._dimensions(names),
             "stats": {
                 "songCount": len(songs),

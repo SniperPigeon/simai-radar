@@ -100,55 +100,65 @@ class VisualizerExporterTests(unittest.TestCase):
                 app_source,
             )
             self.assertIn("function mapRawScore(rawValue, rawThresholds)", app_source)
+            self.assertIn("function buildMappingProfile()", app_source)
+            self.assertIn('link.download = "mapping_profile.json"', app_source)
+            self.assertIn("t4Max: values.at(-1)", app_source)
+            self.assertIn("function orderedRadarDimensions(dimensions)", app_source)
+            self.assertIn(
+                "dimensions[1], dimensions[2], dimensions[5]",
+                app_source,
+            )
             self.assertIn("state.clientMappedDimensions.add(state.distributionDimension)", app_source)
             self.assertNotIn('step="0.1"', app_source)
             index_source = (root / "site" / "index.html").read_text()
-            self.assertIn("T1/T2/T3/T4 → 50/100/150/200 分", index_source)
+            self.assertIn("T1/T2/T3/T4 → 50/100/150/200", index_source)
+            self.assertIn("导出 mapping_profile", index_source)
             self.assertIn("<th>目标分</th>", index_source)
             payload = json.loads(report.data_path.read_text())
             self.assertEqual(payload["schemaVersion"], "mairadar-visualizer-1")
             self.assertEqual(payload["mappingVersions"], ["visualizer-test-v1"])
+            self.assertEqual(payload["displayRange"], [0, 220])
             self.assertEqual(payload["dimensions"], [
+                {
+                    "key": "note",
+                    "label": "Note",
+                    "shortLabel": "Note",
+                    "color": "#ef476f",
+                },
+                {
+                    "key": "peak",
+                    "label": "Peak",
+                    "shortLabel": "Peak",
+                    "color": "#ff9f1c",
+                },
+                {
+                    "key": "sweep",
+                    "label": "扫键",
+                    "shortLabel": "扫键",
+                    "color": "#2a9d8f",
+                },
+                {
+                    "key": "slide_tricky",
+                    "label": "错位压力",
+                    "shortLabel": "错位压力",
+                    "color": "#3a86ff",
+                },
+                {
+                    "key": "slide_sequence",
+                    "label": "星星阵",
+                    "shortLabel": "星星阵",
+                    "color": "#8338ec",
+                },
                 {
                     "key": "jack",
                     "label": "纵连",
                     "shortLabel": "纵连",
-                    "color": "#ef476f",
-                },
-                {
-                    "key": "sweep",
-                    "label": "扫键强度",
-                    "shortLabel": "扫键",
-                    "color": "#ff9f1c",
-                },
-                {
-                    "key": "note",
-                    "label": "总体物量",
-                    "shortLabel": "Note",
-                    "color": "#2a9d8f",
-                },
-                {
-                    "key": "peak",
-                    "label": "Peak爆发",
-                    "shortLabel": "Peak",
-                    "color": "#3a86ff",
-                },
-                {
-                    "key": "slide_tricky",
-                    "label": "Slide错位",
-                    "shortLabel": "错位",
-                    "color": "#8338ec",
+                    "color": "#d1495b",
                 },
                 {
                     "key": "slide_cumulate",
                     "label": "持续星星压力",
                     "shortLabel": "持续星星",
-                    "color": "#d1495b",
-                },
-                {
-                    "key": "slide_sequence",
-                    "label": "Slide阵强度",
-                    "shortLabel": "Slide阵",
                     "color": "#00a6a6",
                 },
             ])
