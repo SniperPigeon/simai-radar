@@ -21,6 +21,7 @@ from mairadar.analysis.features.slide import (
     TRICKY_SPEED_REFERENCE_EIGHTH_BPM,
     TRICKY_TOP_COUNT,
     TRICKY_TOP_WEIGHTS,
+    _top_sequence_intensity,
     _top_tricky_load,
     _WorkloadPoint,
     _sequence_length_factor,
@@ -258,10 +259,12 @@ class SlidePressureTests(unittest.TestCase):
             (10.0 + 4e-7, 9.0, 8.0, 7.0, 6.0),
         )
 
-    def test_continuous_sequence_length_bonus_starts_after_three_onsets(self):
+    def test_sequence_length_is_one_at_four_three_at_sixteen_then_sqrt(self):
         self.assertEqual(_sequence_length_factor(3), 1.0)
-        expected = math.sqrt((3 + 3 * math.log(4 / 3)) / 3)
-        self.assertAlmostEqual(_sequence_length_factor(4), expected)
+        self.assertEqual(_sequence_length_factor(4), 1.0)
+        self.assertAlmostEqual(_sequence_length_factor(8), 1 + 4 / 6)
+        self.assertEqual(_sequence_length_factor(16), 3.0)
+        self.assertAlmostEqual(_sequence_length_factor(32), 3 * math.sqrt(2))
 
     def test_two_quarter_spaced_slides_form_a_sequence_without_interference_input(self):
         result = breakdown("(120){4}1-5[10:1],2-6[10:1],E")
@@ -270,26 +273,34 @@ class SlidePressureTests(unittest.TestCase):
         self.assertEqual(section.cadence_factor, 1.0)
         self.assertEqual(section.concurrency_pressure, 0.0)
         self.assertEqual(section.sequence_intensity, 1.0)
-        self.assertEqual(result.sequence, 1.0)
+        self.assertAlmostEqual(result.sequence, _top_sequence_intensity([1.0]))
 
-    def test_sub_eighth_gap_excludes_whole_star_array_but_not_tricky(self):
+    def test_sub_eighth_pair_does_not_form_a_star_array(self):
         short = breakdown("(120){16}1-5[10:1],2-6[10:1],E")
-        self.assertEqual(short.sections[0].cadence_factor, 4.0)
+        self.assertEqual(short.sections[0].sequence_onset_count, 1)
+        self.assertEqual(short.sections[0].cadence_factor, 1.0)
         self.assertEqual(short.sections[0].sequence_intensity, 0.0)
         self.assertEqual(short.sequence, 0.0)
         self.assertGreater(short.tricky, 0.0)
 
         mixed = breakdown(
-            "(120){16}1-5[10:1],2-6[10:1],{8}3-7[10:1],E"
+            "(120){16}1-5[10:1],2-6[10:1],,3-7[10:1],E"
         )
         self.assertEqual(mixed.sections[0].onset_count, 3)
-        self.assertEqual(mixed.sections[0].sequence_intensity, 0.0)
-        self.assertEqual(mixed.sequence, 0.0)
+        self.assertEqual(mixed.sections[0].sequence_onset_count, 2)
+        self.assertEqual(mixed.sections[0].sequence_intensity, 2.0)
+        self.assertAlmostEqual(mixed.sequence, _top_sequence_intensity([2.0]))
+
+        all_fast = breakdown(
+            "(120){16}1-5[10:1],2-6[10:1],3-7[10:1],4-8[10:1],E"
+        )
+        self.assertEqual(all_fast.sections[0].sequence_onset_count, 1)
+        self.assertEqual(all_fast.sequence, 0.0)
 
     def test_exact_eighth_gap_remains_eligible_and_other_sections_survive(self):
         eighth = breakdown("(120){8}1-5[10:1],2-6[10:1],E")
         self.assertEqual(eighth.sections[0].sequence_intensity, 2.0)
-        self.assertEqual(eighth.sequence, 2.0)
+        self.assertAlmostEqual(eighth.sequence, _top_sequence_intensity([2.0]))
 
         separate = breakdown(
             "(120){16}1-5[10:1],2-6[10:1],{4},,"
@@ -299,7 +310,7 @@ class SlidePressureTests(unittest.TestCase):
             [section.sequence_intensity for section in separate.sections],
             [0.0, 2.0],
         )
-        self.assertEqual(separate.sequence, 2.0)
+        self.assertAlmostEqual(separate.sequence, _top_sequence_intensity([2.0]))
 
     def test_dotted_eighth_sequence_survives_interleaved_objects(self):
         result = breakdown("(120){16}1-5[10:1],3,A1,2-6[10:1],E")
@@ -348,7 +359,7 @@ class SlidePressureTests(unittest.TestCase):
         self.assertAlmostEqual(point.configuration_multiplier, expected)
         self.assertAlmostEqual(point.load, expected)
 
-    def test_sub_frame_stagger_merges_but_longer_stagger_keeps_cadence(self):
+    def test_sub_frame_stagger_merges_and_larger_fast_gap_stays_ineligible(self):
         merged = breakdown(
             "(240){9999}1-5[0.5##0.2],{4}2-6[0.5##0.2],E"
         ).sections[0]
@@ -358,7 +369,8 @@ class SlidePressureTests(unittest.TestCase):
         self.assertEqual(merged.onset_count, 1)
         self.assertEqual(merged.cadence_factor, 1.0)
         self.assertEqual(separate.onset_count, 2)
-        self.assertAlmostEqual(separate.cadence_factor, 25.0)
+        self.assertEqual(separate.sequence_onset_count, 1)
+        self.assertEqual(separate.sequence_intensity, 0.0)
 
     def test_gap_over_one_beat_starts_a_new_section(self):
         result = breakdown("(120){4}1-5[10:1],,2-6[10:1],E")
