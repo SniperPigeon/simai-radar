@@ -154,6 +154,15 @@ class TrainingTests(unittest.TestCase):
         self.assertAlmostEqual(model.predict([3] * 7), 12.5)
         self.assertEqual(model.scale, (1,) * 7)
 
+    def test_recovers_cubic_and_three_way_interactions_on_unseen_samples(self):
+        x, _ = self.samples()
+        y = [12 + 0.05 * row[0] ** 3 - 0.15 * row[1] * row[2] * row[3] + 0.2 * row[6]
+             for row in x]
+        model = fit_polynomial(x[:140], y[:140], degree=3, alpha=0)
+        self.assertEqual(len(model.terms), 119)
+        for raw, expected in zip(x[140:], y[140:]):
+            self.assertAlmostEqual(model.predict(raw), expected, places=8)
+
     def test_group_holdout_and_export_roundtrip(self):
         x, y = self.samples()
         rows = [{"title": f"Song {i // 2}", "difficulty_index": 5 + i % 2,
@@ -179,6 +188,23 @@ class TrainingTests(unittest.TestCase):
             if row["evaluation_split"] == "holdout":
                 raw = [row[f"{f}_raw"] for f in FEATURES]
                 self.assertAlmostEqual(evaluation.predict(raw), row["holdout_prediction"], places=9)
+
+    def test_normalized_aliases_share_one_evaluation_group_and_estimates_are_excluded(self):
+        x, y = self.samples()
+        rows = [{"title": f"Song {i // 2}" + (" [DX]" if i % 2 else ""),
+                 "matched_title": f"Song {i // 2}", "difficulty_index": 5,
+                 "status": "ok", "official_constant": target, "match_status": "matched",
+                 **{f"{f}_raw": v for f, v in zip(FEATURES, raw)}}
+                for i, (raw, target) in enumerate(zip(x, y))]
+        rows.append({**rows[0], "title": "Estimated", "official_constant": None,
+                     "display_constant": 13.0, "match_status": "constant_estimated"})
+        model, _, report, predictions, _ = train(rows, degrees=[1], alphas=[1], folds=3)
+        self.assertEqual(report["excluded"], {"no_matched_constant": 1})
+        self.assertNotIn("regions", report)
+        self.assertNotIn("label_regions", model.to_dict()["training"])
+        self.assertNotIn("label_source_counts", model.to_dict()["training"])
+        for i in range(0, 160, 2):
+            self.assertEqual(predictions[i]["evaluation_split"], predictions[i + 1]["evaluation_split"])
 
 
 if __name__ == "__main__":

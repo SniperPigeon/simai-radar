@@ -1,4 +1,4 @@
-"""OTOGE DB snapshots and exact-title joins, independent of analysis and UI.
+"""OTOGE DB snapshots and normalized-title joins, independent of analysis and UI.
 
 Only explicit internal levels are labels. The site's approximate fallback from
 display levels (e.g. 13+ -> 13.6) must never become a training target.
@@ -11,19 +11,39 @@ import json
 import math
 from pathlib import Path
 import re
+import unicodedata
 from urllib.request import Request, urlopen
 
 
 PAGE_URL = "https://otoge-db.net/maimai/lv/"
-DATA_URLS = {
-    "jp": "https://otoge-db.net/maimai/data/music-ex.json",
-    "intl": "https://otoge-db.net/maimai/data/music-ex-intl.json",
-}
+DATA_URLS = (
+    "https://otoge-db.net/maimai/data/music-ex.json",
+    "https://raw.githubusercontent.com/zvuc/otoge-db/main/maimai/data/music-ex-deleted.json",
+)
 DIFFICULTIES = {2: "bas", 3: "adv", 4: "exp", 5: "mas", 6: "remas"}
 CONSTANT_COLUMNS = (
     "official_constant", "match_status", "matched_chart_type", "constant_source",
-    "constant_region", "constant_fetched_at", "constant_source_updated_at",
+    "constant_fetched_at", "constant_source_updated_at",
+    "matched_title", "matched_artist", "title_match_method",
+    "display_constant", "constant_value_kind",
 )
+LEGACY_COLUMNS = {"constant_region", "constant_source_kind", "constant_deleted_date"}
+
+
+def comparison_text(value):
+    """Ignore punctuation/symbol/spacing differences, retaining letters and case."""
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    return "".join(c for c in text if (
+        unicodedata.category(c)[0] not in "PSZ"
+        and unicodedata.category(c) != "Cf" and not c.isspace()
+    ))
+
+
+def title_key(value):
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    text = re.sub(r"\s*\[(?:DX|ST|STD|SD)\]\s*$", "", text, flags=re.IGNORECASE)
+    # Symbol-only names still require an exact match. Never match empty keys.
+    return comparison_text(text)
 
 
 def chart_type(value):
@@ -50,34 +70,38 @@ def write_json(path, value):
         stream.write(content)
 
 
-def fetch_snapshot(region="jp", *, timeout=30):
-    """Fetch once, keep provenance; callers explicitly persist/reuse the snapshot."""
-    url = DATA_URLS[region]
+def _fetch_source(url, timeout):
     request = Request(url, headers={"User-Agent": "simai-radar/0.3 constant-research"})
     with urlopen(request, timeout=timeout) as response:
         songs = json.load(response)
         modified = response.headers.get("Last-Modified")
-    snapshot = {
-        "schema_version": "otoge-constants-1", "source_page": PAGE_URL,
-        "source_url": url, "region": region,
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    return {
+        "source_url": url,
         "last_modified": modified, "songs": songs,
+    }
+
+
+def fetch_snapshot(*, timeout=30):
+    """Always fetch both Japanese datasets, with no region or availability filter."""
+    snapshot = {
+        "schema_version": "otoge-constants-2", "source_page": PAGE_URL,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "sources": [_fetch_source(url, timeout) for url in DATA_URLS],
     }
     ConstantCatalog(snapshot)  # Reject a changed upstream schema before saving.
     return snapshot
 
 
-class ConstantCatalog:
+class _CatalogSource:
     def __init__(self, snapshot):
-        if not isinstance(snapshot, dict) or snapshot.get("schema_version") != "otoge-constants-1":
-            raise ValueError("Expected an otoge-constants-1 snapshot")
-        if snapshot.get("region") not in DATA_URLS:
-            raise ValueError("Snapshot must identify jp/intl region")
+        if not isinstance(snapshot, dict):
+            raise ValueError("Invalid constant source")
         songs = snapshot.get("songs")
         if not isinstance(songs, list) or not songs:
             raise ValueError("Snapshot songs must be a nonempty list")
         self.snapshot = snapshot
         self.by_title = defaultdict(list)
+        self.by_title_key = defaultdict(list)
         for song in songs:
             if not isinstance(song, dict) or not isinstance(song.get("title"), str):
                 raise ValueError("Invalid source song/title")
@@ -85,40 +109,53 @@ class ConstantCatalog:
             # declaration so duplicate source rows remain ambiguous.
             for kind, prefix in (("sd", ""), ("dx", "dx_")):
                 if any(song.get(f"{prefix}lev_{suffix}") for suffix in DIFFICULTIES.values()):
-                    self.by_title[song["title"]].append((kind, prefix, song))
+                    candidate = (kind, prefix, song)
+                    self.by_title[song["title"]].append(candidate)
+                    if title_key(song["title"]):
+                        self.by_title_key[title_key(song["title"])].append(candidate)
         if not self.by_title:
             raise ValueError("No recognized standard charts in source snapshot")
 
-    @classmethod
-    def load(cls, path):
-        return cls(json.loads(Path(path).read_text(encoding="utf-8-sig")))
-
-    def match(self, title, difficulty_index, kind=None):
+    def match(self, title, difficulty_index, kind=None, artist=None):
         result = dict.fromkeys(CONSTANT_COLUMNS)
         result.update(
             constant_source=self.snapshot.get("source_url"),
-            constant_region=self.snapshot["region"],
             constant_fetched_at=self.snapshot.get("fetched_at"),
         )
         candidates = self.by_title.get(title, [])
+        result["title_match_method"] = "exact" if candidates else "normalized"
+        if not candidates:
+            candidates = self.by_title_key.get(title_key(title), []) if title_key(title) else []
         if not candidates:
             result["match_status"] = "title_not_found"
+            result["title_match_method"] = None
             return result
-        # Type is consulted only when the exact title has multiple variants.
+        # Type/artist only disambiguate candidates; they are not required when
+        # a unique source chart variant already matches the title.
         if len(candidates) > 1:
             kind = chart_type(kind)
-            if not kind:
-                result["match_status"] = "ambiguous_type"
+            if kind:
+                candidates = [item for item in candidates if item[0] == kind]
+            if not candidates:
+                result["match_status"] = "type_not_found"
                 return result
-            candidates = [item for item in candidates if item[0] == kind]
+            if len(candidates) > 1 and comparison_text(artist):
+                candidates = [item for item in candidates
+                              if comparison_text(item[2].get("artist")) == comparison_text(artist)]
+                if not candidates:
+                    result["match_status"] = "artist_not_found"
+                    return result
             if len(candidates) != 1:
-                result["match_status"] = "ambiguous_title" if candidates else "type_not_found"
+                result["match_status"] = (
+                    "ambiguous_type" if len({item[0] for item in candidates}) > 1
+                    else "ambiguous_title"
+                )
                 return result
         kind, prefix, song = candidates[0]
         result["matched_chart_type"] = kind
-        result["constant_source_updated_at"] = song.get(
-            "date_intl_updated" if self.snapshot["region"] == "intl" else "date_updated",
-        ) or song.get("date_added")
+        result["matched_title"] = song["title"]
+        result["matched_artist"] = song.get("artist")
+        result["constant_source_updated_at"] = song.get("date_updated") or song.get("date_added")
         suffix = DIFFICULTIES.get(_difficulty(difficulty_index))
         if suffix is None:
             result["match_status"] = "unsupported_difficulty"
@@ -130,6 +167,14 @@ class ConstantCatalog:
         raw = song.get(key + "_i")
         if raw is None or raw == "":
             result["match_status"] = "constant_missing"
+            # Mirror the page's explicit approximate display, but never promote
+            # that approximation to an official constant or a training target.
+            level = str(song[key])
+            if re.fullmatch(r"[0-9]+\+?", level):
+                estimate = float(level.replace("+", ".6"))
+                if 0 < estimate <= 20:
+                    result.update(display_constant=estimate, constant_value_kind="display_estimate",
+                                  match_status="constant_estimated")
             return result
         value = finite(raw)
         if (isinstance(raw, str) and not re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", raw)) or (
@@ -137,8 +182,89 @@ class ConstantCatalog:
         ):
             result["match_status"] = "invalid_constant"
             return result
-        result.update(official_constant=value, match_status="matched")
+        result.update(official_constant=value, display_constant=value,
+                      constant_value_kind="explicit", match_status="matched")
         return result
+
+
+class ConstantCatalog:
+    """Search Japanese sources in order; any unambiguous explicit label is usable."""
+
+    def __init__(self, snapshot):
+        if not isinstance(snapshot, dict):
+            raise ValueError("Expected a constant snapshot")
+        if snapshot.get("schema_version") == "otoge-constants-2":
+            sources = snapshot.get("sources")
+            if not isinstance(sources, list) or not sources:
+                raise ValueError("Snapshot requires sources")
+        elif snapshot.get("schema_version") == "otoge-constants-1":
+            # Previously downloaded snapshots stay usable; obsolete metadata is ignored.
+            sources = [snapshot]
+            if snapshot.get("deleted_snapshot") is not None:
+                sources.append(snapshot["deleted_snapshot"])
+        else:
+            raise ValueError("Expected an otoge-constants-1/2 snapshot")
+        self.sources = []
+        for source in sources:
+            if not isinstance(source, dict):
+                raise ValueError("Invalid constant source")
+            self.sources.append(_CatalogSource({
+                **source, "fetched_at": source.get("fetched_at", snapshot.get("fetched_at")),
+            }))
+
+    @classmethod
+    def load(cls, path):
+        return cls(json.loads(Path(path).read_text(encoding="utf-8-sig")))
+
+    def match(self, title, difficulty_index, kind=None, artist=None):
+        candidates = [(index, candidate) for index, source in enumerate(self.sources)
+                      for candidate in source.by_title.get(title, [])]
+        method = "exact"
+        if not candidates and title_key(title):
+            method = "normalized"
+            candidates = [(index, candidate) for index, source in enumerate(self.sources)
+                          for candidate in source.by_title_key.get(title_key(title), [])]
+        if not candidates:
+            return self.sources[0].match(title, difficulty_index, kind, artist)
+
+        def variants(items):
+            return {(item[1][2]["title"], comparison_text(item[1][2].get("artist")), item[1][0])
+                    for item in items}
+
+        def failure(status):
+            return {**dict.fromkeys(CONSTANT_COLUMNS), "match_status": status,
+                    "title_match_method": method}
+
+        # Resolve title variants across ALL sources. Repeated appearances of the
+        # same variant in different sources do not create another song identity.
+        if len(variants(candidates)) > 1 and chart_type(kind):
+            candidates = [item for item in candidates if item[1][0] == chart_type(kind)]
+            if not candidates:
+                return failure("type_not_found")
+        if len(variants(candidates)) > 1 and comparison_text(artist):
+            candidates = [item for item in candidates
+                          if comparison_text(item[1][2].get("artist")) == comparison_text(artist)]
+            if not candidates:
+                return failure("artist_not_found")
+        if len(variants(candidates)) > 1:
+            return failure("ambiguous_type" if len({item[1][0] for item in candidates}) > 1 else "ambiguous_title")
+
+        results = []
+        for index, source in enumerate(self.sources):
+            available = [candidate for source_index, candidate in candidates if source_index == index]
+            if not available:
+                continue
+            # Retain ambiguity for duplicate declarations within a single source.
+            if len(available) != 1:
+                results.append(failure("ambiguous_title"))
+                continue
+            selected_kind, _, song = available[0]
+            result = source.match(song["title"], difficulty_index, selected_kind, song.get("artist"))
+            result["title_match_method"] = method
+            results.append(result)
+        # The first explicit value wins; an estimate never hides an explicit
+        # value from another source. Missing values remain missing if all fail.
+        return next((result for result in results if result["match_status"] == "matched"), results[0])
 
 
 def _difficulty(value):
@@ -186,7 +312,8 @@ def read_rows(source):
         for song in data["songs"]:
             for chart in song["charts"]:
                 row = {
-                    "title": song["title"], "difficulty_index": chart["difficulty"],
+                    "title": song["title"], "artist": song.get("artist", ""),
+                    "difficulty_index": chart["difficulty"],
                     "chart_type": chart_type(chart.get("kind")), "level": chart.get("level"),
                     "source_ref": chart.get("sourceRef", ""), "status": chart.get("status", ""),
                 }
@@ -200,12 +327,14 @@ def read_rows(source):
         if "title" not in row or "difficulty_index" not in row:
             raise ValueError("Chart rows require title and difficulty_index")
         row["chart_type"] = chart_type(row.get("chart_type"))
+        for key in LEGACY_COLUMNS:
+            row.pop(key, None)
     return rows
 
 
 def join_constants(rows, catalog):
-    return [{**row, **catalog.match(
-        row["title"], row["difficulty_index"], row.get("chart_type"),
+    return [{**{k: v for k, v in row.items() if k not in LEGACY_COLUMNS}, **catalog.match(
+        row["title"], row["difficulty_index"], row.get("chart_type"), row.get("artist"),
     )} for row in rows]
 
 
@@ -233,20 +362,24 @@ class ConstantTable:
     def load(cls, path):
         return cls(read_rows(path))
 
-    def lookup(self, title, difficulty, kind):
+    def lookup(self, title, difficulty, kind, artist=None):
         candidates = self.rows.get((title, _difficulty(difficulty)), [])
         # This is an already-joined bundle table. Keep the original bundle type;
         # title-only fallback here could attach another chart variant's label.
         typed = [r for r in candidates if chart_type(r.get("chart_type")) == chart_type(kind)]
         candidates = typed
+        if len(candidates) > 1 and comparison_text(artist):
+            candidates = [r for r in candidates
+                          if comparison_text(r.get("artist")) == comparison_text(artist)]
         if len(candidates) != 1:
             return {"officialConstant": None, "constantMatchStatus": "table_ambiguous" if candidates else "table_missing"}
         row = candidates[0]
         value = finite(row.get("official_constant")) if row.get("match_status") == "matched" else None
         return {
             "officialConstant": value, "constantMatchStatus": row.get("match_status"),
+            "displayConstant": finite(row.get("display_constant")),
+            "constantValueKind": row.get("constant_value_kind"),
             "constantSource": row.get("constant_source"),
-            "constantRegion": row.get("constant_region"),
             "constantFetchedAt": row.get("constant_fetched_at"),
         }
 
@@ -257,8 +390,7 @@ def main(argv=None):
 
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    fetch = commands.add_parser("fetch", help="cache the public JSON used by the level page")
-    fetch.add_argument("--region", choices=DATA_URLS, default="jp")
+    fetch = commands.add_parser("fetch", help="cache all available Japanese constant sources")
     fetch.add_argument("--output", type=Path, required=True)
     match = commands.add_parser("match", help="one row for every chart, including unmatched charts")
     match.add_argument("--input", type=Path, required=True)
@@ -269,9 +401,10 @@ def main(argv=None):
         if args.output.exists():
             raise FileExistsError(f"Output exists: {args.output}")
         if args.command == "fetch":
-            snapshot = fetch_snapshot(args.region)
+            snapshot = fetch_snapshot()
             write_json(args.output, snapshot)
-            print(json.dumps({"songs": len(snapshot["songs"]), "output": str(args.output)}))
+            print(json.dumps({"source_records": sum(len(s["songs"]) for s in snapshot["sources"]),
+                              "output": str(args.output)}))
             return 0
         rows = join_constants(read_rows(args.input), ConstantCatalog.load(args.snapshot))
         write_rows(args.output, rows)

@@ -9,10 +9,10 @@ class ConstantAnnotations:
         self.table = ConstantTable.load(table) if table is not None else None
         self.model = PolynomialModel.load(model) if model is not None else None
 
-    def chart(self, title, difficulty, kind, raw, status="ok"):
+    def chart(self, title, difficulty, kind, raw, status="ok", artist=None):
         fields = {}
         if self.table is not None:
-            fields.update(self.table.lookup(title, difficulty, kind))
+            fields.update(self.table.lookup(title, difficulty, kind, artist))
         if self.model is not None:
             try:
                 if status != "ok":
@@ -26,9 +26,11 @@ class ConstantAnnotations:
         failures = 0
         for song in payload["songs"]:
             for chart in song["charts"]:
+                for key in ("constantRegion", "constantSourceKind", "constantDeletedDate"):
+                    chart.pop(key, None)
                 chart.update(self.chart(
                     song["title"], chart["difficulty"], chart["kind"], chart["rawScores"],
-                    chart.get("status", "ok"),
+                    chart.get("status", "ok"), song.get("artist"),
                 ))
                 failures += chart.get("constantPredictionStatus", "ok") != "ok"
         if self.model is not None:

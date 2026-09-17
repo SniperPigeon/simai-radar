@@ -54,7 +54,7 @@ def main(argv: list[str] | None = None, *, analyzer=None, transformer=None, expo
         "--mapping-profile", type=Path,
         help="frozen mapping_profile.json exported by the visualizer",
     )
-    parser.add_argument("--constants-table", type=Path, help="visualizer: exact-match constants.csv")
+    parser.add_argument("--constants-table", type=Path, help="visualizer: matched constants.csv")
     parser.add_argument("--constant-model", type=Path, help="visualizer: frozen raw polynomial model.json")
     parser.add_argument(
         "--difficulty", "-d", type=_difficulty, nargs="+",

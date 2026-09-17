@@ -698,6 +698,9 @@ function renderDetail() {
     metadataItem("谱面", metadataText(chart.kindLabel)),
     metadataItem("难度", `${metadataText(chart.difficultyLabel)} ${metadataText(chart.level)}`),
     metadataItem("官方定数 · OTOGE DB", scoreText(chart.officialConstant)),
+    ...(chart.constantValueKind === "display_estimate" ? [
+      metadataItem("网页估算定数", scoreText(chart.displayConstant)),
+    ] : []),
     metadataItem("拟合定数", Number.isFinite(chart.fittedConstant) ? chart.fittedConstant.toFixed(2) : "—"),
     metadataItem("谱师", metadataText(chart.charter)),
     metadataItem("BPM", metadataText(chart.bpm)),
@@ -707,10 +710,13 @@ function renderDetail() {
 
   const constantInfo = [];
   if (chart.constantSource) {
-    constantInfo.push(`定数来源：OTOGE DB · ${chart.constantRegion === "intl" ? "国际版" : "日本版"}`);
+    constantInfo.push("定数来源：OTOGE DB");
   }
   if (state.data.constantModel) {
     constantInfo.push("拟合基于七维原始值；调整雷达映射不改变拟合定数");
+  }
+  if (chart.constantValueKind === "display_estimate") {
+    constantInfo.push("网页估值由显示等级换算，未作为训练标签");
   }
   elements.constantInfo.textContent = constantInfo.join("。 ");
   elements.constantInfo.hidden = !constantInfo.length;

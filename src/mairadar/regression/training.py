@@ -115,7 +115,7 @@ def train(rows, *, degrees=(1, 2, 3), alphas=(0.1, 1.0, 10.0), seed=42, folds=5)
             exclusions[reason] += 1
             row_reasons[index] = reason
         else:
-            eligible.append((index, row["title"], x, target))
+            eligible.append((index, row.get("matched_title") or row["title"], x, target))
     titles = sorted({item[1] for item in eligible})
     if len(titles) < 6:
         raise ValueError("Need at least six matched song titles with complete raw features for evaluation")
@@ -152,7 +152,7 @@ def train(rows, *, degrees=(1, 2, 3), alphas=(0.1, 1.0, 10.0), seed=42, folds=5)
         "generated_at": datetime.now(timezone.utc).isoformat(), "seed": seed,
         "input_rows": len(rows), "training_rows": len(eligible), "excluded": dict(exclusions),
         "selection": "minimum grouped cross-validation RMSE; holdout untouched during selection",
-        "group_by": "exact title (all difficulties and DX/SD together)",
+        "group_by": "matched source title, falling back to input title (all difficulties and DX/SD together)",
         "holdout_fraction": 0.2, "folds": len(fold_titles),
         "development_titles": sorted(development_titles),
         "holdout_titles": sorted(holdout_titles),
@@ -164,18 +164,15 @@ def train(rows, *, degrees=(1, 2, 3), alphas=(0.1, 1.0, 10.0), seed=42, folds=5)
         "refit_training": metrics([i[3] for i in eligible], evaluate(final_model, eligible)),
         "note": "Holdout metrics belong to evaluation_model.json. model.json is refit on all eligible labels.",
         "sources": sorted({row.get("constant_source", "") for row in rows if row.get("constant_source")}),
-        "regions": sorted({row.get("constant_region", "") for row in rows if row.get("constant_region")}),
         "label_snapshot_times": sorted({row.get("constant_fetched_at", "") for row in rows if row.get("constant_fetched_at")}),
     }
-    if len(report["regions"]) > 1 or len(report["label_snapshot_times"]) > 1:
-        raise ValueError("Training must use one region and one label snapshot")
     data = final_model.to_dict()
     data["training"] = {
         "created_at": report["generated_at"], "rows": len(eligible),
         "raw_min": [min(i[2][j] for i in eligible) for j in range(len(FEATURES))],
         "raw_max": [max(i[2][j] for i in eligible) for j in range(len(FEATURES))],
         "target_min": min(i[3] for i in eligible), "target_max": max(i[3] for i in eligible),
-        "label_sources": report["sources"], "label_regions": report["regions"],
+        "label_sources": report["sources"],
         "label_snapshot_times": report["label_snapshot_times"],
     }
     final_model = PolynomialModel(data)
@@ -185,7 +182,7 @@ def train(rows, *, degrees=(1, 2, 3), alphas=(0.1, 1.0, 10.0), seed=42, folds=5)
     for index, row in enumerate(rows):
         result = {**row, "training_exclusion": row_reasons.get(index, ""),
                   "evaluation_split": "excluded" if index in row_reasons else (
-                      "holdout" if row["title"] in holdout_titles else "development"),
+                      "holdout" if (row.get("matched_title") or row["title"]) in holdout_titles else "development"),
                   "holdout_prediction": held_out.get(index)}
         try:
             if row.get("status", "ok") != "ok":
