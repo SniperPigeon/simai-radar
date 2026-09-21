@@ -21,6 +21,7 @@ from mairadar.analysis.features.slide import (
     TRICKY_SPEED_REFERENCE_EIGHTH_BPM,
     TRICKY_TOP_COUNT,
     TRICKY_TOP_WEIGHTS,
+    SEQUENCE_TOP_WEIGHTS,
     _top_sequence_intensity,
     _top_tricky_load,
     _WorkloadPoint,
@@ -46,6 +47,18 @@ class SlidePressureTests(unittest.TestCase):
         self.assertAlmostEqual(_top_tricky_load([10]), 3.391602052736161)
         self.assertAlmostEqual(_top_tricky_load([10] * 6), 10)
         self.assertAlmostEqual(_top_tricky_load([0, 10, 0, 0, 0, 0]), 3.391602052736161)
+
+    def test_star_top_five_log_keeps_duplicates_and_zero_pads(self):
+        self.assertEqual(_top_sequence_intensity([]), 0)
+        self.assertAlmostEqual(
+            _top_sequence_intensity([10]),
+            10 / math.fsum(SEQUENCE_TOP_WEIGHTS),
+        )
+        self.assertAlmostEqual(_top_sequence_intensity([10] * 6), 10)
+        self.assertAlmostEqual(
+            _top_sequence_intensity([0, 10, 0, 0, 0, 0]),
+            10 / math.fsum(SEQUENCE_TOP_WEIGHTS),
+        )
 
     def test_internal_taps_are_linear_and_launch_objects_are_halved(self):
         result = breakdown("(120){16}1-5[10:1],2,3,4,5,E")
@@ -297,6 +310,27 @@ class SlidePressureTests(unittest.TestCase):
         self.assertEqual(all_fast.sections[0].sequence_onset_count, 1)
         self.assertEqual(all_fast.sequence, 0.0)
 
+    def test_fast_insertion_does_not_break_existing_normal_star_array(self):
+        result = breakdown(
+            "(120){16}1-5[10:1],,2-6[10:1],3-7[10:1],,4-8[10:1],E"
+        )
+        [section] = result.sections
+        self.assertEqual(section.onset_count, 4)
+        self.assertEqual(section.sequence_onset_count, 3)
+        self.assertAlmostEqual(section.sequence_intensity, 5 / 3)
+        self.assertAlmostEqual(result.sequence, _top_sequence_intensity([5 / 3]))
+
+    def test_concurrent_star_survives_nearby_too_fast_single_onset(self):
+        result = breakdown(
+            "(120){16}1-5[10:1]/2-6[10:1],3-7[10:1],E"
+        )
+        [section] = result.sections
+        self.assertEqual(section.sequence_onset_count, 1)
+        self.assertEqual(section.sequence_intensity, CONCURRENCY_WEIGHT)
+        self.assertAlmostEqual(
+            result.sequence, _top_sequence_intensity([CONCURRENCY_WEIGHT]),
+        )
+
     def test_exact_eighth_gap_remains_eligible_and_other_sections_survive(self):
         eighth = breakdown("(120){8}1-5[10:1],2-6[10:1],E")
         self.assertEqual(eighth.sections[0].sequence_intensity, 2.0)
@@ -335,6 +369,25 @@ class SlidePressureTests(unittest.TestCase):
         self.assertAlmostEqual(
             shared.sequence_intensity,
             CONCURRENCY_WEIGHT * (math.sqrt(2) - 1),
+        )
+
+    def test_simultaneous_slide_on_main_spine_adds_concurrency_but_tap_does_not(self):
+        plain = breakdown("(120){8}1-5[10:1],2-6[10:1],E")
+        double_slide = breakdown(
+            "(120){8}1-5[10:1]/3-7[10:1],2-6[10:1],E"
+        )
+        extra_tap = breakdown("(120){8}1-5[10:1]/2,2-6[10:1],E")
+        self.assertEqual(plain.sections[0].sequence_onset_count, 2)
+        self.assertEqual(double_slide.sections[0].sequence_onset_count, 2)
+        self.assertEqual(double_slide.sections[0].concurrency_pressure, 0.5)
+        self.assertAlmostEqual(
+            double_slide.sections[0].sequence_intensity,
+            plain.sections[0].sequence_intensity + CONCURRENCY_WEIGHT * 0.5,
+        )
+        self.assertGreater(double_slide.sequence, plain.sequence)
+        self.assertEqual(
+            extra_tap.sections[0].sequence_intensity,
+            plain.sections[0].sequence_intensity,
         )
 
     def test_unusual_three_path_shared_head_remains_defined_for_utage(self):

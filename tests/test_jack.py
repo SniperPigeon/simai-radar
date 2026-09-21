@@ -53,6 +53,58 @@ class JackSequenceTests(unittest.TestCase):
         self.assertEqual(sequence.interrupting_span_beats, Fraction(1, 4))
         self.assertEqual(sequence.strength, 4.5)
 
+    def test_mixed_ex_anchors_keep_counts_and_speed_with_per_declaration_weights(self):
+        [normal] = jack_sequences(events("(180){16}1/1,1h[16:1],1b,E"))
+        chart = events("(180){16}1/1x,1xh[16:1],1bx,E")
+        [mixed] = jack_sequences(chart)
+        self.assertEqual(mixed.anchor_count, 4)
+        self.assertEqual(mixed.ex_anchor_count, 3)
+        self.assertAlmostEqual(mixed.strength, 1.9)
+        self.assertEqual((mixed.start_beat, mixed.end_beat), (normal.start_beat, normal.end_beat))
+        self.assertEqual(mixed.equivalent_sixteenth_bpm, normal.equivalent_sixteenth_bpm)
+        self.assertEqual(mixed.speed_factor, normal.speed_factor)
+        self.assertAlmostEqual(jack_score(chart), 1.3 * 1.9)
+
+    def test_all_ex_sequence_has_thirty_percent_of_normal_score(self):
+        normal = events("(180){16}1,1h[16:1],1b,E")
+        protected = events("(180){16}1x,1xh[16:1],1bx,E")
+        self.assertAlmostEqual(jack_score(protected), jack_score(normal) * 0.3)
+
+    def test_ex_flight_weight_is_discounted_and_resets_on_each_return(self):
+        [sequence] = jack_sequences(events("(180){32}1,1,2x,1,1,3,1,E"))
+        self.assertEqual(sequence.anchor_count, 5)
+        self.assertEqual(sequence.interrupting_tap_count, 2)
+        self.assertEqual(sequence.ex_interrupting_tap_count, 1)
+        self.assertAlmostEqual(sequence.strength, 6.95)
+
+    def test_ex_flights_still_use_actual_count_for_interruption_cap(self):
+        [prefix] = jack_sequences(events("(180){32}1,1,2x/3x/4x/5x/6x,1,E"))
+        self.assertEqual(prefix.anchor_count, 2)
+        self.assertEqual(prefix.interrupting_tap_count, 0)
+        self.assertEqual(prefix.ex_interrupting_tap_count, 0)
+        self.assertEqual(prefix.strength, 2)
+
+    def test_unfinished_ex_flights_are_discarded_and_new_sequence_resets_weights(self):
+        for text in (
+            "(180){16}1x,1x,2x,,,1,1,E",
+            "(180){16}1x,1x,2x,3x,4x,1,1,E",
+        ):
+            with self.subTest(text=text):
+                sequences = sorted(jack_sequences(events(text)), key=lambda s: s.start_beat)
+                self.assertEqual(len(sequences), 2)
+                self.assertEqual([s.ex_anchor_count for s in sequences], [2, 0])
+                self.assertAlmostEqual(sequences[0].strength, 0.6)
+                self.assertEqual(sequences[1].strength, 2)
+                self.assertEqual([s.ex_interrupting_tap_count for s in sequences], [0, 0])
+        [trailing] = jack_sequences(events("(180){16}1,1,2x,E"))
+        self.assertEqual(trailing.strength, 2)
+        self.assertEqual(trailing.ex_interrupting_tap_count, 0)
+
+    def test_ex_discount_changes_ranking_before_top_k_selection(self):
+        chart = events("(180){16}1x,1x,1x,,,,2,2,E")
+        self.assertEqual([s.position for s in jack_sequences(chart)], ["2", "1"])
+        self.assertAlmostEqual(jack_score(chart, top_k=1), 2.6)
+
     def test_four_interruptions_fit_across_a_long_jack(self):
         chart = events(
             "(120){32}1,1,2,1,1,3,1,1,4,1,1,5,1,E"
