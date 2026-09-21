@@ -1,0 +1,116 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      data_release:
+        description: "Release tag containing mairadar-pages.zip (blank uses PAGES_DATA_RELEASE)"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      has_data: ${{ steps.build.outputs.has_data }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Test
+        env:
+          PYTHONPATH: src
+        run: python -m unittest discover -s tests
+      - name: Build Pages package
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DATA_RELEASE: ${{ inputs.data_release || vars.PAGES_DATA_RELEASE }}
+          DEPLOY_TARGET: ${{ vars.PAGES_TARGET }}
+        run: |
+          case "$DEPLOY_TARGET" in
+            ''|artifact|github|cloudflare) ;;
+            *) echo "PAGES_TARGET must be artifact, github, or cloudflare" >&2; exit 1 ;;
+          esac
+          if [ -n "$DATA_RELEASE" ]; then
+            gh release download "$DATA_RELEASE" --repo "$GITHUB_REPOSITORY" \
+              --pattern mairadar-pages.zip --dir "$RUNNER_TEMP/pages-input"
+            python scripts/build_pages.py \
+              --site "$RUNNER_TEMP/pages-input/mairadar-pages.zip" \
+              --output outputs/pages --archive outputs/mairadar-pages.zip
+            echo "has_data=true" >> "$GITHUB_OUTPUT"
+          else
+            python scripts/build_pages.py --demo \
+              --output outputs/pages --archive outputs/mairadar-pages.zip
+            echo "has_data=false" >> "$GITHUB_OUTPUT"
+            echo "No PAGES_DATA_RELEASE configured: synthetic demo artifact only; deployment skipped." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: mairadar-pages
+          path: outputs/mairadar-pages.zip
+          if-no-files-found: error
+      - name: Upload GitHub Pages artifact
+        if: steps.build.outputs.has_data == 'true' && vars.PAGES_TARGET == 'github' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: outputs/pages
+
+  github:
+    if: needs.build.outputs.has_data == 'true' && vars.PAGES_TARGET == 'github' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  cloudflare:
+    if: needs.build.outputs.has_data == 'true' && vars.PAGES_TARGET == 'cloudflare' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: mairadar-pages
+          path: outputs/package
+      - name: Prepare deployment directory
+        run: |
+          python scripts/build_pages.py --site outputs/package/mairadar-pages.zip \
+            --output outputs/pages
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+        run: |
+          : "${CLOUDFLARE_API_TOKEN:?Set CLOUDFLARE_API_TOKEN}"
+          : "${CLOUDFLARE_ACCOUNT_ID:?Set CLOUDFLARE_ACCOUNT_ID}"
+          : "${PAGES_PROJECT:?Set CLOUDFLARE_PAGES_PROJECT}"
+          npx --yes wrangler@4 pages deploy outputs/pages \
+            --project-name "$PAGES_PROJECT" --branch main
