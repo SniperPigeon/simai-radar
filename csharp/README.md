@@ -82,3 +82,32 @@ MajSimai 会把“同头后续分支”和显式 `?`/`!` 无头 Slide 都表示�
 `IsSlideNoHead=true`。适配器可处理普通同头分支和独立无头 Slide；若它们在同一 timing、
 同一位置混合而 MajSimai 输出无法无歧义区分，则返回适配错误。这里不修改 MajSimai，也
 不猜测错误的 `head_event_id`。
+
+## 分析、拟合与公开接口
+
+`SimaiRadar.Analysis` 当前已移植 `note`、`peak`、`slide_tricky`、`slide_sequence`、
+`jack`、`slide_cumulate` 六维；`sweep` 仍会明确返回未移植失败状态。每一维独立失败，
+不会抛出影响调用方的异常，也不会用零值冒充成功结果。
+
+`SimaiRadar.Regression` 将 regression-beta 模型写成简单静态常量：固定七维输入顺序、
+7 个 center、7 个 scale、intercept 和 35 个二次系数。运行时不读取 model.json；8 个冻结
+Python 测试向量用于验证 C# 双精度推理。
+
+`SimaiRadar.Runtime.RadarRuntime` 是对外入口：
+
+```csharp
+var runtime = new RadarRuntime();
+
+// Play 首选：复用已经解析的 SimaiChart。
+RadarComputationResult result = runtime.Analyze(existingSimaiChart);
+
+// 独立调用方可直接给 inote。
+RadarComputationResult parsed = await runtime.ParseAndAnalyzeAsync(inote);
+
+// 也可直接分析标准事件。
+RadarComputationResult fromEvents = runtime.Analyze(radarChartInput);
+```
+
+结果包含 `ChartInput`、固定七维 `Analysis.Features`、可选 `FittedConstant` 和 `Errors`。
+只有七维全部成功才运行拟合；显示选轴不参与模型输入。目前 Sweep 尚未移植，因此公开运行时
+预期返回 `Status=partial`、`FittedConstant=null`，不会生成不完整预测。

@@ -1,0 +1,109 @@
+using SimaiRadar.Analysis;
+using SimaiRadar.MajSimaiAdapter;
+using SimaiRadar.Regression;
+using SimaiRadar.Runtime;
+using Xunit;
+
+namespace SimaiRadar.Runtime.Tests;
+
+public sealed class AnalysisAndRegressionTests
+{
+    [Theory]
+    [InlineData("(120){4}1,2,3,1,2,3,E", 2.0)]
+    [InlineData("(120){4}1/2/3/4/5/6,,,,,,E", 2.6)]
+    [InlineData("(120){4}1-5[4:1]*-5[4:1]*-5[4:1],E", 1.3333333333333333)]
+    public async Task NoteMatchesReviewedPythonCases(string inote, double expected)
+    {
+        var analysis = await Analyze(inote);
+        Assert.Equal(expected, analysis.Features[RadarFeatureNames.Note].Value!.Value, 12);
+    }
+
+    [Fact]
+    public async Task PeakUsesFlatSlideAndHalfTouchGroups()
+    {
+        var adapted = await new MajSimaiChartAdapter().ParseAndAdaptAsync(
+            "(120){4}1?<1<1[4:2]/A1/E1,E");
+        Assert.True(adapted.IsSuccess, string.Join("; ", adapted.Errors));
+        var analysis = new RadarAnalyzer().Analyze(adapted.Chart!);
+        Assert.True(analysis.Features[RadarFeatureNames.Peak].IsSuccess);
+        Assert.Equal(0.3, analysis.Features[RadarFeatureNames.Peak].Value!.Value, 12);
+    }
+
+    [Fact]
+    public async Task JackAppliesExWeightsBeforeTopK()
+    {
+        var analysis = await Analyze("(180){16}1/1x,1xh[16:1],1bx,E");
+        Assert.Equal(2.47, analysis.Features[RadarFeatureNames.Jack].Value!.Value, 12);
+    }
+
+    [Theory]
+    [InlineData("(120){16}1-5[10:1],2,3,4,5,E", 3.5033834823231462)]
+    [InlineData("(120){4}1-5[10:1],A1,E", 0.7500000000000001)]
+    [InlineData("(120){4}1-5[10:1]/2-6[10:1]/3,,E", 0.5)]
+    public async Task SlideCumulateMatchesReviewedPythonCases(string inote, double expected)
+    {
+        var analysis = await Analyze(inote);
+        Assert.Equal(expected, analysis.Features[RadarFeatureNames.SlideCumulate].Value!.Value, 12);
+    }
+
+    [Theory]
+    [InlineData("(120){8}1-5[10:1],2-6[10:1],E", 0.6783204105472322)]
+    [InlineData("(120){4}1-5[10:1]/2-6[10:1],E", 0.16958010263680806)]
+    [InlineData("(120){16}1-5[10:1],,2-6[10:1],3-7[10:1],,4-8[10:1],E", 0.5652670087893602)]
+    public async Task SlideSequenceMatchesReviewedPythonCases(string inote, double expected)
+    {
+        var analysis = await Analyze(inote);
+        Assert.Equal(expected, analysis.Features[RadarFeatureNames.SlideSequence].Value!.Value, 12);
+    }
+
+    [Theory]
+    [InlineData("(120){16}1-5[10:1],2,3,4,5,E", 1.5262209237312725)]
+    [InlineData("(120){4}1-5[10:1],A1,E", 0.25437015395521206)]
+    [InlineData("(120){16}1-5[10:1],2,3,4,5,6,7,E", 1.9784345307627607)]
+    [InlineData("(120){4}1-5[10:1]/2-6[10:1],3,E", 0.19501711803232927)]
+    public async Task SlideTrickyMatchesReviewedPythonCases(string inote, double expected)
+    {
+        var analysis = await Analyze(inote);
+        Assert.Equal(expected, analysis.Features[RadarFeatureNames.SlideTricky].Value!.Value, 10);
+    }
+
+    [Fact]
+    public async Task PublicRuntimeReturnsPartialUntilAllSevenPortsExist()
+    {
+        var result = await new RadarRuntime().ParseAndAnalyzeAsync("(120){4}1,2,E");
+        Assert.False(result.IsSuccess);
+        Assert.NotNull(result.Analysis);
+        Assert.Equal("partial", result.Analysis!.Status);
+        Assert.Null(result.FittedConstant);
+        Assert.Single(result.Errors);
+    }
+
+    [Theory]
+    [MemberData(nameof(RegressionVectors))]
+    public void EmbeddedRegressionMatchesFrozenPythonVectors(double[] raw, double expected)
+    {
+        var actual = new RegressionBetaModel().Predict(raw);
+        Assert.Equal(expected, actual, 9);
+    }
+
+    public static IEnumerable<object[]> RegressionVectors()
+    {
+        yield return Vector(new[] { 6.727708533441772, 10.213333333333333, 0.0, 3.500000000000045, 2.3435703486210016, 5.223136339994041, 0.32687803060913356 }, 13.18826234659077);
+        yield return Vector(new[] { 5.3448652850017435, 9.373333333333333, 5.151860505357921, 3.8688372913206157, 1.527537949608422, 3.4463156768134153, 0.5098107142089721 }, 13.04867082557079);
+        yield return Vector(new[] { 6.556341447489688, 9.728309501643864, 2.7754445459480404, 4.146342997793008, 1.977721867042476, 10.365354504785971, 0.276398788581657 }, 13.335359785629928);
+        yield return Vector(new[] { 4.518910180239341, 7.165237190142859, 3.5146923810362276, 6.267413072276536, 1.4699399122083654, 2.9498185823014618, 0.5787667794900735 }, 13.074927456441534);
+        yield return Vector(new[] { 8.675146946575055, 12.596563941258626, 14.182273623300125, 3.7269030666426044, 1.8412214862620846, 3.4609545033032254, 0.5401266930336726 }, 14.174345298608007);
+        yield return Vector(new[] { 5.18055031687776, 7.697457300476198, 0.0, 4.252135533296645, 1.6280299529891435, 4.9236758330127754, 0.23376260698583867 }, 12.682036829185888);
+        yield return Vector(new[] { 5.78473668281803, 8.333333333333334, 2.1322249739613124, 5.21319786300373, 1.4959570282923484, 27.349477481658905, 0.50129663471255 }, 13.52754748578909);
+        yield return Vector(new[] { 5.43961412987999, 9.366666666666665, 0.0, 5.318180151048526, 2.5515716996273325, 3.307739064132819, 0.20708790434230476 }, 13.012286585333174);
+    }
+
+    private static object[] Vector(double[] raw, double expected) => new object[] { raw, expected };
+
+    private static async Task<RadarAnalysisResult> Analyze(string inote)
+    {
+        var adapted = await new MajSimaiChartAdapter().ParseAndAdaptAsync(inote);
+        Assert.True(adapted.IsSuccess, string.Join("; ", adapted.Errors));
+        return new RadarAnalyzer().Analyze(adapted.Chart!);
+    }
+}

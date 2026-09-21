@@ -6,8 +6,10 @@
 MajdataPlay。最终交付的解析适配、七维分析、模型训练/推理、scorer 和测试工具均为 C#，
 不保留 Python 运行链路。现有 Python 仅在迁移期间充当公式和历史输出参考，C# 独立验收后
 再移除旧实现。正式解析复用 Play 使用的 MajSimai。目标 fork 已在同级目录核对；首版
-`MajSimai → RadarChartInput` C# 适配层和独立测试已经位于 [`csharp/`](../csharp/)，七维
-分析器尚未移植。已完成 NuGet 格式探针、固定上游源码核对和同一测试套件验证。
+`MajSimai → RadarChartInput` C# 适配层和独立测试已经位于 [`csharp/`](../csharp/)；
+Note、Peak、SlideTricky、SlideSequence、Jack、SlideCumulate 六维已移植，Sweep 待移植。
+固定七维二次模型已作为 C# 常量加入，公开 `RadarRuntime` 在七维完整前返回 partial 且不预测。
+已完成 NuGet 格式探针、固定上游源码核对和同一测试套件验证。
 
 子特征实验没有显示明确的泛化收益，完整实现留在 `constant_regression` 分支，结果见
 [消融报告](REGRESSION_ABLATION.md)。beta 已恢复标量分析接口，不包含 stats/summary 特征层。

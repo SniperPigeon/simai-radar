@@ -50,11 +50,14 @@ public sealed class MajSimaiChartAdapter
             AddTimingEvents(timeline, pending);
 
             var declarationOrder = pending.Count;
+            var slideGroupId = 0;
             foreach (var timing in chart.NoteTimings)
             {
                 RejectAmbiguousNoHeadGrouping(timing);
                 var declarationBeat = timeline.BeatAt(timing.Timing);
                 PendingEvent? currentHead = null;
+                int? currentSlideGroupId = null;
+                int? currentSlideStartPosition = null;
                 foreach (var note in timing.Notes)
                 {
                     declarationOrder++;
@@ -64,20 +67,26 @@ public sealed class MajSimaiChartAdapter
                         {
                             currentHead = CreateHead(note, timing, declarationBeat, declarationOrder);
                             pending.Add(currentHead);
+                            currentSlideGroupId = ++slideGroupId;
+                            currentSlideStartPosition = note.StartPosition;
                         }
-                        else if (currentHead is not null &&
-                                 currentHead.Event.Position != note.StartPosition.ToString())
+                        else if (currentSlideGroupId is null ||
+                                 currentSlideStartPosition != note.StartPosition)
                         {
                             currentHead = null;
+                            currentSlideGroupId = ++slideGroupId;
+                            currentSlideStartPosition = note.StartPosition;
                         }
 
                         pending.Add(CreateSlide(
-                            note, timing, declarationOrder,
-                            currentHead?.TemporaryId, timeline));
+                            note, timing, declarationBeat, declarationOrder,
+                            currentHead?.TemporaryId, currentSlideGroupId.Value, timeline));
                         continue;
                     }
 
                     currentHead = null;
+                    currentSlideGroupId = null;
+                    currentSlideStartPosition = null;
                     pending.Add(CreateOrdinary(note, timing, declarationBeat, declarationOrder, timeline));
                 }
             }
@@ -101,6 +110,7 @@ public sealed class MajSimaiChartAdapter
                     Kind = source.Kind,
                     IsSlideHead = source.IsSlideHead,
                     SlideDeclareTimeSeconds = source.SlideDeclareTimeSeconds,
+                    SlideDeclareBeat = source.SlideDeclareBeat,
                     StartTimeSeconds = source.StartTimeSeconds,
                     EndTimeSeconds = source.EndTimeSeconds,
                     StartBeat = source.StartBeat,
@@ -108,6 +118,7 @@ public sealed class MajSimaiChartAdapter
                     Bpm = source.Bpm,
                     Position = source.Position,
                     HeadEventId = ordered[index].HeadTemporaryId is int head ? idMap[head] : null,
+                    SlideGroupId = source.SlideGroupId,
                     SlidePath = source.SlidePath,
                     IsBreak = source.IsBreak,
                     IsEx = source.IsEx,
@@ -140,8 +151,10 @@ public sealed class MajSimaiChartAdapter
     private PendingEvent CreateSlide(
         SimaiNote note,
         SimaiTimingPoint timing,
+        BeatPosition declarationBeat,
         int order,
         int? headTemporaryId,
+        int slideGroupId,
         Timeline timeline)
     {
         var endTime = note.SlideStartTime + note.SlideTime;
@@ -151,11 +164,13 @@ public sealed class MajSimaiChartAdapter
             Kind = RadarEventKind.Slide,
             IsSlideHead = false,
             SlideDeclareTimeSeconds = timing.Timing,
+            SlideDeclareBeat = declarationBeat,
             StartTimeSeconds = note.SlideStartTime,
             EndTimeSeconds = endTime,
             StartBeat = timeline.BeatAt(note.SlideStartTime),
             EndBeat = timeline.BeatAt(endTime),
             Position = note.StartPosition.ToString(),
+            SlideGroupId = slideGroupId,
             SlidePath = _slidePaths.Resolve(note.RawContent, note.SlideStartTime, endTime),
             IsBreak = note.IsSlideBreak,
             IsEx = false,
