@@ -1,4 +1,5 @@
 using SimaiRadar.Analysis;
+using SimaiRadar.Core;
 using SimaiRadar.MajSimaiAdapter;
 using SimaiRadar.Regression;
 using SimaiRadar.Runtime;
@@ -76,6 +77,81 @@ public sealed class AnalysisAndRegressionTests
         Assert.Equal("partial", result.Analysis!.Status);
         Assert.Null(result.FittedConstant);
         Assert.Single(result.Errors);
+    }
+
+    [Theory]
+    [InlineData("(0){4}1,E", "non-finite or non-positive")]
+    [InlineData("(120){4}1K5[4:1],E", "Extended K Slides")]
+    [InlineData("(120){4}1-5[4:1]*-7[4:1]/1?-3[4:1],E", "cannot distinguish")]
+    public async Task AdaptationFailuresReturnDataWithoutLeakingExceptions(
+        string inote,
+        string expectedError)
+    {
+        RadarComputationResult? result = null;
+        var exception = await Record.ExceptionAsync(async () =>
+            result = await new RadarRuntime().ParseAndAnalyzeAsync(inote));
+
+        Assert.Null(exception);
+        Assert.NotNull(result);
+        Assert.False(result!.IsSuccess);
+        Assert.Null(result.ChartInput);
+        Assert.Null(result.Analysis);
+        Assert.Contains(expectedError, Assert.Single(result.Errors));
+    }
+
+    [Theory]
+    [InlineData("(120){4}bad,E")]
+    [InlineData("(120){4}1h[4:1,E")]
+    public async Task MajSimaiSilentDropsRemainOutsideTheAdapterErrorBoundary(string inote)
+    {
+        var result = await new RadarRuntime().ParseAndAnalyzeAsync(inote);
+
+        Assert.NotNull(result.ChartInput);
+        Assert.NotNull(result.Analysis);
+        Assert.DoesNotContain(
+            result.Errors,
+            error => error.Contains("parse", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void FeatureFailuresAreIsolatedInsideRadarAnalyzer()
+    {
+        var chart = new RadarChartInput
+        {
+            ChartEndTimeSeconds = 1,
+            LastEventEndTimeSeconds = 1,
+            Events = new[]
+            {
+                new RadarEvent
+                {
+                    EventId = 1,
+                    Kind = RadarEventKind.Tap,
+                    Position = "1",
+                    StartBeat = BeatPosition.Zero,
+                    EndBeat = BeatPosition.Zero
+                },
+                new RadarEvent
+                {
+                    EventId = 2,
+                    Kind = RadarEventKind.Slide,
+                    Position = "1",
+                    SlideDeclareTimeSeconds = 0,
+                    SlideDeclareBeat = BeatPosition.Zero,
+                    StartTimeSeconds = 0.5,
+                    EndTimeSeconds = 1,
+                    StartBeat = new BeatPosition(1),
+                    EndBeat = new BeatPosition(2),
+                    SlidePath = Array.Empty<SlidePathSegment>()
+                }
+            }
+        };
+
+        var result = new RadarAnalyzer().Analyze(chart);
+
+        Assert.Equal("partial", result.Status);
+        Assert.True(result.Features[RadarFeatureNames.Jack].IsSuccess);
+        Assert.False(result.Features[RadarFeatureNames.Note].IsSuccess);
+        Assert.False(result.Features[RadarFeatureNames.SlideTricky].IsSuccess);
     }
 
     [Theory]

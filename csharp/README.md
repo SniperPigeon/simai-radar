@@ -111,3 +111,20 @@ RadarComputationResult fromEvents = runtime.Analyze(radarChartInput);
 结果包含 `ChartInput`、固定七维 `Analysis.Features`、可选 `FittedConstant` 和 `Errors`。
 只有七维全部成功才运行拟合；显示选轴不参与模型输入。目前 Sweep 尚未移植，因此公开运行时
 预期返回 `Status=partial`、`FittedConstant=null`，不会生成不完整预测。
+
+### 真实谱六维差分与错误边界
+
+迁移工具 [`scripts/compare_csharp_analysis_actual.py`](../scripts/compare_csharp_analysis_actual.py)
+已对 24 张真实 `inote_5` 比较 Python 与 C# 的六个已移植维度。Note/Peak 最大误差约
+`1e-15`；SlideTricky、SlideSequence、Jack、SlideCumulate 最大相对误差低于 `1e-8`。
+
+错误边界分三层：
+
+- MajSimai 抛出的解析异常由 `ParseAndAdaptAsync` 转成失败结果；
+- 非正 BPM、固定几何不支持的 K Slide、无法无歧义建立头关系等适配错误返回
+  `ChartInput=null`、`Analysis=null` 和错误文本；
+- 单个维度的数据错误只使该维失败，其他维度继续，整体状态为 `partial`。
+
+MajSimai 对部分非法 token（实测包括普通 `bad` 和未闭合 duration）会静默跳过。适配层在
+“不重解析原始 Simai、不修改 MajSimai”的约束下无法可靠发现这类输入；因此无错误结果不代表
+完整语法校验。Play 只应隐藏雷达并记录可见失败，不能让可选模块中断游戏。

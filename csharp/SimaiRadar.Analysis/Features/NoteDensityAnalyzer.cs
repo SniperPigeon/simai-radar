@@ -15,7 +15,9 @@ internal sealed class NoteDensityAnalyzer : IRadarFeatureAnalyzer
         var workload = new double[count];
         foreach (var point in Workload.CorrectedPoints(context.Events))
         {
-            var index = Math.Min((int)Math.Floor(point.TimeSeconds / Workload.WindowSeconds), count - 1);
+            var index = Math.Min(
+                (int)Math.Floor((point.TimeSeconds + 1e-9) / Workload.WindowSeconds),
+                count - 1);
             workload[index] += point.Weight;
         }
         var densities = workload.Select(value => value / Workload.WindowSeconds).ToArray();

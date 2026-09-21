@@ -114,8 +114,8 @@ internal sealed class PeakDensityAnalyzer : IRadarFeatureAnalyzer
         for (var index = 0; index < points.Length; index++) prefix[index + 1] = prefix[index] + points[index].Weight;
         double Density(double start)
         {
-            var begin = LowerBound(times, start);
-            var end = LowerBound(times, start + Workload.WindowSeconds);
+            var begin = LowerBound(times, start - 1e-9);
+            var end = LowerBound(times, start + Workload.WindowSeconds - 1e-9);
             return (prefix[end] - prefix[begin]) / Workload.WindowSeconds;
         }
         var ratio = duration / StepSeconds;
