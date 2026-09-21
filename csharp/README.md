@@ -46,8 +46,8 @@ dotnet test --no-restore -m:1 --disable-build-servers \
 `4.35e-7s`；其他大多数样本在 `1e-12s` 数量级。
 
 此工具刻意不比较 `bar_count` 和连接段逐段时间，因为它直接比较 MajSimai 与 Python 共同
-暴露的语义；C# 适配器自身使用冻结的 MajdataPlay 标准 prefab 长度表。它也不比较七维
-raw，因为 C# 七维分析器尚未移植。Python 差分只用于迁移排错，不成为最终运行或验收依赖。
+暴露的语义；C# 适配器自身使用冻结的 MajdataPlay 标准 prefab 长度表。七维 raw 使用下文的
+分析差分工具另行比较。Python 差分只用于迁移排错，不成为最终运行或验收依赖。
 
 ## 时间与拍轴
 
@@ -85,9 +85,19 @@ MajSimai 会把“同头后续分支”和显式 `?`/`!` 无头 Slide 都表示�
 
 ## 分析、拟合与公开接口
 
-`SimaiRadar.Analysis` 当前已移植 `note`、`peak`、`slide_tricky`、`slide_sequence`、
-`jack`、`slide_cumulate` 六维；`sweep` 仍会明确返回未移植失败状态。每一维独立失败，
-不会抛出影响调用方的异常，也不会用零值冒充成功结果。
+`SimaiRadar.Analysis` 已移植固定顺序的七维：`note`、`peak`、`sweep`、
+`slide_tricky`、`slide_sequence`、`jack`、`slide_cumulate`。每一维独立失败，不会抛出
+影响调用方的异常，也不会用零值冒充成功结果。
+
+Sweep 按当前正式 `SweepBurstAnalyzer` 默认路径拆成四个可独立审核的层：
+
+- `SweepRecognizer`：从 Tap/短 Hold 生成按拍批次，识别可变宽 Sweep 主干；
+- `SweepFamilyBuilder`：建立相邻 Sweep 组的时间关系；
+- `SweepHandMotion`：用双手动态规划计算位移、换手和过快跳跃；
+- `SweepBurstAnalyzer`：生成基础/动作负荷，选三个不重叠的两秒窗口并聚合。
+
+Python 参考实现的三个文件共约 2472 行；C# 正式路径约 1361 行。压缩来自不移植当前未启用的
+成对 Sweep、旧全曲聚合和实验参数分支，不合并或重写会改变正式 raw 的识别规则。
 
 `SimaiRadar.Regression` 将 regression-beta 模型写成简单静态常量：固定七维输入顺序、
 7 个 center、7 个 scale、intercept 和 35 个二次系数。运行时不读取 model.json；8 个冻结
@@ -109,14 +119,15 @@ RadarComputationResult fromEvents = runtime.Analyze(radarChartInput);
 ```
 
 结果包含 `ChartInput`、固定七维 `Analysis.Features`、可选 `FittedConstant` 和 `Errors`。
-只有七维全部成功才运行拟合；显示选轴不参与模型输入。目前 Sweep 尚未移植，因此公开运行时
-预期返回 `Status=partial`、`FittedConstant=null`，不会生成不完整预测。
+只有七维全部成功才运行拟合；显示选轴不参与模型输入。正常输入现在返回 `Status=ok` 和
+`FittedConstant`；任一维失败时仍返回 `partial` 且不生成不完整预测。
 
-### 真实谱六维差分与错误边界
+### 真实谱七维差分与错误边界
 
 迁移工具 [`scripts/compare_csharp_analysis_actual.py`](../scripts/compare_csharp_analysis_actual.py)
-已对 24 张真实 `inote_5` 比较 Python 与 C# 的六个已移植维度。Note/Peak 最大误差约
-`1e-15`；SlideTricky、SlideSequence、Jack、SlideCumulate 最大相对误差低于 `1e-8`。
+可对真实 `inote_5` 比较 Python 与 C# 七维。脚本同时做两种检查：独立 parser 的端到端
+结果允许 MajSimai 单精度 BPM 带来的 `1e-6` 以内时间误差；Sweep 还会把 C# 适配后的同一份
+事件交给 Python 参考算法，以 `1e-8` 检查纯算法移植，避免用 parser 容差掩盖实现差异。
 
 错误边界分三层：
 

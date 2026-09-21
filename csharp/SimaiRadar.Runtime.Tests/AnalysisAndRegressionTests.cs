@@ -1,4 +1,5 @@
 using SimaiRadar.Analysis;
+using SimaiRadar.Analysis.Features;
 using SimaiRadar.Core;
 using SimaiRadar.MajSimaiAdapter;
 using SimaiRadar.Regression;
@@ -38,6 +39,85 @@ public sealed class AnalysisAndRegressionTests
     }
 
     [Theory]
+    [InlineData("(180){16}1,2,3,E", 1.5)]
+    [InlineData("(180){16}2,3,2,3,E", 0.0)]
+    [InlineData("(180){16}3,4,56,7,8,E", 3.2)]
+    [InlineData("(180){16}73,84,15,26,37,48,51,26,37,E", 9.0)]
+    [InlineData("(180){16}5,6,7,8,1,27,36,45,E", 5.5)]
+    [InlineData("(180){16}1/2h[4:1],,3,4,E", 1.5)]
+    [InlineData("(180){16}1,2,3,8,1,2,E", 3.6)]
+    [InlineData("(180){16}1/1x,2x,3,E", 1.3)]
+    public async Task SweepMatchesReviewedPythonCases(string inote, double expected)
+    {
+        var analysis = await Analyze(inote);
+        Assert.Equal(expected, analysis.Features[RadarFeatureNames.Sweep].Value!.Value, 12);
+    }
+
+    [Theory]
+    [InlineData("(180){16}1,28,37,46,5,46,37,28,1,E", "1,2,2,2,1,2,2,2,1")]
+    [InlineData("(180){16}1,2,3,4,51,26,37,E", "1,1,1,1,2,2,2")]
+    [InlineData("(180){16}18,27,36,45,6,7,8,E", "2,2,2,2,1,1,1")]
+    public async Task SweepRecognitionPreservesVariableWidthMainSpine(
+        string inote, string expectedWidths)
+    {
+        var adapted = await new MajSimaiChartAdapter().ParseAndAdaptAsync(inote);
+        Assert.True(adapted.IsSuccess, string.Join("; ", adapted.Errors));
+
+        var sequence = Assert.Single(SweepRecognizer.Recognize(adapted.Chart!.Events));
+
+        Assert.Equal(expectedWidths,
+            string.Join(",", sequence.Widths.Select(value => value.ToString())));
+    }
+
+    [Fact]
+    public void SweepHandMotionMatchesReviewedDynamicProgrammingCases()
+    {
+        var adjacent = SweepHandMotion.Calculate(
+            new[] { 0.0, 0.1, 0.2 },
+            new IReadOnlyList<int>[] { new[] { 1 }, new[] { 2 }, new[] { 3 } });
+        Assert.Equal((2, 2, 0, 0, 0), (
+            adjacent.TotalDistance, adjacent.ActiveDistance, adjacent.IdleDistance,
+            adjacent.FreeHandTakeovers, adjacent.FastJumpViolations));
+
+        var takeover = SweepHandMotion.Calculate(
+            new[] { 0.0, 0.1, 0.2 },
+            new IReadOnlyList<int>[] { new[] { 1 }, new[] { 2 }, new[] { 6 } });
+        Assert.Equal((1, 1, 0, 1, 0), (
+            takeover.TotalDistance, takeover.ActiveDistance, takeover.IdleDistance,
+            takeover.FreeHandTakeovers, takeover.FastJumpViolations));
+
+        var doubleSweep = SweepHandMotion.Calculate(
+            new[] { 0.0, 0.05 },
+            new IReadOnlyList<int>[] { new[] { 1, 5 }, new[] { 3, 7 } });
+        Assert.Equal(2, doubleSweep.FastJumpViolations);
+        Assert.Equal(4, doubleSweep.TotalDistance);
+    }
+
+    [Fact]
+    public async Task SweepLongRunAndPatternMotionMatchReviewedPythonCases()
+    {
+        var longBody = string.Join(",", Enumerable.Repeat("12345678", 3)
+            .SelectMany(item => item.Select(character => character.ToString())));
+        var longRun = await Analyze($"(180){{16}}{longBody},E");
+        Assert.Equal(9.852385066637913,
+            longRun.Features[RadarFeatureNames.Sweep].Value!.Value, 12);
+
+        var patternBody = string.Join(",", Enumerable.Repeat(
+            new[] { "1,2,3,4", "8,7,6,5" }, 4).SelectMany(item => item));
+        var adapted = await new MajSimaiChartAdapter().ParseAndAdaptAsync(
+            $"(180){{16}}{patternBody},E");
+        Assert.True(adapted.IsSuccess, string.Join("; ", adapted.Errors));
+        var result = SweepBurstAnalyzer.Score(
+            adapted.Chart!.Events,
+            Math.Max(adapted.Chart.ChartEndTimeSeconds,
+                adapted.Chart.LastEventEndTimeSeconds ?? 0));
+        Assert.Equal(12.75, result.Value, 12);
+        Assert.Equal(12.0, result.BaseDensity, 12);
+        Assert.Equal(0.75, result.MotionDensity, 12);
+        Assert.Equal(7.5, result.RawMotionDensity, 12);
+    }
+
+    [Theory]
     [InlineData("(120){16}1-5[10:1],2,3,4,5,E", 3.5033834823231462)]
     [InlineData("(120){4}1-5[10:1],A1,E", 0.7500000000000001)]
     [InlineData("(120){4}1-5[10:1]/2-6[10:1]/3,,E", 0.5)]
@@ -69,14 +149,14 @@ public sealed class AnalysisAndRegressionTests
     }
 
     [Fact]
-    public async Task PublicRuntimeReturnsPartialUntilAllSevenPortsExist()
+    public async Task PublicRuntimeReturnsAllSevenFeaturesAndFittedConstant()
     {
         var result = await new RadarRuntime().ParseAndAnalyzeAsync("(120){4}1,2,E");
-        Assert.False(result.IsSuccess);
+        Assert.True(result.IsSuccess, string.Join("; ", result.Errors));
         Assert.NotNull(result.Analysis);
-        Assert.Equal("partial", result.Analysis!.Status);
-        Assert.Null(result.FittedConstant);
-        Assert.Single(result.Errors);
+        Assert.Equal("ok", result.Analysis!.Status);
+        Assert.NotNull(result.FittedConstant);
+        Assert.Empty(result.Errors);
     }
 
     [Theory]

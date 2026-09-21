@@ -10,7 +10,7 @@ public sealed class RadarAnalyzer
         {
             (RadarFeatureNames.Note, new NoteDensityAnalyzer()),
             (RadarFeatureNames.Peak, new PeakDensityAnalyzer()),
-            (RadarFeatureNames.Sweep, new UnportedFeatureAnalyzer(RadarFeatureNames.Sweep)),
+            (RadarFeatureNames.Sweep, new SweepBurstAnalyzer()),
             (RadarFeatureNames.SlideTricky, new SlideTrickyAnalyzer()),
             (RadarFeatureNames.SlideSequence, new SlideSequenceAnalyzer()),
             (RadarFeatureNames.Jack, new JackSequenceAnalyzer()),
@@ -45,13 +45,5 @@ public sealed class RadarAnalyzer
             }
         }
         return new RadarAnalysisResult { Features = results };
-    }
-
-    private sealed class UnportedFeatureAnalyzer : IRadarFeatureAnalyzer
-    {
-        private readonly string _name;
-        internal UnportedFeatureAnalyzer(string name) => _name = name;
-        public RadarFeatureResult Analyze(AnalysisContext context) =>
-            RadarFeatureResult.Failure($"Feature '{_name}' has not been ported to C# yet.");
     }
 }

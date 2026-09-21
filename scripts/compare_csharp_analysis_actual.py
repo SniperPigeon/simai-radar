@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Migration-only real-chart differential for the six ported C# dimensions."""
+"""Migration-only real-chart differential for all seven ported C# dimensions."""
 
 from __future__ import annotations
 
@@ -14,15 +14,23 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from mairadar.analysis import ChartAnalyzer
+from mairadar.analysis import AnalysisContext
+from mairadar.analysis.features import SweepBurstAnalyzer
+from mairadar.model import Event
 from mairadar.parser import parse_chart
 
 
 FIELD = re.compile(r"(?m)^[ \t]*&([A-Za-z][A-Za-z0-9_]*)=")
 FEATURES = (
-    "note", "peak", "slide_tricky", "slide_sequence", "jack", "slide_cumulate",
+    "note", "peak", "sweep", "slide_tricky", "slide_sequence", "jack", "slide_cumulate",
 )
-ABSOLUTE_TOLERANCE = 1e-8
-RELATIVE_TOLERANCE = 1e-8
+# MajSimai stores BPM as float, so independent-parser seconds can differ below
+# one microsecond. The stricter check below runs both Sweep implementations on
+# the exact same adapted events and therefore measures the port itself.
+INTEGRATION_ABSOLUTE_TOLERANCE = 1e-6
+INTEGRATION_RELATIVE_TOLERANCE = 1e-6
+PORT_ABSOLUTE_TOLERANCE = 1e-8
+PORT_RELATIVE_TOLERANCE = 1e-8
 
 
 def maidata_field(text: str, key: str) -> str | None:
@@ -39,12 +47,39 @@ def run_csharp(probe: Path, body: str) -> dict:
         stream.write(body)
         stream.flush()
         completed = subprocess.run(
-            ["dotnet", str(probe), stream.name],
+            ["dotnet", str(probe), stream.name, "--sweep-events"],
             check=False, capture_output=True, text=True,
         )
     if completed.returncode:
         raise RuntimeError(completed.stderr.strip() or f"probe exited {completed.returncode}")
     return json.loads(completed.stdout)
+
+
+def adapted_sweep(payload: dict) -> float:
+    chart = payload["chart"]
+    events = tuple(Event(
+        event_id=item["EventId"],
+        kind=item["kind"],
+        is_slide_head=item["IsSlideHead"],
+        start_time_s=item["StartTimeSeconds"],
+        end_time_s=item["EndTimeSeconds"],
+        start_beat=item["startBeat"],
+        end_beat=item["endBeat"],
+        position=item["Position"],
+        is_break=item["IsBreak"],
+        is_ex=item["IsEx"],
+        is_mine=item["IsMine"],
+        flags_json={},
+    ) for item in chart["sweepEvents"])
+    context = AnalysisContext(
+        events,
+        chart["ChartEndTimeSeconds"],
+        chart["LastEventEndTimeSeconds"],
+    )
+    result = SweepBurstAnalyzer().analyze(context)
+    if not result.success:
+        raise RuntimeError("Python Sweep rejected the adapted event snapshot")
+    return float(result.data)
 
 
 def main() -> int:
@@ -57,6 +92,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     maxima = {name: (0.0, 0.0, "") for name in FEATURES}
+    sweep_port_maximum = (0.0, 0.0, "")
     failures = []
     for path in args.paths:
         body = maidata_field(path.read_text(encoding="utf-8-sig"), f"inote_{args.difficulty}")
@@ -85,10 +121,24 @@ def main() -> int:
             current = maxima[name]
             if absolute > current[0]:
                 maxima[name] = (absolute, relative, str(path))
-            if absolute > ABSOLUTE_TOLERANCE and relative > RELATIVE_TOLERANCE:
+            if (absolute > INTEGRATION_ABSOLUTE_TOLERANCE and
+                    relative > INTEGRATION_RELATIVE_TOLERANCE):
                 failures.append((
                     str(path),
                     f"{name}: C#={actual:.15g} Python={expected:.15g} "
+                    f"abs={absolute:.6g} rel={relative:.6g}",
+                ))
+        if csharp.get("chart") is not None:
+            expected = adapted_sweep(csharp)
+            actual = float(csharp["features"]["sweep"]["Value"])
+            absolute = abs(actual - expected)
+            relative = absolute / max(abs(expected), 1e-12)
+            if absolute > sweep_port_maximum[0]:
+                sweep_port_maximum = (absolute, relative, str(path))
+            if absolute > PORT_ABSOLUTE_TOLERANCE and relative > PORT_RELATIVE_TOLERANCE:
+                failures.append((
+                    str(path),
+                    f"sweep adapted-input port: C#={actual:.15g} Python={expected:.15g} "
                     f"abs={absolute:.6g} rel={relative:.6g}",
                 ))
         print(f"PASS {path}")
@@ -96,6 +146,8 @@ def main() -> int:
     for name in FEATURES:
         absolute, relative, path = maxima[name]
         print(f"  {name}: abs={absolute:.12g} rel={relative:.12g} {path}")
+    absolute, relative, path = sweep_port_maximum
+    print(f"  sweep adapted-input port: abs={absolute:.12g} rel={relative:.12g} {path}")
     for path, message in failures:
         print(f"FAIL {path}: {message}")
     print(f"summary: {len(args.paths) - len({path for path, _ in failures})} charts without failures, "

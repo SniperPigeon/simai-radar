@@ -7,8 +7,8 @@ MajdataPlay。最终交付的解析适配、七维分析、模型训练/推理�
 不保留 Python 运行链路。现有 Python 仅在迁移期间充当公式和历史输出参考，C# 独立验收后
 再移除旧实现。正式解析复用 Play 使用的 MajSimai。目标 fork 已在同级目录核对；首版
 `MajSimai → RadarChartInput` C# 适配层和独立测试已经位于 [`csharp/`](../csharp/)；
-Note、Peak、SlideTricky、SlideSequence、Jack、SlideCumulate 六维已移植，Sweep 待移植。
-固定七维二次模型已作为 C# 常量加入，公开 `RadarRuntime` 在七维完整前返回 partial 且不预测。
+七维分析已全部移植。固定七维二次模型已作为 C# 常量加入，公开 `RadarRuntime` 在七维成功时
+返回 fitted constant；任一维失败时返回 partial 且不预测。
 已完成 NuGet 格式探针、固定上游源码核对和同一测试套件验证。
 
 子特征实验没有显示明确的泛化收益，完整实现留在 `constant_regression` 分支，结果见
@@ -23,7 +23,8 @@ MajSimai 输出 → C# 语义适配层 → 七维 raw → 二次模型预测
 
 - 七维：note、peak、sweep、slide_tricky、slide_sequence、jack、slide_cumulate。
 - C# 离线训练工具实现 StandardScaler → 二次多项式展开 → Ridge，共 35 个非截距项。
-- C# 运行时只加载 model.json 做双精度推理；拟合定数作为第八个可选标量输出，再经过 scorer 映射。
+- C# 运行时直接引用固定 center、scale、intercept 和 35 个二次系数做双精度推理；拟合定数
+  作为第八个可选标量输出，再经过 scorer 映射。
 - 雷达展示轴独立选择，不能改变模型输入。歌曲 metadata、曲绘、文件发现由 Play 管理。
 - 主要面向 Master/Re:Master 自制谱。现有训练集已排除不明确的定数标签，但“只训练定数 ≥12”尚未实现。
 
@@ -37,12 +38,12 @@ MajSimai 输出 → C# 语义适配层 → 七维 raw → 二次模型预测
    `SimaiChart.Fumen`：按 `CommaTimings` 的实际秒差和区间 BPM 还原并吸附有理拍轴，
    只解释 `SimaiNote.RawContent` 的 Slide 路径；bar 数引用适配层冻结的标准 prefab 长度。
    不修改 MajSimai 源码，无法无歧义分组时不生成分数。核心使用内存类型化事件。
-3. 逐项移植分析器：可先 Note、Peak、Jack，再 Slide，最后 Sweep。迁移期间可比较
-   Python/C# 七维 raw，但最终验收依赖 C# 人工 golden、独立行为测试和目标 Play pin
-   的解析测试，不依赖 Python 测试程序。
-4. 移植 C# 离线训练、模型求值和 scorer，用人工数据与冻结的 model.json / test_vectors.json
-   核验。核心保持无 Unity 依赖，
-   验证后作为独立程序集或包接入 Play，在谱面加载后计算并复用结果，UI 只消费结果。
+3. 七维分析器已完成。Sweep 只移植正式默认路径，并拆为识别、族连接、双手 DP、两秒窗口
+   四层；未把未启用的成对 Sweep 和实验参数分支带入 Play。迁移差分同时比较独立 parser
+   端到端结果，以及把同一适配事件交给 Python/C# Sweep 的纯算法结果。
+4. 固定模型的 C# 求值已完成并由冻结向量核验；后续若仍需要在 C# 内重新训练，再移植离线
+   StandardScaler / PolynomialFeatures / Ridge 工具和 scorer。核心保持无 Unity 依赖，验证后
+   作为独立程序集或包接入 Play，在谱面加载后计算并复用结果，UI 只消费结果。
 
 ## 最需要先确认的语义
 
@@ -55,7 +56,8 @@ MajSimai 输出 → C# 语义适配层 → 七维 raw → 二次模型预测
 缺少的信息应在解析/适配边界一次性补齐，分析器不各自重新扫描 Simai。只使用 MajSimai
 已解析的物件作为物件来源；路径解释不独立制造物件。MajSimai 对部分非法物件可能只写
 调试日志并跳过，接受不提供完整诊断的边界，不将成功返回解释为已验证全谱语法。当前适配
-测试已对目标 Play pin 独立运行，但七维尚未完成 C# 对照，因此不能把 Python 输出无条件当成播放器真值。若最终 C# 的特征口径
+测试已对目标 Play pin 独立运行，七维已有 C# 行为测试和有限真实谱对照；仍不能把 Python 输出
+无条件当成播放器真值。若最终 C# 的特征口径
 发生变化，要重新生成训练输入并拟合，不能直接沿用旧系数。
 
 ## 参考入口
