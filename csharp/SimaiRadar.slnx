@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="SimaiRadar.Core/SimaiRadar.Core.csproj" />
+  <Project Path="SimaiRadar.MajSimaiAdapter/SimaiRadar.MajSimaiAdapter.csproj" />
+  <Project Path="SimaiRadar.MajSimaiAdapter.Tests/SimaiRadar.MajSimaiAdapter.Tests.csproj" />
+</Solution>

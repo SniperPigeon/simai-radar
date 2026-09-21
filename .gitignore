@@ -3,6 +3,10 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# .NET local build output
+**/bin/
+**/obj/
+
 # C extensions
 *.so
 
