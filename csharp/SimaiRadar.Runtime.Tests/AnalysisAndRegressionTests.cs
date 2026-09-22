@@ -159,10 +159,28 @@ public sealed class AnalysisAndRegressionTests
         Assert.Empty(result.Errors);
     }
 
+    [Fact]
+    public async Task UngroupedNoHeadSlideContributesToIntensityButNotSlideGroupFeatures()
+    {
+        var adapted = await new MajSimaiChartAdapter().ParseAndAdaptAsync(
+            "(120){4}1?-5[4:1],E");
+        Assert.True(adapted.IsSuccess, string.Join("; ", adapted.Errors));
+        var slide = Assert.Single(adapted.Chart!.Events,
+            item => item.Kind == RadarEventKind.Slide);
+        Assert.Null(slide.SlideGroupId);
+
+        var analysis = new RadarAnalyzer().Analyze(adapted.Chart);
+
+        Assert.True(analysis.IsSuccess);
+        Assert.True(analysis.Features[RadarFeatureNames.Note].Value > 0);
+        Assert.Equal(0, analysis.Features[RadarFeatureNames.SlideTricky].Value);
+        Assert.Equal(0, analysis.Features[RadarFeatureNames.SlideSequence].Value);
+        Assert.Equal(0, analysis.Features[RadarFeatureNames.SlideCumulate].Value);
+    }
+
     [Theory]
     [InlineData("(0){4}1,E", "non-finite or non-positive")]
     [InlineData("(120){4}1K5[4:1],E", "Extended K Slides")]
-    [InlineData("(120){4}1-5[4:1]*-7[4:1]/1?-3[4:1],E", "cannot distinguish")]
     public async Task AdaptationFailuresReturnDataWithoutLeakingExceptions(
         string inote,
         string expectedError)
@@ -221,6 +239,7 @@ public sealed class AnalysisAndRegressionTests
                     EndTimeSeconds = 1,
                     StartBeat = new BeatPosition(1),
                     EndBeat = new BeatPosition(2),
+                    SlideGroupId = 1,
                     SlidePath = Array.Empty<SlidePathSegment>()
                 }
             }

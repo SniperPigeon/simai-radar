@@ -180,15 +180,34 @@ public sealed class MajSimaiChartAdapterTests
     }
 
     [Fact]
-    public async Task RejectsGroupingThatMajSimaiOutputCannotDisambiguate()
+    public async Task PreservesAmbiguousNoHeadSlidesWithoutGuessingTheirGroup()
     {
         var adapter = new MajSimaiChartAdapter();
 
         var result = await adapter.ParseAndAdaptAsync(
             "(120){4}1-5[4:1]*-7[4:1]/1?-3[4:1],E");
 
-        Assert.False(result.IsSuccess);
-        Assert.Contains("cannot distinguish", Assert.Single(result.Errors));
+        Assert.True(result.IsSuccess, string.Join("; ", result.Errors));
+        var slides = result.Chart!.Events.Where(item => item.Kind == RadarEventKind.Slide).ToArray();
+        Assert.Equal(3, slides.Length);
+        Assert.Single(slides, item => item.SlideGroupId is not null);
+        Assert.Equal(2, slides.Count(item => item.SlideGroupId is null));
+    }
+
+    [Fact]
+    public async Task KeepsInterleavedIndependentNoHeadSlideGroupsSeparate()
+    {
+        var adapter = new MajSimaiChartAdapter();
+
+        var result = await adapter.ParseAndAdaptAsync(
+            "(120){4}4-2[4:1]/5-8[4:1]/4?-8[4:1]/5?-1[4:1],E");
+
+        Assert.True(result.IsSuccess, string.Join("; ", result.Errors));
+        var slides = result.Chart!.Events.Where(item => item.Kind == RadarEventKind.Slide).ToArray();
+        Assert.Equal(4, slides.Length);
+        Assert.Equal(2, slides.Count(item => item.SlideGroupId is not null));
+        Assert.Equal(2, slides.Count(item => item.SlideGroupId is null));
+        Assert.Equal(2, slides.Count(item => item.HeadEventId is null));
     }
 
     [Fact]
