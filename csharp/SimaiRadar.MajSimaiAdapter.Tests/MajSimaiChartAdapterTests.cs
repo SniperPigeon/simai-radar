@@ -250,4 +250,37 @@ public sealed class MajSimaiChartAdapterTests
         Assert.Null(result.Chart);
         Assert.NotEmpty(result.Errors);
     }
+
+    [Fact]
+    public async Task ExtendedSlideUsesCallerSuppliedPlayGeometry()
+    {
+        var provider = new FixedExtendedSlideProvider(22);
+        var adapter = new MajSimaiChartAdapter(provider);
+
+        var result = await adapter.ParseAndAdaptAsync("(120){4}1P6K7[4:1],E");
+
+        Assert.True(result.IsSuccess, string.Join("; ", result.Errors));
+        Assert.Equal("1P6K7[4:1]", provider.RawContent);
+        var slide = Assert.Single(result.Chart!.Events, item => item.Kind == RadarEventKind.Slide);
+        var path = Assert.Single(slide.SlidePath!);
+        Assert.Equal("slidecode", path.Shape);
+        Assert.Equal(1, path.StartPosition);
+        Assert.Equal(7, path.EndPosition);
+        Assert.Equal(22, path.BarCount);
+        Assert.Equal(slide.StartTimeSeconds, path.StartTimeSeconds);
+        Assert.Equal(slide.EndTimeSeconds, path.EndTimeSeconds);
+    }
+
+    private sealed class FixedExtendedSlideProvider : IExtendedSlideBarCountProvider
+    {
+        private readonly int _barCount;
+        internal FixedExtendedSlideProvider(int barCount) => _barCount = barCount;
+        internal string? RawContent { get; private set; }
+
+        public int ResolveBarCount(string rawContent)
+        {
+            RawContent = rawContent;
+            return _barCount;
+        }
+    }
 }
