@@ -1,4 +1,5 @@
 using SimaiRadar.Core;
+using System.Threading;
 
 namespace SimaiRadar.Analysis;
 
@@ -57,13 +58,16 @@ public sealed class RadarAnalysisResult
     public IReadOnlyDictionary<string, RadarFeatureResult> Features { get; set; } =
         new Dictionary<string, RadarFeatureResult>();
 
+    public bool IsCancelled { get; set; }
+
     public bool IsSuccess => Features.Count == RadarFeatureNames.ModelInputOrder.Count &&
-        Features.Values.All(result => result.IsSuccess);
+        Features.Values.All(result => result.IsSuccess) && !IsCancelled;
 
     public string Status
     {
         get
         {
+            if (IsCancelled) return "cancelled";
             var successful = Features.Values.Count(result => result.IsSuccess);
             if (successful == Features.Count && Features.Count > 0) return "ok";
             return successful > 0 ? "partial" : "error";
@@ -73,17 +77,20 @@ public sealed class RadarAnalysisResult
 
 internal readonly struct AnalysisContext
 {
-    internal AnalysisContext(RadarChartInput chart)
+    internal AnalysisContext(RadarChartInput chart, CancellationToken cancellationToken)
     {
         Events = chart.Events;
         ChartEndTimeSeconds = chart.ChartEndTimeSeconds;
         LastEventEndTimeSeconds = chart.LastEventEndTimeSeconds;
+        CancellationToken = cancellationToken;
     }
 
     internal IReadOnlyList<RadarEvent> Events { get; }
     internal double ChartEndTimeSeconds { get; }
     internal double? LastEventEndTimeSeconds { get; }
+    internal CancellationToken CancellationToken { get; }
     internal double DurationSeconds => Math.Max(ChartEndTimeSeconds, LastEventEndTimeSeconds ?? 0);
+    internal void ThrowIfCancellationRequested() => CancellationToken.ThrowIfCancellationRequested();
 }
 
 internal interface IRadarFeatureAnalyzer

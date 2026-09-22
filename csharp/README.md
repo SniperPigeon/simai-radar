@@ -79,9 +79,13 @@ Slide 路径只解释 MajSimai 已输出的 `SimaiNote.RawContent`，不会从�
 5. 音频 offset 仍由 Play 外围只加一次；适配器和分析器都使用谱面相对时间。
 
 MajSimai 会把“同头后续分支”和显式 `?`/`!` 无头 Slide 都表示为
-`IsSlideNoHead=true`。适配器可处理普通同头分支和独立无头 Slide；若它们在同一 timing、
-同一位置混合而 MajSimai 输出无法无歧义区分，则返回适配错误。这里不修改 MajSimai，也
-不猜测错误的 `head_event_id`。
+`IsSlideNoHead=true`。没有显式无头标记的普通 `*` 分支仍归入当前头；含 `?`/`!` 的 timing
+无法仅靠类型化输出逐项还原来源，因此其中的无头路径保留为 `SlideGroupId=null`：Note/Peak
+强度按独立路径计入，三个 Slide 组特征跳过，不猜测 `head_event_id`，也不拒绝整张谱。
+
+标准 Slide 继续引用固定 prefab 长度；扩展 `K` Slide 可由调用方注入
+`IExtendedSlideBarCountProvider`。Play 实现直接复用 `SlideCodeParser` 和
+`SlideDataBuilder`，独立环境未提供该实现时返回结构化失败。
 
 ## 分析、拟合与公开接口
 
@@ -96,6 +100,10 @@ Sweep 按当前正式 `SweepBurstAnalyzer` 默认路径拆成四个可独立审�
 - `SweepHandMotion`：用双手动态规划计算位移、换手和过快跳跃；
 - `SweepBurstAnalyzer`：生成基础/动作负荷，选三个不重叠的两秒窗口并聚合。
 
+Sweep 保留与 Python 相同的前缀候选语义，但在物化前限制累计候选历史和总候选数；主干状态、
+family 连接和选集状态也各有预算。冲突选集按连通分量处理，孤立候选直接接受，其余使用显式栈
+而不是递归，避免特殊谱导致未捕获的栈溢出。超预算只使 Sweep 维失败。
+
 Python 参考实现的三个文件共约 2472 行；C# 正式路径约 1361 行。压缩来自不移植当前未启用的
 成对 Sweep、旧全曲聚合和实验参数分支，不合并或重写会改变正式 raw 的识别规则。
 
@@ -109,7 +117,7 @@ Python 测试向量用于验证 C# 双精度推理。
 var runtime = new RadarRuntime();
 
 // Play 首选：复用已经解析的 SimaiChart。
-RadarComputationResult result = runtime.Analyze(existingSimaiChart);
+RadarComputationResult result = runtime.Analyze(existingSimaiChart, cancellationToken);
 
 // 独立调用方可直接给 inote。
 RadarComputationResult parsed = await runtime.ParseAndAnalyzeAsync(inote);
@@ -118,7 +126,9 @@ RadarComputationResult parsed = await runtime.ParseAndAnalyzeAsync(inote);
 RadarComputationResult fromEvents = runtime.Analyze(radarChartInput);
 ```
 
-结果包含 `ChartInput`、固定七维 `Analysis.Features`、可选 `FittedConstant` 和 `Errors`。
+结果包含 `ChartInput`、固定七维 `Analysis.Features`、可选 `FittedConstant`、`IsCancelled`
+和 `Errors`。取消令牌会传到各维入口以及 Sweep 的候选、family、手部 DP 和选集循环；取消返回
+`Status=cancelled` 数据，不生成拟合值。调用方丢弃结果不能替代传入令牌。
 只有七维全部成功才运行拟合；显示选轴不参与模型输入。正常输入现在返回 `Status=ok` 和
 `FittedConstant`；任一维失败时仍返回 `partial` 且不生成不完整预测。
 
@@ -132,7 +142,7 @@ RadarComputationResult fromEvents = runtime.Analyze(radarChartInput);
 错误边界分三层：
 
 - MajSimai 抛出的解析异常由 `ParseAndAdaptAsync` 转成失败结果；
-- 非正 BPM、固定几何不支持的 K Slide、无法无歧义建立头关系等适配错误返回
+- 非正 BPM、未提供 Play 几何的 K Slide、没有可分析物件等适配错误返回
   `ChartInput=null`、`Analysis=null` 和错误文本；
 - 单个维度的数据错误只使该维失败，其他维度继续，整体状态为 `partial`。
 

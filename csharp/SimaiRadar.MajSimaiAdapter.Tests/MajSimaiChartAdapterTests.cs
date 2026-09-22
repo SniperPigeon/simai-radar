@@ -102,6 +102,32 @@ public sealed class MajSimaiChartAdapterTests
     }
 
     [Fact]
+    public async Task EmptyChartReturnsUnavailableData()
+    {
+        var result = await new MajSimaiChartAdapter().ParseAndAdaptAsync("(120){4},,E");
+
+        Assert.False(result.IsSuccess);
+        Assert.False(result.IsCancelled);
+        Assert.Null(result.Chart);
+        Assert.Contains("no analyzable chart objects", Assert.Single(result.Errors));
+    }
+
+    [Fact]
+    public async Task CancellationReturnsDataWithoutParsing()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        var result = await new MajSimaiChartAdapter().ParseAndAdaptAsync(
+            "(120){4}1,E", cancellation.Token);
+
+        Assert.False(result.IsSuccess);
+        Assert.True(result.IsCancelled);
+        Assert.Null(result.Chart);
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
     public async Task IntegratesAContinuedObjectAcrossBpmChangesAndPastChartEnd()
     {
         var adapter = new MajSimaiChartAdapter();

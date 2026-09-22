@@ -41,6 +41,8 @@ MajSimai 输出 → C# 语义适配层 → 七维 raw → 二次模型预测
 3. 七维分析器已完成。Sweep 只移植正式默认路径，并拆为识别、族连接、双手 DP、两秒窗口
    四层；未把未启用的成对 Sweep 和实验参数分支带入 Play。迁移差分同时比较独立 parser
    端到端结果，以及把同一适配事件交给 Python/C# Sweep 的纯算法结果。
+   Sweep 的候选历史、候选数、family 连接和选集状态均有预算；冲突选集使用连通分量和显式栈，
+   不依赖递归深度。`CancellationToken` 从 Play 薄入口贯穿到高复杂度循环，取消返回数据状态。
 4. 固定模型的 C# 求值已完成并由冻结向量核验；后续若仍需要在 C# 内重新训练，再移植离线
    StandardScaler / PolynomialFeatures / Ridge 工具和 scorer。核心保持无 Unity 依赖，验证后
    作为独立程序集或包接入 Play，在谱面加载后计算并复用结果，UI 只消费结果。

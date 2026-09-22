@@ -117,6 +117,44 @@ public sealed class AnalysisAndRegressionTests
         Assert.Equal(7.5, result.RawMotionDensity, 12);
     }
 
+    [Fact]
+    public void SweepSelectionHandlesManyIndependentFamiliesWithoutRecursion()
+    {
+        var events = new List<RadarEvent>();
+        for (var group = 0; group < 1_500; group++)
+            for (var offset = 0; offset < 3; offset++)
+            {
+                var beat = new BeatPosition(group * 8 + offset, 4);
+                events.Add(ButtonEvent(events.Count + 1, offset + 1, beat));
+            }
+
+        var sequences = SweepRecognizer.Recognize(events);
+
+        Assert.Equal(1_500, sequences.Count);
+    }
+
+    [Fact]
+    public void ExtremeContinuousSweepReturnsFeatureFailureBeforeUnboundedGrowth()
+    {
+        var events = Enumerable.Range(0, 5_000)
+            .Select(index => ButtonEvent(
+                index + 1, index % 8 + 1, new BeatPosition(index, 4)))
+            .ToArray();
+        var chart = new RadarChartInput
+        {
+            Events = events,
+            ChartEndTimeSeconds = events[^1].StartTimeSeconds + 1,
+            LastEventEndTimeSeconds = events[^1].EndTimeSeconds
+        };
+
+        var result = new RadarAnalyzer().Analyze(chart);
+
+        Assert.Equal("partial", result.Status);
+        Assert.True(result.Features[RadarFeatureNames.Note].IsSuccess);
+        Assert.False(result.Features[RadarFeatureNames.Sweep].IsSuccess);
+        Assert.Contains("budget exceeded", result.Features[RadarFeatureNames.Sweep].Error);
+    }
+
     [Theory]
     [InlineData("(120){16}1-5[10:1],2,3,4,5,E", 3.5033834823231462)]
     [InlineData("(120){4}1-5[10:1],A1,E", 0.7500000000000001)]
@@ -160,6 +198,21 @@ public sealed class AnalysisAndRegressionTests
     }
 
     [Fact]
+    public async Task PublicRuntimeReturnsCancelledDataWithoutThrowing()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        var result = await new RadarRuntime().ParseAndAnalyzeAsync(
+            "(120){4}1,2,E", cancellation.Token);
+
+        Assert.False(result.IsSuccess);
+        Assert.True(result.IsCancelled);
+        Assert.Empty(result.Errors);
+        Assert.Null(result.FittedConstant);
+    }
+
+    [Fact]
     public async Task UngroupedNoHeadSlideContributesToIntensityButNotSlideGroupFeatures()
     {
         var adapted = await new MajSimaiChartAdapter().ParseAndAdaptAsync(
@@ -199,13 +252,14 @@ public sealed class AnalysisAndRegressionTests
 
     [Theory]
     [InlineData("(120){4}bad,E")]
-    [InlineData("(120){4}1h[4:1,E")]
-    public async Task MajSimaiSilentDropsRemainOutsideTheAdapterErrorBoundary(string inote)
+    public async Task EmptyMajSimaiOutputIsUnavailableWithoutClaimingParseDiagnostics(string inote)
     {
         var result = await new RadarRuntime().ParseAndAnalyzeAsync(inote);
 
-        Assert.NotNull(result.ChartInput);
-        Assert.NotNull(result.Analysis);
+        Assert.False(result.IsSuccess);
+        Assert.Null(result.ChartInput);
+        Assert.Null(result.Analysis);
+        Assert.Contains("no analyzable chart objects", Assert.Single(result.Errors));
         Assert.DoesNotContain(
             result.Errors,
             error => error.Contains("parse", StringComparison.OrdinalIgnoreCase));
@@ -274,6 +328,21 @@ public sealed class AnalysisAndRegressionTests
     }
 
     private static object[] Vector(double[] raw, double expected) => new object[] { raw, expected };
+
+    private static RadarEvent ButtonEvent(int eventId, int lane, BeatPosition beat)
+    {
+        var time = beat.ToDouble() / 3;
+        return new RadarEvent
+        {
+            EventId = eventId,
+            Kind = RadarEventKind.Tap,
+            Position = lane.ToString(),
+            StartBeat = beat,
+            EndBeat = beat,
+            StartTimeSeconds = time,
+            EndTimeSeconds = time
+        };
+    }
 
     private static async Task<RadarAnalysisResult> Analyze(string inote)
     {
