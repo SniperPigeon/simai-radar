@@ -121,7 +121,7 @@ public sealed class AnalysisAndRegressionTests
     public void SweepSelectionHandlesManyIndependentFamiliesWithoutRecursion()
     {
         var events = new List<RadarEvent>();
-        for (var group = 0; group < 1_500; group++)
+        for (var group = 0; group < 3_333; group++)
             for (var offset = 0; offset < 3; offset++)
             {
                 var beat = new BeatPosition(group * 8 + offset, 4);
@@ -130,13 +130,13 @@ public sealed class AnalysisAndRegressionTests
 
         var sequences = SweepRecognizer.Recognize(events);
 
-        Assert.Equal(1_500, sequences.Count);
+        Assert.Equal(3_333, sequences.Count);
     }
 
     [Fact]
-    public void ExtremeContinuousSweepReturnsFeatureFailureBeforeUnboundedGrowth()
+    public void TenThousandEventContinuousSweepCompletesWithBoundedState()
     {
-        var events = Enumerable.Range(0, 5_000)
+        var events = Enumerable.Range(0, 10_000)
             .Select(index => ButtonEvent(
                 index + 1, index % 8 + 1, new BeatPosition(index, 4)))
             .ToArray();
@@ -149,10 +149,33 @@ public sealed class AnalysisAndRegressionTests
 
         var result = new RadarAnalyzer().Analyze(chart);
 
-        Assert.Equal("partial", result.Status);
+        Assert.Equal("ok", result.Status);
         Assert.True(result.Features[RadarFeatureNames.Note].IsSuccess);
-        Assert.False(result.Features[RadarFeatureNames.Sweep].IsSuccess);
-        Assert.Contains("budget exceeded", result.Features[RadarFeatureNames.Sweep].Error);
+        Assert.True(result.Features[RadarFeatureNames.Sweep].IsSuccess);
+    }
+
+    [Fact]
+    public void ChartAboveThirtyThousandEventsReturnsErrorBeforeFeatureWork()
+    {
+        var events = Enumerable.Range(0, 30_001)
+            .Select(index => ButtonEvent(
+                index + 1, index % 8 + 1, new BeatPosition(index, 4)))
+            .ToArray();
+        var chart = new RadarChartInput
+        {
+            Events = events,
+            ChartEndTimeSeconds = events[^1].StartTimeSeconds + 1,
+            LastEventEndTimeSeconds = events[^1].EndTimeSeconds
+        };
+
+        var result = new RadarAnalyzer().Analyze(chart);
+
+        Assert.Equal("error", result.Status);
+        Assert.All(result.Features.Values, feature =>
+        {
+            Assert.False(feature.IsSuccess);
+            Assert.Contains("event budget exceeded", feature.Error);
+        });
     }
 
     [Theory]

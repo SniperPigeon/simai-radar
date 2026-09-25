@@ -21,6 +21,8 @@ class AnalysisRecord:
     def status(self) -> str:
         if self.analysis is None:
             return "error"
+        if self.analysis.is_cancelled:
+            return "cancelled"
         if self.diagnostics or (self.scores is not None and any(
             score.status != "ok" for score in self.scores.features.values()
         )):

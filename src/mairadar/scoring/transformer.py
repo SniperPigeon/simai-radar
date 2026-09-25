@@ -21,6 +21,8 @@ class FeatureScoreTransformer:
         self.mapping_version = mapping_version
 
     def transform(self, result: AnalysisResult) -> ScoreResult:
+        if result.is_cancelled:
+            return ScoreResult({}, self.mapping_version)
         scores = {}
         raw = result.features
         for name, mapper in self._mappers.items():

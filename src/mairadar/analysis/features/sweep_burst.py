@@ -5,6 +5,7 @@ from collections import Counter
 from dataclasses import dataclass, replace
 import math
 
+from mairadar.analysis.control import CancellationCheck, no_cancellation
 from mairadar.analysis.model import AnalysisContext, FeatureResult
 from mairadar.model import Event
 
@@ -324,6 +325,7 @@ def score_sweep_burst(
     solo_fast_min_batches: int = DEFAULT_SOLO_FAST_MIN_BATCHES,
     solo_fast_long_min_batches: int = DEFAULT_SOLO_FAST_LONG_MIN_BATCHES,
     solo_fast_max_interval_seconds: float = DEFAULT_SOLO_FAST_MAX_INTERVAL_SECONDS,
+    check_cancelled: CancellationCheck = no_cancellation,
 ) -> SweepBurstScore:
     """Return the strongest fixed window without family multiplier carry-over."""
     numeric = {
@@ -405,6 +407,7 @@ def score_sweep_burst(
     ):
         raise ValueError("solo_fast_long_min_batches must be at least solo_fast_min_batches")
 
+    check_cancelled()
     resolved = replace(config or SweepScoringConfig(), chord_note_multiplier=1.0)
     resolved.validate()
     sequences = sweep_sequences(
@@ -414,8 +417,10 @@ def score_sweep_burst(
         include_paired_sweeps=include_paired_sweeps,
         strict_opposite_pairs=strict_opposite_pairs,
         paired_max_interval_seconds=paired_max_interval_seconds,
+        check_cancelled=check_cancelled,
     )
-    scored = score_sweep_sequences(sequences, config=resolved, duration_s=duration_s)
+    scored = score_sweep_sequences(sequences, config=resolved, duration_s=duration_s,
+                                   check_cancelled=check_cancelled)
     groups_by_id = {group.group_id: group for group in scored.groups}
     eighth_bonus_group_ids = set()
     if eighth_gap_group_bonus and not (
@@ -424,6 +429,7 @@ def score_sweep_burst(
     ):
         groups_ending_at = {}
         for group in scored.groups:
+            check_cancelled()
             if group.parent_group_id is None:
                 previous = groups_ending_at.get(
                     group.sequence.start_beat - EIGHTH_NOTE_BEATS, ()
@@ -439,7 +445,8 @@ def score_sweep_burst(
     motions_by_family = {
         family.family_id: sweep_family_hand_motion(
             family,
-            scored.groups,
+            tuple(groups_by_id[group_id] for group_id in family.group_ids),
+            check_cancelled=check_cancelled,
             respect_group_gaps=(
                 resolved.eighth_gap_family_bridge
                 or resolved.eighth_gap_similar_speed_bridge
@@ -465,6 +472,7 @@ def score_sweep_burst(
         or solo_fast_long_base_multiplier < 1
     ):
         for family in scored.families:
+            check_cancelled()
             assignments = {
                 item.time_s: item
                 for item in motions_by_family[family.family_id].assignments
@@ -499,6 +507,7 @@ def score_sweep_burst(
 
     first_batch_physical_base: dict[int, float] = {}
     for group in scored.groups:
+        check_cancelled()
         sequence = group.sequence
         speed_by_batch = (
             sequence.unit_intervals_seconds[0],
@@ -506,6 +515,7 @@ def score_sweep_burst(
         )
         simple_run_length = 0
         for index, time_s in enumerate(sequence.times_s):
+            check_cancelled()
             note_weight = (
                 sequence.normal_declaration_counts[index]
                 + sequence.protected_declaration_counts[index]
@@ -556,6 +566,7 @@ def score_sweep_burst(
 
     same_direction_group_ids = set()
     for group in scored.groups:
+        check_cancelled()
         if group.parent_group_id is None:
             continue
         parent = groups_by_id[group.parent_group_id]
@@ -583,6 +594,7 @@ def score_sweep_burst(
     }
 
     for family in scored.families:
+        check_cancelled()
         motion = motions_by_family[family.family_id]
         last_hand_use: dict[str, float | None] = {"L": None, "R": None}
         if alternating_idle_multiplier is None:
@@ -604,6 +616,7 @@ def score_sweep_burst(
             }
             regular_start_times = set()
         for assignment in motion.assignments:
+            check_cancelled()
             weighted_idle_distance = 0.0
             for hand, lanes, distance in (
                 (
@@ -665,6 +678,7 @@ def score_sweep_burst(
     max_start = max(0.0, duration_s - window_seconds)
     candidates = {0.0, max_start}
     for time_s in points:
+        check_cancelled()
         candidates.add(min(max_start, max(0.0, time_s)))
         candidates.add(min(max_start, max(0.0, time_s - window_seconds)))
 
@@ -680,6 +694,7 @@ def score_sweep_burst(
 
     candidates_by_start = []
     for start in sorted(candidates):
+        check_cancelled()
         left = bisect_left(times, start - 1e-9)
         right = bisect_left(times, start + window_seconds - 1e-9)
         base = base_prefix[right] - base_prefix[left]
@@ -753,4 +768,5 @@ class SweepBurstAnalyzer:
         return FeatureResult(score_sweep_burst(
             context.events,
             duration_s=context.duration_s,
+            check_cancelled=context.check_cancelled,
         ).value)

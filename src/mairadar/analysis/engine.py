@@ -1,6 +1,6 @@
 """Dispatch independent feature classes; never parse text or access files."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 import math
 import re
@@ -8,7 +8,11 @@ import re
 from mairadar.model import ParseResult
 from mairadar.validation import validate_result
 from .config import FEATURES
+from .control import AnalysisCancelled
 from .model import AnalysisContext, AnalysisIssue, AnalysisResult, FeatureAnalyzer, FeatureResult
+
+
+MAXIMUM_CHART_EVENTS = 30_000
 
 
 class ChartAnalyzer:
@@ -27,7 +31,15 @@ class ChartAnalyzer:
     def feature_names(self) -> tuple[str, ...]:
         return tuple(self._features)
 
-    def analyze(self, parsed: ParseResult) -> AnalysisResult:
+    def analyze(
+        self, parsed: ParseResult, *, is_cancelled: Callable[[], bool] | None = None,
+    ) -> AnalysisResult:
+        def check_cancelled():
+            if is_cancelled is not None and is_cancelled():
+                raise AnalysisCancelled("Chart analysis cancelled")
+
+        if is_cancelled is not None and is_cancelled():
+            return AnalysisResult({}, is_cancelled=True)
         issue = None
         try:
             validate_result(parsed)
@@ -35,22 +47,32 @@ class ChartAnalyzer:
             issue = AnalysisIssue("INVALID_INPUT", str(exc))
         if issue is None and not parsed.complete:
             issue = AnalysisIssue("PARSE_INCOMPLETE", "Analysis requires a complete parse result")
+        if issue is None and len(parsed.events) > MAXIMUM_CHART_EVENTS:
+            issue = AnalysisIssue("EVENT_BUDGET_EXCEEDED",
+                                  f"Chart event budget exceeded ({len(parsed.events)} > "
+                                  f"{MAXIMUM_CHART_EVENTS})")
         if issue is not None:
             return AnalysisResult(
                 {name: FeatureResult(None, success=False) for name in self._features},
                 tuple(deepcopy(parsed.diagnostics)), (issue,),
             )
         # 逐个分析
-        context = AnalysisContext(tuple(parsed.events), parsed.chart_end_time_s, parsed.last_event_end_s)
+        context = AnalysisContext(tuple(parsed.events), parsed.chart_end_time_s,
+                                  parsed.last_event_end_s, check_cancelled)
         results = {}
         issues = []
         for name, analyzer in self._features.items():
             try:
+                check_cancelled()
                 # Fresh instances and snapshots isolate charts and independently configured features.
                 result = analyzer().analyze(deepcopy(context))
+                check_cancelled()
                 self._validate_feature(result)
                 results[name] = result
             except Exception as exc:
+                if isinstance(exc, AnalysisCancelled) and is_cancelled is not None and is_cancelled():
+                    return AnalysisResult(results, tuple(deepcopy(parsed.diagnostics)),
+                                          tuple(issues), is_cancelled=True)
                 results[name] = FeatureResult(None, success=False)
                 issues.append(AnalysisIssue("FEATURE_FAILED", str(exc), name))
         return AnalysisResult(results, tuple(deepcopy(parsed.diagnostics)), tuple(issues))

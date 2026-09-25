@@ -18,6 +18,7 @@ from mairadar.constants import write_json, write_rows
 from mairadar.cli import main as analyze
 from mairadar.exporters.constants import ConstantAnnotations
 from mairadar.regression import PolynomialModel
+from mairadar.regression import runtime as regression_runtime
 from mairadar.regression.__main__ import main
 
 FEATURES = ("note", "peak", "sweep", "slide_tricky", "slide_sequence", "jack", "slide_cumulate")
@@ -53,7 +54,31 @@ class RuntimeTests(unittest.TestCase):
         higher_degree = known_model()
         higher_degree["degree"] = 5
         higher_degree["terms"] = [{"powers": [5, 0, 0, 0, 0, 0, 0], "coefficient": 2}]
-        self.assertEqual(PolynomialModel(higher_degree).predict([5, 1, 1, 1, 1, 1, 1]), 74)
+        self.assertEqual(PolynomialModel(higher_degree).predict([2, 1, 1, 1, 1, 1, 1]), 10.0625)
+
+    def test_output_limits_are_applied_after_finite_polynomial_evaluation(self):
+        data = {
+            "schema_version": "mairadar-polynomial-2", "features": ["x"],
+            "input_kind": "raw", "center": [0], "scale": [1], "intercept": 0,
+            "terms": [{"powers": [1], "coefficient": 1}],
+        }
+        model = PolynomialModel(data)
+        with patch.object(regression_runtime, "MINIMUM_FITTED_CONSTANT", -2), \
+             patch.object(regression_runtime, "MAXIMUM_FITTED_CONSTANT", 3):
+            for raw, expected in ((-100, -2), (100, 3), (-2, -2), (3, 3), (1.5, 1.5)):
+                with self.subTest(raw=raw):
+                    self.assertEqual(model.predict([raw]), expected)
+                    self.assertEqual(model.predict({"x": raw}), expected)
+            for raw in (math.inf, -math.inf, math.nan):
+                with self.subTest(raw=raw), self.assertRaises(ValueError):
+                    model.predict([raw])
+            data["terms"][0]["powers"] = [2]
+            with self.assertRaisesRegex(ValueError, "overflow"):
+                PolynomialModel(data).predict([1e308])
+        with patch.object(regression_runtime, "MINIMUM_FITTED_CONSTANT", 4), \
+             patch.object(regression_runtime, "MAXIMUM_FITTED_CONSTANT", 3):
+            with self.assertRaisesRegex(ValueError, "cannot exceed"):
+                model.predict([1])
 
     def test_rejects_invalid_schema_and_parameters(self):
         for key, value in (("schema_version", "unknown"), ("input_kind", "scores"),

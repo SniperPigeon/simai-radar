@@ -27,6 +27,7 @@ ScoreTransformer 接口与按 feature 分发的 FeatureScoreTransformer；每个
 完整次序为 `analysis(七维 raw) → 可选 fitted_constant → scoring → 雷达选轴`。
 拟合定数由 `regression.derived.with_prediction` 根据未映射的输入生成，再作为普通原始特征附加。
 模型内部的 StandardScaler 与雷达 scorer 独立，映射结果不回流模型。
+预测模块在有限性校验后按独立上下限常量裁剪拟合定数（当前 0～18）；七维输入不裁剪。
 scorer 仅映射已配置的可用字段；未配置的 raw 仍可用于 ML。拟合定数默认 identity，
 显式 mapping profile 可以覆盖。雷达只选映射后的维度，不裁剪 `rawFeatures` 或 `mappedFeatures`。
 CSV 输出完整的原始字段及已映射字段；visualizer 保留全量 raw/mapped 数据，`rawScores` / `scores`

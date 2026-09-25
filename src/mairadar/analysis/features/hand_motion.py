@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 import math
 
+from mairadar.analysis.control import CancellationCheck, no_cancellation
+
 from .sweep import ScoredSweepFamily, ScoredSweepGroup, circular_key_distance
 
 
@@ -46,7 +48,7 @@ class HandMotionResult:
         return self.total_distance / self.attack_count if self.attack_count else 0.0
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _MotionState:
     left_position: int | None
     right_position: int | None
@@ -54,30 +56,22 @@ class _MotionState:
     right_last_batch: int | None
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, eq=False)
 class _MotionRecord:
     fast_jump_violations: int = 0
     total_distance: int = 0
     active_distance: int = 0
     idle_reposition_distance: int = 0
     free_hand_takeovers: int = 0
-    assignments: tuple[HandAssignment, ...] = ()
+    previous: "_MotionRecord | None" = None
+    assignment: HandAssignment | None = None
+    lex_rank: int = 0
+    lex_key: tuple[int, int, int] = (0, 0, 0)
 
     @property
     def objective(self) -> tuple:
-        return (
-            self.fast_jump_violations,
-            self.free_hand_takeovers,
-            self.total_distance,
-            self.active_distance,
-            tuple(
-                (
-                    assignment.left_position or 0,
-                    assignment.right_position or 0,
-                )
-                for assignment in self.assignments
-            ),
-        )
+        return (self.fast_jump_violations, self.free_hand_takeovers,
+                self.total_distance, self.active_distance, self.lex_key)
 
 
 def _assignment_options(lanes: tuple[int, ...]):
@@ -132,6 +126,7 @@ def two_hand_motion(
     lanes_by_batch: tuple[tuple[int, ...], ...],
     *,
     idle_transition_indexes: frozenset[int] | None = None,
+    check_cancelled: CancellationCheck = no_cancellation,
 ) -> HandMotionResult:
     """Minimize fast jumps first, then both hands' total circular displacement."""
     if len(times_s) != len(lanes_by_batch) or not times_s:
@@ -160,10 +155,15 @@ def two_hand_motion(
     ):
         raise ValueError("each hand-motion batch needs one to three outer lanes")
 
+    check_cancelled()
     initial_state = _MotionState(None, None, None, None)
     states = {initial_state: _MotionRecord()}
+    option_cache = {}
     for batch_index, (time_s, lanes) in enumerate(zip(times_s, normalized_lanes)):
-        options = _assignment_options(lanes)
+        check_cancelled()
+        if lanes not in option_cache:
+            option_cache[lanes] = _assignment_options(lanes)
+        options = option_cache[lanes]
         if not options:
             raise ValueError(f"batch {batch_index} cannot be covered by two hands")
         next_states = {}
@@ -172,6 +172,7 @@ def two_hand_motion(
             previous_used_left = state.left_last_batch == batch_index - 1
             previous_used_right = state.right_last_batch == batch_index - 1
             for left_lanes, right_lanes, left_target, right_target in options:
+                check_cancelled()
                 left_cost = _move_cost(
                     state.left_position,
                     left_target,
@@ -202,9 +203,18 @@ def two_hand_motion(
                 next_state = _MotionState(
                     left_target if used_left else state.left_position,
                     right_target if used_right else state.right_position,
-                    batch_index if used_left else state.left_last_batch,
-                    batch_index if used_right else state.right_last_batch,
+                    batch_index if used_left else (None if state.left_position is None else -1),
+                    batch_index if used_right else (None if state.right_position is None else -1),
                 )
+                lex_key = (record.lex_rank, next_state.left_position or 0,
+                           next_state.right_position or 0)
+                objective = (record.fast_jump_violations + left_cost[3] + right_cost[3],
+                             record.free_hand_takeovers + takeover,
+                             record.total_distance + left_cost[0] + right_cost[0],
+                             record.active_distance + left_cost[1] + right_cost[1], lex_key)
+                incumbent = next_states.get(next_state)
+                if incumbent is not None and objective >= incumbent.objective:
+                    continue
                 assignment = HandAssignment(
                     time_s=time_s,
                     lanes=lanes,
@@ -231,14 +241,24 @@ def two_hand_motion(
                         record.idle_reposition_distance + left_cost[2] + right_cost[2]
                     ),
                     free_hand_takeovers=record.free_hand_takeovers + takeover,
-                    assignments=record.assignments + (assignment,),
+                    previous=record,
+                    assignment=assignment,
+                    lex_key=lex_key,
                 )
-                previous = next_states.get(next_state)
-                if previous is None or candidate.objective < previous.objective:
-                    next_states[next_state] = candidate
+                next_states[next_state] = candidate
+        ranks = {key: rank for rank, key in enumerate(sorted({
+            record.lex_key for record in next_states.values()}))}
+        for record in next_states.values():
+            record.lex_rank = ranks[record.lex_key]
         states = next_states
 
     best = min(states.values(), key=lambda record: record.objective)
+    assignments = []
+    record = best
+    while record.previous is not None:
+        assignments.append(record.assignment)
+        record = record.previous
+    assignments.reverse()
     return HandMotionResult(
         total_distance=best.total_distance,
         active_distance=best.active_distance,
@@ -248,7 +268,7 @@ def two_hand_motion(
         batch_count=len(times_s),
         attack_count=sum(len(lanes) for lanes in normalized_lanes),
         duration_s=times_s[-1] - times_s[0],
-        assignments=best.assignments,
+        assignments=tuple(assignments),
     )
 
 
@@ -257,11 +277,21 @@ def sweep_family_hand_motion(
     groups: tuple[ScoredSweepGroup, ...],
     *,
     respect_group_gaps: bool = False,
+    check_cancelled: CancellationCheck = no_cancellation,
 ) -> HandMotionResult:
     """Combine a scored family's groups and run the two-hand displacement DP."""
+    check_cancelled()
+    if len(family.group_ids) == 1:
+        group_id = family.group_ids[0]
+        group = groups[0] if len(groups) == 1 else (
+            groups[group_id - 1] if 1 <= group_id <= len(groups) else None)
+        if group is not None and group.group_id == group_id:
+            return two_hand_motion(group.sequence.times_s, group.sequence.lanes_by_batch,
+                                   check_cancelled=check_cancelled)
     by_id = {group.group_id: group for group in groups}
     batches: dict[float, set[int]] = {}
     for group_id in family.group_ids:
+        check_cancelled()
         group = by_id.get(group_id)
         if group is None:
             raise ValueError(f"Unknown sweep group id in family: {group_id}")
@@ -287,6 +317,7 @@ def sweep_family_hand_motion(
     return two_hand_motion(
         tuple(time_s for time_s, _ in ordered),
         tuple(tuple(sorted(lanes)) for _, lanes in ordered),
+        check_cancelled=check_cancelled,
         idle_transition_indexes=frozenset(
             index for index, (time_s, _) in enumerate(ordered)
             if time_s in idle_start_times

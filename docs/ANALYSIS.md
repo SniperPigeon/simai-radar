@@ -34,7 +34,38 @@ analyzer = ChartAnalyzer(features=features)
 
 每个类实现 `analyze(context) -> FeatureResult`，且支持无参数构造。名字为字母开头的字母、数字、下划线组合。结果和 CSV 列按配置顺序输出；不限制为六维。类在每张谱面每个维度调用时重新构造，避免跨谱面残留状态。
 
-AnalysisContext 提供事件元组、chart_end_time_s、last_event_end_s 和 duration_s。各维度应只读事件；调度器为每个维度复制输入快照，防止意外修改影响调用方或其他维度。MVP 不预先建立窗口索引或几何缓存。
+AnalysisContext 提供事件元组、chart_end_time_s、last_event_end_s、duration_s 和
+`check_cancelled()`。各维度应只读事件；调度器为每个维度复制输入快照，防止意外修改
+影响调用方或其他维度。
+
+### 工作量上限与取消
+
+`analysis/engine.py` 的 `MAXIMUM_CHART_EVENTS` 配置单谱事件上限，当前为 30,000。
+超限时不执行各维分析，返回 `EVENT_BUDGET_EXCEEDED`。Sweep 的状态、攻击、轻量候选、
+选集和组间连接预算位于 `analysis/features/sweep.py`；耗尽时只使该维失败，其他维度继续。
+
+调用方可用 `threading.Event` 或其他无参数布尔回调取消分析：
+
+```python
+from threading import Event
+
+cancel = Event()
+result = analyzer.analyze(parsed, is_cancelled=cancel.is_set)
+# 其他线程可调用 cancel.set()。
+if result.is_cancelled:
+    assert result.status == "cancelled"
+```
+
+调度器在各维前后检查取消，Sweep 的识别、候选选择、family 连接、手部 DP 和计分循环
+也主动检查。取消保留此前完成的维度，停止后续分析，不再生成拟合值或映射结果。
+自定义耗时分析器可在循环中调用 `context.check_cancelled()`；单独使用 Sweep 辅助函数
+时可传同名回调，它应在取消时抛出 `AnalysisCancelled`。未请求取消时，分析器自行抛出的
+该异常仍按普通维度失败处理。
+
+Sweep 已同步 C# 的持久化回溯状态、前缀词典序排名、轻量候选与区间选集算法；
+只为最终选中的序列展开历史数组，避免长连扫反复复制全部前缀。Family 只检查仍可能
+连接的前组，手部 DP 合并已空闲的等价状态并缓存分配选项。原有可选 paired/bridge 模式
+及重复声明计数保留。
 
 FeatureResult 只包含标量 `data` 和 `success`。成功时 data 为有限数值；失败时
 data=None、success=False。诊断仍在 AnalysisResult 中。各分析器内部的分段计算保持原算法，

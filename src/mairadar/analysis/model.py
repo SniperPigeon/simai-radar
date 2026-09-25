@@ -1,9 +1,10 @@
 """In-memory feature contracts, independent of storage and score mapping."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from mairadar.model import Diagnostic, Event
+from .control import CancellationCheck, no_cancellation
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,7 @@ class AnalysisContext:
     events: tuple[Event, ...]
     chart_end_time_s: float
     last_event_end_s: float | None
+    check_cancelled: CancellationCheck = field(default=no_cancellation, compare=False, repr=False)
 
     @property
     def duration_s(self) -> float:
@@ -41,9 +43,12 @@ class AnalysisResult:
     features: dict[str, FeatureResult]
     parser_diagnostics: tuple[Diagnostic, ...] = ()
     diagnostics: tuple[AnalysisIssue, ...] = ()
+    is_cancelled: bool = False
 
     @property
     def status(self) -> str:
+        if self.is_cancelled:
+            return "cancelled"
         successful = sum(item.success for item in self.features.values())
         if successful == len(self.features) and not self.diagnostics:
             return "ok"

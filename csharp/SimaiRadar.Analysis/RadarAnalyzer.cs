@@ -6,7 +6,7 @@ namespace SimaiRadar.Analysis;
 
 public sealed class RadarAnalyzer
 {
-    private const int MaximumChartEvents = 20_000;
+    private const int MaximumChartEvents = 30_000;
     // Keep this fixed execution/output order identical to ModelInputOrder.
     // Display-axis selection belongs after scoring and must not edit this list.
     private readonly IReadOnlyList<(string Name, IRadarFeatureAnalyzer Analyzer)> _features =
@@ -56,7 +56,7 @@ public sealed class RadarAnalyzer
                     throw new InvalidOperationException("Successful feature returned a non-finite value.");
                 results[feature.Name] = result;
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 return new RadarAnalysisResult { Features = results, IsCancelled = true };
             }

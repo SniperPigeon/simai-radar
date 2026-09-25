@@ -10,6 +10,8 @@ import math
 from pathlib import Path
 
 SCHEMA_VERSION = "mairadar-polynomial-2"
+MINIMUM_FITTED_CONSTANT = 0.0
+MAXIMUM_FITTED_CONSTANT = 18.0
 
 
 def _number(value):
@@ -78,4 +80,6 @@ class PolynomialModel:
             raise ValueError("Prediction overflow") from exc
         if not math.isfinite(value):
             raise ValueError("Prediction overflow")
-        return value
+        if MINIMUM_FITTED_CONSTANT > MAXIMUM_FITTED_CONSTANT:
+            raise ValueError("Minimum fitted constant cannot exceed maximum")
+        return min(MAXIMUM_FITTED_CONSTANT, max(MINIMUM_FITTED_CONSTANT, value))

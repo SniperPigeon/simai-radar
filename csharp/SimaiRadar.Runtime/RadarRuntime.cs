@@ -80,7 +80,7 @@ public sealed class RadarRuntime
             result.FittedConstant = _model.Predict(raw);
             return result;
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             result.IsCancelled = true;
             return result;

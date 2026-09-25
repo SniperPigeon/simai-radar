@@ -81,14 +81,19 @@ constant = model.predict({
 ```
 
 也可把参数字典传给 `PolynomialModel(parameters)`。`runtime.py` 可单独复制到调用方。
-运行时按模型的 features 列表确定输入顺序，使用双精度，不自动裁剪或取整：
+运行时按模型的 features 列表确定输入顺序，使用双精度。多项式计算后统一限位，不取整：
 
 ```text
 z[j] = (raw[j] - center[j]) / scale[j]
-constant = intercept + Σ(coefficient × Π(z[j] ** powers[j]))
+prediction = intercept + Σ(coefficient × Π(z[j] ** powers[j]))
+constant = min(MAXIMUM_FITTED_CONSTANT, max(MINIMUM_FITTED_CONSTANT, prediction))
 ```
 
-缺失输入、NaN、Infinity 或溢出明确失败。参数格式为 `mairadar-polynomial-2`，无旧模型迁移层。
+上下限由 `src/mairadar/regression/runtime.py` 中的 `MINIMUM_FITTED_CONSTANT` 和
+`MAXIMUM_FITTED_CONSTANT` 常量配置，当前为 0～18，与 MajRadar 的输出限位一致。
+限位独立于训练系数；训练的模型选择与误差评估仍使用 sklearn 的未限位预测。
+缺失输入、NaN、Infinity 或溢出在限位之前明确失败，不把无效值压成合法边界。
+参数格式为 `mairadar-polynomial-2`，无旧模型迁移层。
 
 ## 拟合定数、scorer 和雷达
 

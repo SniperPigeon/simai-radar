@@ -3,9 +3,10 @@
 from bisect import bisect_left
 from dataclasses import dataclass
 from fractions import Fraction
-from functools import lru_cache
+from functools import cached_property
 import math
 
+from mairadar.analysis.control import CancellationCheck, no_cancellation
 from mairadar.analysis.model import AnalysisContext, FeatureResult
 from mairadar.model import Event
 
@@ -13,7 +14,11 @@ from mairadar.model import Event
 SHORT_HOLD_MAX_BEATS = Fraction(1, 4)
 BASE_MAX_UNIT_BEATS = Fraction(1, 3)
 EIGHTH_NOTE_BEATS = Fraction(1, 2)
-DEFAULT_MAX_STATES = 100_000
+DEFAULT_MAX_STATES = 300_000
+MAXIMUM_BUTTON_ATTACKS = 30_000
+MAXIMUM_LIGHTWEIGHT_CANDIDATES = 50_000
+MAXIMUM_SELECTION_STATES = 100_000
+MAXIMUM_CONNECTION_CHECKS = 1_000_000
 DEFAULT_REFERENCE_INTERVAL_SECONDS = Fraction(1, 12)  # 180 BPM sixteenth.
 DEFAULT_SPEED_EXPONENT = 0.5
 DEFAULT_SPEED_RELATIVE_TOLERANCE = 0.005
@@ -48,7 +53,7 @@ class ButtonAttack:
     normal_declaration_count: int
     protected_declaration_count: int
 
-    @property
+    @cached_property
     def declaration_count(self) -> int:
         return len(self.event_ids)
 
@@ -102,11 +107,11 @@ class SweepSequence:
     strands: tuple[SweepStrand, ...]
     paired_sweep: bool = False
 
-    @property
+    @cached_property
     def lanes(self) -> tuple[int, ...]:
         return tuple(lane for batch in self.lanes_by_batch for lane in batch)
 
-    @property
+    @cached_property
     def event_ids_by_attack(self) -> tuple[tuple[int, ...], ...]:
         return tuple(
             event_ids for batch in self.event_ids_by_attack_batch for event_ids in batch
@@ -128,7 +133,7 @@ class SweepSequence:
     def end_time_s(self) -> float:
         return self.times_s[-1]
 
-    @property
+    @cached_property
     def gaps_beats(self) -> tuple[Fraction, ...]:
         return tuple(right - left for left, right in zip(self.beats, self.beats[1:]))
 
@@ -140,11 +145,11 @@ class SweepSequence:
     def turn_note_indexes(self) -> tuple[int, ...]:
         return self.direction_switch_indexes
 
-    @property
+    @cached_property
     def attack_count(self) -> int:
         return sum(len(batch) for batch in self.attack_ids_by_batch)
 
-    @property
+    @cached_property
     def declaration_count(self) -> int:
         return sum(self.normal_declaration_counts) + sum(self.protected_declaration_counts)
 
@@ -152,7 +157,7 @@ class SweepSequence:
     def strength(self) -> float:
         return float(self.attack_count)
 
-    @property
+    @cached_property
     def interval_seconds(self) -> float:
         ordered = sorted(self.unit_intervals_seconds)
         middle = len(ordered) // 2
@@ -160,7 +165,7 @@ class SweepSequence:
             return ordered[middle]
         return (ordered[middle - 1] + ordered[middle]) / 2
 
-    @property
+    @cached_property
     def widths(self) -> tuple[int, ...]:
         return tuple(len(batch) for batch in self.lanes_by_batch)
 
@@ -287,18 +292,59 @@ class SweepScore:
     families: tuple[ScoredSweepFamily, ...]
 
 
-@dataclass(frozen=True)
+@dataclass(slots=True, eq=False)
 class _MainSpineState:
-    batch_indexes: tuple[int, ...]
-    entry_attack_ids: tuple[int, ...]
-    exit_attack_ids: tuple[int, ...]
+    # Persistent predecessor chain: expanding a prefix never copies its history.
+    previous: "_MainSpineState | None"
+    batch_index: int
+    start_batch_index: int
+    entry_attack_id: int
+    exit_attack_id: int
+    length: int = 1
     direction: int | None = None
     run_steps: int = 0
     turn_count: int = 0
-    unit_intervals_beats: tuple[Fraction, ...] = ()
-    unit_intervals_seconds: tuple[float, ...] = ()
-    speed_switches: tuple[bool, ...] = ()
-    direction_switches: tuple[bool, ...] = ()
+    unit_beat: Fraction | None = None
+    unit_second: float | None = None
+    speed_switched: bool = False
+    direction_switched: bool = False
+    speed_switch_count: int = 0
+    direction_switch_count: int = 0
+    width_switch_count: int = 0
+    handoff_count: int = 0
+    lane_mask: int = 0
+    entry_lex_rank: int = 0
+    exit_lex_rank: int = 0
+
+    @property
+    def quality(self):
+        return (self.length, -self.speed_switch_count, -self.turn_count,
+                -self.handoff_count, -self.entry_lex_rank, -self.exit_lex_rank)
+
+
+@dataclass(slots=True)
+class _Candidate:
+    state: _MainSpineState
+    original_index: int
+    event_count: int
+    attack_count: int
+
+    @property
+    def quality(self):
+        return (self.attack_count, -self.state.speed_switch_count, self.state.length,
+                -self.state.direction_switch_count, -self.state.width_switch_count)
+
+
+def _assign_lex_ranks(states: list[_MainSpineState], *, entry: bool) -> None:
+    # Histories being compared always have equal length; prefix ranks preserve
+    # their lexicographic order without storing or comparing whole tuples.
+    attribute = "entry_lex_rank" if entry else "exit_lex_rank"
+    def key(state):
+        return (state.length, getattr(state.previous, attribute) if state.previous else 0,
+                state.entry_attack_id if entry else state.exit_attack_id)
+    ranks = {value: rank for rank, value in enumerate(sorted({key(s) for s in states}))}
+    for state in states:
+        setattr(state, attribute, ranks[key(state)])
 
 
 def _beat_duration(event: Event) -> Fraction:
@@ -424,13 +470,13 @@ def _advance_main_spine(
     holds: tuple[_HoldOccupancy, ...],
     speed_relative_tolerance: float,
 ) -> _MainSpineState | None:
-    previous = attacks[state.exit_attack_ids[-1]]
+    previous = attacks[state.exit_attack_id]
     current = attacks[current_entry_attack_id]
     move = _move(previous, current, holds)
     if move is None:
         return None
     direction, step_units = move
-    previous_batch = batches[state.batch_indexes[-1]]
+    previous_batch = batches[state.batch_index]
     current_batch = batches[current_batch_index]
     gap_beats = current_batch.beat - previous_batch.beat
     gap_seconds = current_batch.time_s - previous_batch.time_s
@@ -439,12 +485,12 @@ def _advance_main_spine(
     unit_beat = gap_beats / step_units
     unit_second = gap_seconds / step_units
 
-    if not state.unit_intervals_seconds:
+    if state.unit_second is None:
         if unit_beat > BASE_MAX_UNIT_BEATS:
             return None
         speed_switch = False
     else:
-        previous_unit_second = state.unit_intervals_seconds[-1]
+        previous_unit_second = state.unit_second
         speed_switch = not _same_speed(
             unit_second,
             previous_unit_second,
@@ -453,7 +499,7 @@ def _advance_main_spine(
         ordinary_speed = unit_beat <= BASE_MAX_UNIT_BEATS
         continues_eighth = (
             unit_beat == EIGHTH_NOTE_BEATS
-            and state.unit_intervals_beats[-1] == EIGHTH_NOTE_BEATS
+            and state.unit_beat == EIGHTH_NOTE_BEATS
             and not speed_switch
         )
         decelerates_to_eighth = (
@@ -478,32 +524,33 @@ def _advance_main_spine(
         turn_count = state.turn_count + 1
         direction_switched = True
     return _MainSpineState(
-        batch_indexes=state.batch_indexes + (current_batch_index,),
-        entry_attack_ids=state.entry_attack_ids + (current_entry_attack_id,),
-        exit_attack_ids=state.exit_attack_ids + (current_exit_attack_id,),
+        previous=state,
+        batch_index=current_batch_index,
+        start_batch_index=state.start_batch_index,
+        entry_attack_id=current_entry_attack_id,
+        exit_attack_id=current_exit_attack_id,
+        length=state.length + 1,
         direction=direction,
         run_steps=run_steps,
         turn_count=turn_count,
-        unit_intervals_beats=state.unit_intervals_beats + (unit_beat,),
-        unit_intervals_seconds=state.unit_intervals_seconds + (unit_second,),
-        speed_switches=state.speed_switches + (speed_switch,),
-        direction_switches=state.direction_switches + (direction_switched,),
+        unit_beat=unit_beat,
+        unit_second=unit_second,
+        speed_switched=speed_switch,
+        direction_switched=direction_switched,
+        speed_switch_count=state.speed_switch_count + speed_switch,
+        direction_switch_count=state.direction_switch_count + direction_switched,
+        width_switch_count=state.width_switch_count + (
+            len(previous_batch.attack_ids) != len(current_batch.attack_ids)),
+        handoff_count=state.handoff_count + (current_entry_attack_id != current_exit_attack_id),
+        lane_mask=state.lane_mask | (1 << (current.lane - 1)) |
+                  (1 << (attacks[current_exit_attack_id].lane - 1)),
     )
 
 
-def _main_spine_complete(
-    state: _MainSpineState,
-    attacks: tuple[ButtonAttack, ...],
-) -> bool:
-    return (
-        len(state.entry_attack_ids) >= 3
-        and state.direction is not None
-        and (state.turn_count == 0 or state.run_steps >= 2)
-        and len({
-            attacks[attack_id].lane
-            for attack_id in state.entry_attack_ids + state.exit_attack_ids
-        }) >= 3
-    )
+def _main_spine_complete(state: _MainSpineState) -> bool:
+    return (state.length >= 3 and state.direction is not None
+            and (state.turn_count == 0 or state.run_steps >= 2)
+            and state.lane_mask.bit_count() >= 3)
 
 
 def _main_state_to_sequence(
@@ -511,8 +558,17 @@ def _main_state_to_sequence(
     attacks: tuple[ButtonAttack, ...],
     batches: tuple[_AttackBatch, ...],
 ) -> SweepSequence:
+    chain = []
+    current = state
+    while current is not None:
+        chain.append(current)
+        current = current.previous
+    chain.reverse()
+    batch_indexes = tuple(item.batch_index for item in chain)
+    entry_ids = tuple(item.entry_attack_id for item in chain)
+    exit_ids = tuple(item.exit_attack_id for item in chain)
     included_by_batch = tuple(
-        batches[index].attack_ids for index in state.batch_indexes
+        batches[index].attack_ids for index in batch_indexes
     )
     extras_by_batch = tuple(
         tuple(
@@ -521,8 +577,8 @@ def _main_state_to_sequence(
         )
         for included, entry_attack_id, exit_attack_id in zip(
             included_by_batch,
-            state.entry_attack_ids,
-            state.exit_attack_ids,
+            entry_ids,
+            exit_ids,
         )
     )
     event_ids_by_batch = tuple(
@@ -530,13 +586,13 @@ def _main_state_to_sequence(
         for included in included_by_batch
     )
     main_attacks = tuple(
-        attacks[attack_id] for attack_id in state.entry_attack_ids
+        attacks[attack_id] for attack_id in entry_ids
     )
     directions = tuple(
         1 if (right.lane - left.lane) % 8 in {1, 2} else -1
         for left, right in zip(
-            (attacks[attack_id] for attack_id in state.exit_attack_ids[:-1]),
-            (attacks[attack_id] for attack_id in state.entry_attack_ids[1:]),
+            (attacks[attack_id] for attack_id in exit_ids[:-1]),
+            (attacks[attack_id] for attack_id in entry_ids[1:]),
         )
     )
     widths = tuple(len(included) for included in included_by_batch)
@@ -555,15 +611,15 @@ def _main_state_to_sequence(
             tuple(event_id for attack_id in extras for event_id in attacks[attack_id].event_ids)
             for extras in extras_by_batch
         ),
-        beats=tuple(batches[index].beat for index in state.batch_indexes),
-        times_s=tuple(batches[index].time_s for index in state.batch_indexes),
-        unit_intervals_beats=state.unit_intervals_beats,
-        unit_intervals_seconds=state.unit_intervals_seconds,
+        beats=tuple(batches[index].beat for index in batch_indexes),
+        times_s=tuple(batches[index].time_s for index in batch_indexes),
+        unit_intervals_beats=tuple(item.unit_beat for item in chain[1:]),
+        unit_intervals_seconds=tuple(item.unit_second for item in chain[1:]),
         speed_switch_indexes=tuple(
-            index + 1 for index, changed in enumerate(state.speed_switches) if changed
+            index + 1 for index, changed in enumerate((item.speed_switched for item in chain[1:])) if changed
         ),
         direction_switch_indexes=tuple(
-            index for index, changed in enumerate(state.direction_switches) if changed
+            index for index, changed in enumerate((item.direction_switched for item in chain[1:])) if changed
         ),
         width_switch_indexes=tuple(
             index for index, (left, right) in enumerate(zip(widths, widths[1:]), start=1)
@@ -571,8 +627,8 @@ def _main_state_to_sequence(
         ),
         double_handoff_indexes=tuple(
             index for index, (entry_attack_id, exit_attack_id) in enumerate(zip(
-                state.entry_attack_ids,
-                state.exit_attack_ids,
+                entry_ids,
+                exit_ids,
             ))
             if entry_attack_id != exit_attack_id
         ),
@@ -585,7 +641,7 @@ def _main_state_to_sequence(
             for included in included_by_batch
         ),
         strands=(SweepStrand(
-            attack_ids=state.entry_attack_ids,
+            attack_ids=entry_ids,
             lanes=tuple(attack.lane for attack in main_attacks),
             start_beat=main_attacks[0].beat,
             end_beat=main_attacks[-1].beat,
@@ -603,128 +659,76 @@ def _candidate_sequences(
     *,
     max_states: int,
     speed_relative_tolerance: float,
-) -> list[SweepSequence]:
-    candidates = []
-    active: dict[tuple, _MainSpineState] = {}
+    check_cancelled: CancellationCheck = no_cancellation,
+) -> list[_Candidate]:
+    event_prefix, attack_prefix = [0], [0]
+    for batch in batches:
+        event_prefix.append(event_prefix[-1] + sum(
+            len(attacks[i].event_ids) for i in batch.attack_ids))
+        attack_prefix.append(attack_prefix[-1] + len(batch.attack_ids))
+    candidates: dict[tuple[int, int], _Candidate] = {}
+    active = []
     visited = 0
     for batch_index, batch in enumerate(batches):
+        check_cancelled()
         if len(batch.attack_ids) > 3:
-            active = {}
+            active = []
             continue
         next_states = [
-            _MainSpineState((batch_index,), (attack_id,), (attack_id,))
+            _MainSpineState(None, batch_index, batch_index, attack_id, attack_id,
+                            lane_mask=1 << (attacks[attack_id].lane - 1))
             for attack_id in batch.attack_ids
         ]
-        for state in active.values():
-            for entry_attack_id in batch.attack_ids:
-                for exit_attack_id in batch.attack_ids:
+        for state in active:
+            for entry in batch.attack_ids:
+                for exit_id in batch.attack_ids:
+                    check_cancelled()
                     advanced = _advance_main_spine(
-                        state,
-                        batch_index,
-                        entry_attack_id,
-                        exit_attack_id,
-                        attacks,
-                        batches,
-                        holds,
-                        speed_relative_tolerance,
-                    )
+                        state, batch_index, entry, exit_id, attacks, batches, holds,
+                        speed_relative_tolerance)
                     if advanced is not None:
                         next_states.append(advanced)
-        deduplicated: dict[tuple, _MainSpineState] = {}
+        _assign_lex_ranks(next_states, entry=True)
+        _assign_lex_ranks(next_states, entry=False)
+        deduplicated = {}
         for state in next_states:
             visited += 1
             if visited > max_states:
-                raise ValueError(
-                    "Sweep main-spine candidate limit exceeded; no partial result returned"
-                )
-            last_interval = (
-                round(state.unit_intervals_seconds[-1], 9)
-                if state.unit_intervals_seconds else None
-            )
-            key = (
-                state.exit_attack_ids[-1],
-                state.direction,
-                min(state.run_steps, 2),
-                last_interval,
-                state.unit_intervals_beats[-1] if state.unit_intervals_beats else None,
-            )
+                raise ValueError("Sweep main-spine state budget exceeded; no partial result returned")
+            key = (state.exit_attack_id, state.direction, min(state.run_steps, 2),
+                   round(state.unit_second, 9) if state.unit_second is not None else None,
+                   state.unit_beat)
             previous = deduplicated.get(key)
-            quality = (
-                len(state.entry_attack_ids),
-                -sum(state.speed_switches),
-                -state.turn_count,
-                -sum(
-                    entry_attack_id != exit_attack_id
-                    for entry_attack_id, exit_attack_id in zip(
-                        state.entry_attack_ids,
-                        state.exit_attack_ids,
-                    )
-                ),
-                tuple(-attack_id for attack_id in state.entry_attack_ids),
-                tuple(-attack_id for attack_id in state.exit_attack_ids),
-            )
-            if previous is None:
+            if previous is None or state.quality > previous.quality:
                 deduplicated[key] = state
+        active = list(deduplicated.values())
+        for state in active:
+            if not _main_spine_complete(state):
                 continue
-            previous_quality = (
-                len(previous.entry_attack_ids),
-                -sum(previous.speed_switches),
-                -previous.turn_count,
-                -sum(
-                    entry_attack_id != exit_attack_id
-                    for entry_attack_id, exit_attack_id in zip(
-                        previous.entry_attack_ids,
-                        previous.exit_attack_ids,
-                    )
-                ),
-                tuple(-attack_id for attack_id in previous.entry_attack_ids),
-                tuple(-attack_id for attack_id in previous.exit_attack_ids),
-            )
-            if quality > previous_quality:
-                deduplicated[key] = state
-        active = deduplicated
-        candidates.extend(
-            _main_state_to_sequence(state, attacks, batches)
-            for state in active.values()
-            if _main_spine_complete(state, attacks)
-        )
+            key = state.start_batch_index, state.batch_index
+            candidate = _Candidate(state, len(candidates),
+                                   event_prefix[key[1] + 1] - event_prefix[key[0]],
+                                   attack_prefix[key[1] + 1] - attack_prefix[key[0]])
+            previous = candidates.get(key)
+            if previous is None:
+                if len(candidates) >= MAXIMUM_LIGHTWEIGHT_CANDIDATES:
+                    raise ValueError("Sweep lightweight candidate budget exceeded")
+                candidates[key] = candidate
+            elif candidate.quality > previous.quality:
+                candidate.original_index = previous.original_index
+                candidates[key] = candidate
 
-    unique: dict[frozenset[int], SweepSequence] = {}
-    for candidate in candidates:
-        event_ids = frozenset(
-            event_id for batch in candidate.event_ids_by_batch for event_id in batch
-        )
-        previous = unique.get(event_ids)
-        quality = (
-            sum(len(batch) for batch in candidate.lanes_by_batch),
-            -len(candidate.speed_switch_indexes),
-            max(len(strand.attack_ids) for strand in candidate.strands),
-            -len(candidate.direction_switch_indexes),
-            -len(candidate.width_switch_indexes),
-        )
-        if previous is None:
-            unique[event_ids] = candidate
-            continue
-        previous_quality = (
-            sum(len(batch) for batch in previous.lanes_by_batch),
-            -len(previous.speed_switch_indexes),
-            max(len(strand.attack_ids) for strand in previous.strands),
-            -len(previous.direction_switch_indexes),
-            -len(previous.width_switch_indexes),
-        )
-        if quality > previous_quality:
-            unique[event_ids] = candidate
-
-    items = list(unique.items())
-    contained = set()
-    for index, (event_ids, _) in enumerate(items):
-        if any(
-            event_ids < other_ids
-            for other_index, (other_ids, _) in enumerate(items)
-            if other_index != index
-        ):
-            contained.add(index)
-    return [candidate for index, (_, candidate) in enumerate(items) if index not in contained]
+    # All main-spine candidates occupy complete, contiguous batches. Removing
+    # contained intervals is equivalent to the old declaration-set containment.
+    retained = set()
+    furthest_end = -1
+    for candidate in sorted(candidates.values(), key=lambda c: (
+            c.state.start_batch_index, -c.state.batch_index, c.original_index)):
+        check_cancelled()
+        if candidate.state.batch_index > furthest_end:
+            retained.add(candidate.original_index)
+            furthest_end = candidate.state.batch_index
+    return [c for c in candidates.values() if c.original_index in retained]
 
 
 def _paired_sweep_sequence(
@@ -797,15 +801,18 @@ def _paired_sweep_candidates(
     speed_relative_tolerance: float,
     strict_opposite_pairs: bool,
     max_interval_seconds: float | None,
+    check_cancelled: CancellationCheck = no_cancellation,
 ) -> tuple[SweepSequence, ...]:
     """Find repeated, separated adjacent-key pairs without accepting trills."""
     candidates = []
     for start in range(len(batches) - 7):
+        check_cancelled()
         signatures = []
         unit_beat = None
         unit_second = None
         previous = None
         for pair_index in range((len(batches) - start) // 2):
+            check_cancelled()
             left_batch = batches[start + 2 * pair_index]
             right_batch = batches[start + 2 * pair_index + 1]
             if len(left_batch.attack_ids) != 1 or len(right_batch.attack_ids) != 1:
@@ -898,7 +905,8 @@ def _paired_sweep_candidates(
                 from .hand_motion import two_hand_motion
 
                 assignment = two_hand_motion(
-                    candidate.times_s, candidate.lanes_by_batch
+                    candidate.times_s, candidate.lanes_by_batch,
+                    check_cancelled=check_cancelled,
                 )
                 hands = tuple(
                     "L" if item.left_lanes else "R"
@@ -945,53 +953,50 @@ def _paired_sweep_candidates(
 
 
 def _select_disjoint_sequences(
-    sequences: list[SweepSequence],
-    *,
-    max_states: int,
-) -> tuple[SweepSequence, ...]:
-    event_sets = [
-        frozenset(event_id for batch in sequence.event_ids_by_batch for event_id in batch)
-        for sequence in sequences
-    ]
-    conflicts = [1 << index for index in range(len(sequences))]
-    for left in range(len(sequences)):
-        for right in range(left + 1, len(sequences)):
-            if event_sets[left] & event_sets[right]:
-                conflicts[left] |= 1 << right
-                conflicts[right] |= 1 << left
-    states = 0
+    candidates: list[_Candidate], *, max_states: int,
+    check_cancelled: CancellationCheck = no_cancellation,
+) -> tuple[_Candidate, ...]:
+    components = []
+    furthest_end = -1
+    for candidate in sorted(candidates, key=lambda c: (
+            c.state.start_batch_index, c.state.batch_index, c.original_index)):
+        check_cancelled()
+        if not components or candidate.state.start_batch_index > furthest_end:
+            components.append([])
+            furthest_end = candidate.state.batch_index
+        else:
+            furthest_end = max(furthest_end, candidate.state.batch_index)
+        components[-1].append(candidate)
 
-    @lru_cache(None)
-    def solve(mask: int) -> tuple[int, ...]:
-        nonlocal states
-        states += 1
-        if states > max_states:
-            raise ValueError(
-                "Sweep family selection limit exceeded; no partial result returned"
-            )
-        if not mask:
-            return ()
-        bit = mask & -mask
-        pivot = bit.bit_length() - 1
-        included = (pivot,) + solve(mask & ~conflicts[pivot])
-        excluded = solve(mask ^ bit)
-
-        def score(chosen):
-            return (
-                sum(len(event_sets[index]) for index in chosen),
-                -len(chosen),
-                sum(len(sequences[index].beats) for index in chosen),
-            )
-
-        if score(included) == score(excluded):
-            return min(tuple(sorted(included)), tuple(sorted(excluded)))
-        return max((included, excluded), key=score)
-
-    chosen = solve((1 << len(sequences)) - 1)
-    return tuple(sorted(
-        (sequences[index] for index in chosen),
-        key=lambda sequence: (sequence.start_beat, sequence.end_beat, sequence.lanes_by_batch),
-    ))
+    by_id = {c.original_index: c for c in candidates}
+    selected = []
+    visited = 0
+    for component in components:
+        check_cancelled()
+        if len(component) == 1:
+            selected.append(component[0])
+            continue
+        ordered = sorted(component, key=lambda c: (
+            c.state.batch_index, c.state.start_batch_index, c.original_index))
+        ends = [c.state.batch_index for c in ordered]
+        # Score: covered declarations, fewer sequences, covered batches; ties
+        # select the lexicographically earliest original candidate indexes.
+        best = [(0, 0, 0, ())]
+        for index, candidate in enumerate(ordered):
+            check_cancelled()
+            visited += 1
+            if visited > min(max_states, MAXIMUM_SELECTION_STATES):
+                raise ValueError("Sweep selection budget exceeded; no partial result returned")
+            prior = best[bisect_left(ends, candidate.state.start_batch_index, 0, index)]
+            ids = list(prior[3])
+            ids.insert(bisect_left(ids, candidate.original_index), candidate.original_index)
+            included = (prior[0] + candidate.event_count, prior[1] - 1,
+                        prior[2] + candidate.state.length, tuple(ids))
+            excluded = best[-1]
+            best.append(included if included[:3] > excluded[:3] or (
+                included[:3] == excluded[:3] and included[3] <= excluded[3]) else excluded)
+        selected.extend(by_id[index] for index in best[-1][3])
+    return tuple(selected)
 
 
 def _validate_recognition_parameters(
@@ -1017,6 +1022,7 @@ def sweep_sequences(
     include_paired_sweeps: bool = False,
     strict_opposite_pairs: bool = False,
     paired_max_interval_seconds: float | None = None,
+    check_cancelled: CancellationCheck = no_cancellation,
 ) -> tuple[SweepSequence, ...]:
     """Recognize maximal variable-width sweep families from canonical events."""
     _validate_recognition_parameters(max_states, speed_relative_tolerance)
@@ -1034,7 +1040,10 @@ def sweep_sequences(
         or not include_paired_sweeps
     ):
         raise ValueError("paired_max_interval_seconds requires a positive opt-in value")
+    check_cancelled()
     attacks = button_attacks(events)
+    if len(attacks) > MAXIMUM_BUTTON_ATTACKS:
+        raise ValueError(f"Sweep attack budget exceeded ({len(attacks)} > {MAXIMUM_BUTTON_ATTACKS})")
     batches = _attack_batches(attacks)
     candidates = _candidate_sequences(
         attacks,
@@ -1042,8 +1051,16 @@ def sweep_sequences(
         _long_holds(events),
         max_states=max_states,
         speed_relative_tolerance=speed_relative_tolerance,
+        check_cancelled=check_cancelled,
     )
-    selected = _select_disjoint_sequences(candidates, max_states=max_states)
+    selected_candidates = _select_disjoint_sequences(
+        candidates, max_states=max_states, check_cancelled=check_cancelled)
+    selected_rows = []
+    for candidate in selected_candidates:
+        check_cancelled()
+        selected_rows.append(_main_state_to_sequence(candidate.state, attacks, batches))
+    selected = tuple(sorted(selected_rows, key=lambda sequence: (
+        sequence.start_beat, sequence.end_beat, sequence.lanes_by_batch)))
     if not include_paired_sweeps:
         return selected
     covered = {
@@ -1057,6 +1074,7 @@ def sweep_sequences(
         speed_relative_tolerance,
         strict_opposite_pairs,
         paired_max_interval_seconds,
+        check_cancelled=check_cancelled,
     )
     return tuple(sorted(
         (*selected, *paired),
@@ -1074,6 +1092,7 @@ def circular_key_distance(left: int, right: int) -> int:
 def _internal_load(
     sequence: SweepSequence,
     config: SweepScoringConfig,
+    check_cancelled: CancellationCheck = no_cancellation,
 ) -> tuple[float, float]:
     batch_count = len(sequence.beats)
     speed_by_batch = (sequence.unit_intervals_seconds[0], *sequence.unit_intervals_seconds)
@@ -1094,6 +1113,7 @@ def _internal_load(
     base_weight = 0.0
     weighted_load = 0.0
     for index in range(batch_count):
+        check_cancelled()
         multiplier += increments[index]
         note_weight = (
             sequence.normal_declaration_counts[index]
@@ -1194,6 +1214,7 @@ def score_sweep_sequences(
     *,
     config: SweepScoringConfig | None = None,
     duration_s: float | None = None,
+    check_cancelled: CancellationCheck = no_cancellation,
 ) -> SweepScore:
     """Filter undersized families, then rank five square-root-duration strengths."""
     config = config or SweepScoringConfig()
@@ -1212,13 +1233,26 @@ def score_sweep_sequences(
             sequence.start_time_s, sequence.end_time_s, sequence.lanes_by_batch
         ),
     ))
-    base_and_internal = [_internal_load(sequence, config) for sequence in ordered]
+    check_cancelled()
+    base_and_internal = [_internal_load(sequence, config, check_cancelled) for sequence in ordered]
     family_multipliers = [1.0] * len(ordered)
     parents: list[int | None] = [None] * len(ordered)
     connection_increments = [0.0] * len(ordered)
+    active_parents = []
+    connection_checks = 0
+    allow_bridge = config.eighth_gap_family_bridge or config.eighth_gap_similar_speed_bridge
     for child_index, child in enumerate(ordered):
+        check_cancelled()
+        active_parents = [index for index in active_parents if (
+            ordered[index].end_time_s + ordered[index].interval_seconds + 1e-9
+            >= child.start_time_s or (allow_bridge and
+            ordered[index].end_beat + EIGHTH_NOTE_BEATS >= child.start_beat))]
         choices = []
-        for parent_index in range(child_index):
+        for parent_index in active_parents:
+            check_cancelled()
+            connection_checks += 1
+            if connection_checks > MAXIMUM_CONNECTION_CHECKS:
+                raise ValueError("Sweep family connection budget exceeded")
             increment = _external_connection(ordered[parent_index], child, config)
             if increment is None:
                 continue
@@ -1234,9 +1268,11 @@ def score_sweep_sequences(
             family_multipliers[child_index] = multiplier
             parents[child_index] = parent_index
             connection_increments[child_index] = increment
+        active_parents.append(child_index)
 
     groups = []
     for index, sequence in enumerate(ordered):
+        check_cancelled()
         base, internal = base_and_internal[index]
         contribution = internal * family_multipliers[index]
         groups.append(ScoredSweepGroup(
@@ -1250,10 +1286,11 @@ def score_sweep_sequences(
             contribution=contribution,
         ))
     members_by_root: dict[int, list[ScoredSweepGroup]] = {}
+    roots = []
     for index, group in enumerate(groups):
-        root = index
-        while parents[root] is not None:
-            root = parents[root]
+        check_cancelled()
+        root = index if parents[index] is None else roots[parents[index]]
+        roots.append(root)
         members_by_root.setdefault(root, []).append(group)
     family_rows = []
     for family_id, root in enumerate(sorted(members_by_root), start=1):
@@ -1359,6 +1396,7 @@ def sweep_score(
     max_states: int = DEFAULT_MAX_STATES,
     config: SweepScoringConfig | None = None,
     duration_s: float | None = None,
+    check_cancelled: CancellationCheck = no_cancellation,
 ) -> float:
     resolved_config = config or SweepScoringConfig()
     resolved_config.validate()
@@ -1367,9 +1405,11 @@ def sweep_score(
             events,
             max_states=max_states,
             speed_relative_tolerance=resolved_config.speed_relative_tolerance,
+            check_cancelled=check_cancelled,
         ),
         config=resolved_config,
         duration_s=duration_s,
+        check_cancelled=check_cancelled,
     ).value
 
 
@@ -1419,4 +1459,5 @@ class SweepAnalyzer:
             max_states=self.max_states,
             config=self.scoring_config,
             duration_s=context.duration_s,
+            check_cancelled=context.check_cancelled,
         ))
